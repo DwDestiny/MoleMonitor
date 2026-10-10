@@ -1,7 +1,7 @@
 ---
 title: "MoleMonitor · 只读菜单栏监控"
 type: project
-last_updated: 2026-10-10
+last_updated: 2026-10-11
 ---
 
 # MoleMonitor
@@ -73,6 +73,7 @@ dist/MoleMonitor.app/Contents/MacOS/MoleMonitor --diagnose --seconds 90
 | [Vendor/NOTICE.md](Vendor/NOTICE.md) | 固定上游来源、校验值与第三方许可 |
 | [docs/](docs/README.md) | 范围、架构、数据口径和脱敏验证摘要 |
 | [AGENTS.md](AGENTS.md) | 开发协作约定 |
+| [CLAUDE.md](CLAUDE.md) · [接手说明](docs/HANDOFF.md) | Claude 协作入口、当前状态与跨平台开发边界 |
 | `dist/` | 可再生成的构建产物与诊断输出，不纳入版本管理 |
 
 ## 许可证与归属
