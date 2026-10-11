@@ -386,7 +386,7 @@ extension UITestRunner {
         note += "reverted after \(String(format: "%.2f", seconds)) s (needs 1.5 +- 0.3); "
         note += "button pixels after the revert differ by \(String(format: "%.3f", back)). "
         note += "Part check on fixtures: the click path and the pasteboard are not exercised. "
-        note += "The text comes from the PromptBuilder skeleton until I1 lands."
+        note += "The text is built from the fixture with PromptBuilder; the engine copy is judged in N1."
         let values: [String: Double] = ["copiedSeconds": seconds, "changedShare": changed, "textLength": Double(text.count)]
         record("M13", "复制状态机", ok, since: t0, note, values)
     }

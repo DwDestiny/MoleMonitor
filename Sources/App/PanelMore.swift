@@ -29,6 +29,9 @@ struct MoreDisclosure: View {
         return "今天 " + PanelFormat.trafficBytes(rx + tx)
     }
 
+    /// A desktop Mac has no battery: the power item is not applicable and the row does not mention it.
+    private var hasBattery: Bool { data.verdict(.power)?.level != .notApplicable }
+
     private var preview: String {
         if data.isCollecting { return "统计中" }
         var parts = [String]()
@@ -41,7 +44,7 @@ struct MoreDisclosure: View {
         if !problemLevel(.disk) { parts.append(availableText) }
         parts.append("网速")
         parts.append("流量")
-        if !problemLevel(.power) { parts.append("电池") }
+        if !problemLevel(.power) && hasBattery { parts.append("电池") }
         return parts.joined(separator: " · ")
     }
 
@@ -102,7 +105,7 @@ private struct MoreContent: View {
                 networkBlock
             }
             trafficBlock
-            if !isProblem(.power) {
+            if !isProblem(.power) && data.verdict(.power)?.level != .notApplicable {
                 batteryBlock
             }
             sensorBlock
@@ -178,7 +181,8 @@ private struct MoreContent: View {
         var source = "—"
         if let s = c.powerSource { source = s == .battery ? "电池供电" : "接电源" }
         var sleepText = "—"
-        if let s = c.lastSleep {
+        let recent: SleepRecord? = c.lastSleep ?? data.sleeps.max(by: { $0.wokeAt < $1.wokeAt })
+        if let s = recent {
             sleepText = PanelFormat.duration(seconds: s.wokeAt.timeIntervalSince(s.sleptAt))
                 + String(format: " · %.0f%% → %.0f%%", s.batteryBefore, s.batteryAfter)
         }
