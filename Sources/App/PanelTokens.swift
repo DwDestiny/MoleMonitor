@@ -63,6 +63,16 @@ struct PanelTokens {
         }
     }
 
+    /// Line color of the abnormal curve segment. In the light scheme it is a little deeper than the lamp,
+    /// so a 2 pt line keeps 3:1 against the tinted card, the plot area and its own 15% fill (check M5).
+    func chartHot(_ level: HealthLevel) -> Color {
+        switch level {
+        case .yellow: return pick(Self.rgb(0xA35200), Self.rgb(0xFF9F0A))
+        case .red: return pick(Self.rgb(0xC8261F), Self.rgb(0xFF453A))
+        default: return lamp(level)
+        }
+    }
+
     /// Text color of a level word. Only yellow and red use a level color.
     func levelText(_ level: HealthLevel) -> Color {
         switch level {
@@ -163,7 +173,7 @@ struct PanelSlot {
 
 enum PanelSlots {
     static let heroTextWidth = PanelSize.contentWidth - 72 - 12     // beside the problem-mode dog
-    static let quietTextWidth = PanelSize.contentWidth - 104 - 16    // beside the quiet-mode dog
+    static let quietTextWidth = PanelSize.contentWidth - 104 - 12    // beside the quiet-mode dog
     static let cardInnerWidth = PanelSize.contentWidth - 2 * PanelSize.cardPadding
 
     static let all: [PanelSlot] = [
@@ -172,10 +182,10 @@ enum PanelSlots {
         PanelSlot(name: "hero.title.quiet", size: 13, weight: .semibold, rounded: false, width: quietTextWidth, lines: 1, sample: "一切正常"),
         PanelSlot(name: "hero.subtitle", size: 11, weight: .regular, rounded: false, width: heroTextWidth, lines: 2, sample: "睡眠掉电 3.3%/小时 · 已持续 2 小时 10 分"),
         PanelSlot(name: "hero.subtitle.quiet", size: 11, weight: .regular, rounded: false, width: quietTextWidth, lines: 2, sample: "最后数据 13:40，25 分钟前"),
-        PanelSlot(name: "lamp.quiet.value", size: 11, weight: .regular, rounded: false, width: quietTextWidth - 8 - 6 - 36 - 6, lines: 1, sample: "正常 · swap 12.8 GB"),
+        PanelSlot(name: "lamp.quiet.value", size: 11, weight: .regular, rounded: false, width: quietTextWidth - 8 - 6 - 30 - 6, lines: 1, sample: "正常 · swap 12.8 GB"),
         PanelSlot(name: "card.title", size: 13, weight: .semibold, rounded: false, width: cardInnerWidth - 24 - 60, lines: 1, sample: "磁盘 · 需留意"),
-        PanelSlot(name: "card.figure", size: 28, weight: .semibold, rounded: true, width: 130, lines: 1, sample: "+314 GB"),
-        PanelSlot(name: "card.caption", size: 11, weight: .regular, rounded: false, width: cardInnerWidth - 130 - 8, lines: 2, sample: "上次睡眠的掉电速率"),
+        PanelSlot(name: "card.figure", size: 28, weight: .semibold, rounded: true, width: 142, lines: 1, sample: "+314 GB"),
+        PanelSlot(name: "card.caption", size: 11, weight: .regular, rounded: false, width: cardInnerWidth - 142 - 8, lines: 2, sample: "上次睡眠的掉电速率"),
         PanelSlot(name: "card.evidence.line", size: 11, weight: .regular, rounded: false, width: cardInnerWidth, lines: 1, sample: "睡眠 6 小时 20 分 · 82% → 61%"),
         PanelSlot(name: "row.title", size: 13, weight: .semibold, rounded: false, width: 150, lines: 1, sample: "耗电 · 需留意"),
         PanelSlot(name: "row.detail", size: 11, weight: .regular, rounded: false, width: 200, lines: 1, sample: "电池供电 · 掉电 34%/小时"),

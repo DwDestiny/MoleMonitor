@@ -121,7 +121,7 @@ private struct PlainButtonBody: View {
 
 /// The small copy button of a problem. The icon turns into a check mark for 1.5 seconds after a copy.
 struct CopyIconButton: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     let target: CopyTarget
     let item: HealthItem
     @Environment(\.tok) private var tok
@@ -150,7 +150,7 @@ struct CopyIconButton: View {
 
 /// The main button under the problem rows: "复制给 Agent · 磁盘".
 struct CopyCTA: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     let item: HealthItem
 
     var body: some View {
@@ -185,7 +185,7 @@ struct CopyCTA: View {
 // MARK: - Authorization row
 
 struct AuthorizationRow: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     @Environment(\.tok) private var tok
 
     var body: some View {
@@ -234,7 +234,7 @@ struct AuthorizationRow: View {
 // MARK: - Footer
 
 struct PanelFooter: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     let quiet: Bool
     @Environment(\.tok) private var tok
     @Environment(\.panelSnapshot) private var snapshot

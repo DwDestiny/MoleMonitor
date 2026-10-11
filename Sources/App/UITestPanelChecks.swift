@@ -144,6 +144,8 @@ extension UITestRunner {
 
     func stepM() async {
         let t0 = now()
+        // The J step leaves the real panel open. Close it, so each fixture opens its own popover.
+        await closePanelQuietly()
         var orderProblems = [String]()
         var heightNotes = [String]()
         var heightProblems = [String]()

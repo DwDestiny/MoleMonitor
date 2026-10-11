@@ -48,8 +48,18 @@ last_updated: 2026-10-11
 | `Notifier.swift` | `UNUserNotificationCenter` 授权与发送。无 App 包时报告 `unavailable` |
 | `StatusIcon.swift` | 菜单栏图标绘制与缓存，无障碍文字 |
 | `LiveSampler.swift` | 读 Mach 每核 CPU tick 与网卡计数器。状态卡打开时创建，关闭时释放 |
-| `Panel.swift` | SwiftUI 状态卡，宽 340 pt，高度不超过 480 pt。磁盘趋势图（Swift Charts），实时卡，入场动画 |
-| `UITestHarness.swift` | 界面回归测试代码。整个文件在 `#if UITEST` 内，只存在于 `scripts/build.py --ui-test` 的变体 |
+| `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器与 `PanelPlanFit` 带 `WIRE-LATER` 标记 |
+| `PanelRoot.swift` | 状态卡根视图：固定的头部、滚动的中部、固定的底栏。按版面计划渲染，不排序。入场动画 |
+| `PanelHero.swift` | 头部：比熊、标题、灯列（安静模式与问题模式） |
+| `PanelProblem.swift` | 问题卡、问题行、其余正常行、证据区 |
+| `PanelCharts.swift` | 图表：问题曲线（2 小时粗段加 5 分钟细段）、迷你线、磁盘 30 天图 |
+| `PanelApps.swift` | 占用 App 行、证据列表、折叠行 |
+| `PanelMore.swift` | “更多”折叠行及展开内容 |
+| `PanelFooter.swift` | 按钮样式、复制按钮、授权行、底栏 |
+| `PanelTokens.swift` | 颜色、字号、动效、尺寸令牌，格式化函数，灯，流式布局 |
+| `PanelPreview.swift` | `--preview` 渲染 28 张静态图 |
+| `UITestPanelChecks.swift` | 状态卡的界面门禁 M2 至 M6、M11 至 M13。整个文件在 `#if UITEST` 内 |
+| `UITestHarness.swift` | 界面回归测试代码（检查 A 至 L）。整个文件在 `#if UITEST` 内，只存在于 `scripts/build.py --ui-test` 的变体 |
 
 ## 入口模式
 

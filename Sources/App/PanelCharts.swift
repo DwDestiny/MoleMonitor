@@ -322,6 +322,7 @@ private struct CoarseLayer: View, Equatable {
 
     var body: some View {
         let hotColor = tok.lamp(level)
+        let hotLine = tok.chartHot(level)
         let neutral = tok.chartNeutral
         let floor = plot.domainY.lowerBound
         Chart {
@@ -355,7 +356,7 @@ private struct CoarseLayer: View, Equatable {
             ForEach(plot.hotCoarse) { p in
                 LineMark(x: .value("时间", p.t), y: .value("值", p.v), series: .value("线", "h\(p.seg)"))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(hotColor)
+                    .foregroundStyle(hotLine)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
             }
         }
@@ -418,8 +419,9 @@ private struct FineLayer: View {
 
     var body: some View {
         let hotColor = tok.lamp(level)
+        let hotLine = tok.chartHot(level)
         let neutral = tok.chartNeutral
-        let dotColor = plot.lastIsHot ? hotColor : neutral
+        let dotColor = plot.lastIsHot ? hotLine : neutral
         Chart {
             ForEach(plot.hotFine) { p in
                 AreaMark(x: .value("时间", p.t), yStart: .value("下", plot.domainY.lowerBound), yEnd: .value("值", p.v),
@@ -436,7 +438,7 @@ private struct FineLayer: View {
             ForEach(plot.hotFine) { p in
                 LineMark(x: .value("时间", p.t), y: .value("值", p.v), series: .value("线", "fh\(p.seg)"))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(hotColor)
+                    .foregroundStyle(hotLine)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
             }
             if let last = plot.last {
@@ -563,11 +565,10 @@ struct TrendStrip: View {
 
     var body: some View {
         let start = domainX.lowerBound
-        // While the first values are still being collected, the strip shows no curve (docs/DESIGN.md 2.13).
-        let collecting = data.isCollecting
-        let cpu: [PlotPoint] = collecting ? [] : MiniPlot.points(data.trend, from: start) { $0.cpu }
-        let rx: [PlotPoint] = collecting ? [] : MiniPlot.points(data.trend, from: start) { $0.rx }
-        let tx: [PlotPoint] = collecting ? [] : MiniPlot.points(data.trend, from: start) { $0.tx }
+        // A restored trend shows while the first readings are still collected (docs/DESIGN.md D5). Without a trend the strip shows a hint.
+        let cpu: [PlotPoint] = MiniPlot.points(data.trend, from: start) { $0.cpu }
+        let rx: [PlotPoint] = MiniPlot.points(data.trend, from: start) { $0.rx }
+        let tx: [PlotPoint] = MiniPlot.points(data.trend, from: start) { $0.tx }
         let netMax = max(rx.map { $0.v }.max() ?? 0, tx.map { $0.v }.max() ?? 0)
         let cpuMax = cpu.map { $0.v }.max() ?? 0
         VStack(alignment: .leading, spacing: 0) {
@@ -713,6 +714,7 @@ struct DiskChart: View {
     private var chart: some View {
         let yRange = domainY
         let tint = tok.lamp(trigger?.level ?? level)
+        let hotLine = tok.chartHot(trigger?.level ?? level)
         let neutral = tok.chartNeutral
         return Chart {
             ForEach(baseArea) { p in
@@ -736,13 +738,13 @@ struct DiskChart: View {
             ForEach(segment) { p in
                 LineMark(x: .value("时间", p.t), y: .value("已用", p.gb), series: .value("线", "trigger"))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(tint)
+                    .foregroundStyle(hotLine)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
             }
             if let last = series.last {
                 PointMark(x: .value("时间", last.t), y: .value("已用", last.gb))
                     .symbolSize(25)
-                    .foregroundStyle(trigger == nil ? neutral : tint)
+                    .foregroundStyle(trigger == nil ? neutral : hotLine)
             }
             if let h = hovered {
                 RuleMark(x: .value("时间", h.t))

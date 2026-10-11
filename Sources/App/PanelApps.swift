@@ -217,7 +217,7 @@ struct DisclosureRow: View {
 // MARK: - 占用 App disclosure
 
 struct AppsDisclosure: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     let expanded: Bool
     let compact: Bool
 
@@ -242,7 +242,7 @@ struct AppsDisclosure: View {
 }
 
 struct AppsExpanded: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     @Environment(\.tok) private var tok
 
     var body: some View {

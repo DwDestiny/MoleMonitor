@@ -7,7 +7,7 @@
 import SwiftUI
 
 struct MoreDisclosure: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     let expanded: Bool
     let includesApps: Bool
     let includesAuthorization: Bool
@@ -76,7 +76,7 @@ private struct MoreBlock<Content: View>: View {
 }
 
 private struct MoreContent: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     let includesApps: Bool
     let includesAuthorization: Bool
     @Environment(\.tok) private var tok

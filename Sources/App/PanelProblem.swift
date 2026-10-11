@@ -83,7 +83,7 @@ enum ProblemFactsBuilder {
 // MARK: - Problem card
 
 struct ProblemCard: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     let item: HealthItem
     let compact: Bool
     let evidenceHeight: Double
@@ -207,7 +207,7 @@ struct CardBackground: View {
 // MARK: - Evidence
 
 private struct ProblemEvidence: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     let item: HealthItem
     let verdict: ItemVerdict
     let height: Double
@@ -343,7 +343,7 @@ private struct PowerEvidence: View {
 
 /// A collapsed problem item. A click opens it as the card and folds the old card into a row.
 struct ProblemRow: View {
-    let model: PanelModel
+    @ObservedObject var model: PanelModel
     let item: HealthItem
     let compact: Bool
 

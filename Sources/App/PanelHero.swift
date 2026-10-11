@@ -112,7 +112,7 @@ private struct QuietHero: View {
     private var titleColor: Color { data.staleSince != nil ? tok.textWarning : tok.textPrimary }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
+        HStack(alignment: .center, spacing: 12) {
             HeroDog(data: data, size: CGSize(width: 104, height: 78))
             VStack(alignment: .leading, spacing: 4) {
                 Text(HeroText.quietTitle(data))
@@ -157,7 +157,7 @@ private struct QuietLampRow: View {
             Text(verdict.item.label)
                 .font(PanelFont.body)
                 .foregroundStyle(tok.textPrimary)
-                .frame(width: 34, alignment: .leading)
+                .frame(width: 30, alignment: .leading)
                 .lineLimit(1)
             Text(value)
                 .font(PanelFont.footnote)
