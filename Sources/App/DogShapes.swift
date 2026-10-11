@@ -94,9 +94,14 @@ enum DogRenderer {
 
     /// Draws one frame. `ctx` is y-down and already scaled so that 1 u is one design unit.
     static func draw(_ layers: [DogLayer], opacity: Double, palette: DogPalette, level: HealthLevel, in ctx: CGContext) {
+        guard opacity > 0 else { return }
+        // A group layer is needed only to fade the whole dog; at full opacity it would draw the same pixels slower.
+        let grouped = opacity < 1
         ctx.saveGState()
-        ctx.setAlpha(CGFloat(opacity))
-        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        if grouped {
+            ctx.setAlpha(CGFloat(opacity))
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        }
         var i = 0
         while i < layers.count {
             var j = i
@@ -125,7 +130,7 @@ enum DogRenderer {
             }
             i = j + 1
         }
-        ctx.endTransparencyLayer()
+        if grouped { ctx.endTransparencyLayer() }
         ctx.restoreGState()
     }
 
@@ -155,8 +160,12 @@ enum DogRenderer {
     }
 
     /// Draws one animated frame of DogView into `rect` (y-down context). During a gait switch that changes the art,
-    /// the old art is drawn first and fades out in the second half, the new art fades in on top in the first half,
-    /// so the dog never turns see-through. Both use the same blended pose.
+    /// the old art is drawn first, the new art on top, both with the same blended pose. The new art fades in while the
+    /// blend goes from 35 % to 50 %, the old art fades out from 50 % to 65 %, so the two dogs overlap for about 3 frames
+    /// only (the first CI timeline showed a long double image) and the dog never turns see-through.
+    static func newArtAlpha(_ k: Double) -> Double { min(max((k - 0.35) / 0.15, 0), 1) }
+    static func oldArtAlpha(_ k: Double) -> Double { min(max((0.65 - k) / 0.15, 0), 1) }
+
     static func drawFrame(_ frame: DogFrame, input: DogInput, dark: Bool, in rect: CGRect, ctx: CGContext) {
         let glyph = (frame.pose.bubble > 0) ? input.worstProblem.map { DogArt.badge($0) } : nil
         let palette = DogPalette(dark: dark, muted: input.isStatic)
@@ -165,9 +174,9 @@ enum DogRenderer {
         ctx.scaleBy(x: rect.width / CGFloat(DogArt.designSize.w), y: rect.height / CGFloat(DogArt.designSize.h))
         if let old = frame.fadeFrom {
             let k = min(max(frame.fade, 0), 1)
-            draw(DogRig.layers(gait: old, pose: frame.pose, glyph: glyph), opacity: frame.pose.opacity * min(1, 2 * (1 - k)),
+            draw(DogRig.layers(gait: old, pose: frame.pose, glyph: glyph), opacity: frame.pose.opacity * DogRenderer.oldArtAlpha(k),
                  palette: palette, level: input.worstLevel, in: ctx)
-            draw(DogRig.layers(gait: frame.gait, pose: frame.pose, glyph: glyph), opacity: frame.pose.opacity * min(1, 2 * k),
+            draw(DogRig.layers(gait: frame.gait, pose: frame.pose, glyph: glyph), opacity: frame.pose.opacity * DogRenderer.newArtAlpha(k),
                  palette: palette, level: input.worstLevel, in: ctx)
         } else {
             draw(DogRig.layers(gait: frame.gait, pose: frame.pose, glyph: glyph), opacity: frame.pose.opacity,

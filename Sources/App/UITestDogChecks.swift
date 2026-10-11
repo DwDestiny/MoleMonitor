@@ -38,6 +38,8 @@ enum DogFrameProbe {
         default: return nil
         }
     }()
+    /// True draws the steady strip frames into the Canvas instead of an Image view (the CPU comparison of DA).
+    static var stripInCanvas = false
     /// Frames are recorded only while this is true (the dog checks), so the UI regression run does not grow the list.
     static var recording = false
     private(set) static var entries = [Entry]()
@@ -225,6 +227,22 @@ final class UITestDogChecks {
                 "frameUsMean": mean(totals), "frameUsP50": p(totals, 0.5), "frameUsP95": p(totals, 0.95),
                 "stepUsMean": mean(steps), "drawUsMean": mean(draws), "drawUsP95": p(draws, 0.95),
                 "processCpuPercentOpen": openCPU / openWall * 100])
+        // Steady state: the strip cache is warm and the bubble has settled. Image view, then the same in the Canvas.
+        func steadyCPU() async -> (cpu: Double, frames: Int, hits: Int) {
+            DogFrameProbe.reset()
+            let c0 = processCPU(), w0 = CACurrentMediaTime()
+            await sleep(3)
+            let e = DogFrameProbe.entries
+            return ((processCPU() - c0) / (CACurrentMediaTime() - w0) * 100, e.count, e.filter { $0.cached }.count)
+        }
+        let steadyImage = await steadyCPU()
+        DogFrameProbe.stripInCanvas = true
+        let steadyCanvas = await steadyCPU()
+        DogFrameProbe.stripInCanvas = false
+        info["steadyCpuPercentImage"] = String(format: "%.2f", steadyImage.cpu)
+        info["steadyFramesImage"] = "\(steadyImage.frames) (\(steadyImage.hits) cached)"
+        info["steadyCpuPercentCanvas"] = String(format: "%.2f", steadyCanvas.cpu)
+        info["steadyFramesCanvas"] = "\(steadyCanvas.frames) (\(steadyCanvas.hits) cached)"
         close()
         await sleep(0.3)
         DogFrameProbe.reset()

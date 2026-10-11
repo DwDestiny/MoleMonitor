@@ -97,6 +97,20 @@ final class DogDriver {
         return (image, pose)
     }
 
+    /// `stripImage` with its thread CPU time kept for the dog checks.
+    func timedStrip(_ frame: DogFrame, input: DogInput, dark: Bool, size: CGSize, scale: CGFloat) -> (image: CGImage, pose: DogPose)? {
+#if UITEST
+        let start = DogFrameProbe.clock()
+        defer { lastStripNs = DogFrameProbe.clock() - start }
+#endif
+        return stripImage(frame, input: input, dark: dark, size: size, scale: scale)
+    }
+
+#if UITEST
+    /// Thread CPU time of the last `timedStrip` call, ns (the dog checks).
+    private(set) var lastStripNs: UInt64 = 0
+#endif
+
     /// Bitmaps held now (the dog checks).
     var stripBitmapCount: Int { strips.values.reduce(0) { $0 + $1.count } }
 
@@ -144,30 +158,57 @@ struct DogView: View {
             } else {
                 let frame = driver.frame(at: timeline.date, input: input)
                 let date = timeline.date
-                Canvas { context, canvasSize in
+                let box = DogView.fit(size)
+                // A steady frame is a cached bitmap shown as an Image: no drawing in this frame at all.
+                let strip = DogView.stripAsImage
+                    ? driver.timedStrip(frame, input: input, dark: dark, size: box.size, scale: scale) : nil
+                if let strip {
+                    let _ = DogView.probe(date, frame, legs: strip.pose.legAngle, driver: driver)
+                    Image(decorative: strip.image, scale: scale)
+                        .frame(width: size.width, height: size.height)
+                } else {
+                    Canvas { context, canvasSize in
 #if UITEST
-                    let drawStart = DogFrameProbe.clock()
+                        let drawStart = DogFrameProbe.clock()
 #endif
-                    let box = DogView.fit(canvasSize)
-                    let strip = driver.stripImage(frame, input: input, dark: dark, size: box.size, scale: scale)
-                    if let strip {
-                        context.draw(Image(decorative: strip.image, scale: scale), in: box)
-                    } else {
-                        context.withCGContext { cg in
-                            DogRenderer.drawFrame(frame, input: input, dark: dark, in: box, ctx: cg)
+                        let box = DogView.fit(canvasSize)
+                        let strip = driver.stripImage(frame, input: input, dark: dark, size: box.size, scale: scale)
+                        if let strip {
+                            context.draw(Image(decorative: strip.image, scale: scale), in: box)
+                        } else {
+                            context.withCGContext { cg in
+                                DogRenderer.drawFrame(frame, input: input, dark: dark, in: box, ctx: cg)
+                            }
                         }
-                    }
 #if UITEST
-                    DogFrameProbe.record(date: date, frame: frame, drawnLegs: strip?.pose.legAngle ?? frame.pose.legAngle,
-                                         cached: strip != nil, stepNs: driver.lastStepNs,
-                                         drawNs: DogFrameProbe.clock() - drawStart, bitmaps: driver.stripBitmapCount)
+                        DogFrameProbe.record(date: date, frame: frame, drawnLegs: strip?.pose.legAngle ?? frame.pose.legAngle,
+                                             cached: strip != nil, stepNs: driver.lastStepNs,
+                                             drawNs: DogFrameProbe.clock() - drawStart, bitmaps: driver.stripBitmapCount)
 #endif
+                    }
                 }
             }
         }
         .frame(width: size.width, height: size.height)
         .accessibilityElement()
         .accessibilityLabel(Text(DogView.label(input)))
+    }
+
+    /// Steady frames as an Image view (true), or drawn into the Canvas (the dog checks compare the two).
+    static var stripAsImage: Bool {
+#if UITEST
+        return !DogFrameProbe.stripInCanvas
+#else
+        return true
+#endif
+    }
+
+    /// Records an Image-view frame for the dog checks. Does nothing in the release build.
+    static func probe(_ date: Date, _ frame: DogFrame, legs: [Double], driver: DogDriver) {
+#if UITEST
+        DogFrameProbe.record(date: date, frame: frame, drawnLegs: legs, cached: true, stepNs: driver.lastStepNs,
+                             drawNs: driver.lastStripNs, bitmaps: driver.stripBitmapCount)
+#endif
     }
 
     /// The 4:3 design box, fitted and centered in the view.
