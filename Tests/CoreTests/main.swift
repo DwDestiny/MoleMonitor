@@ -271,7 +271,7 @@ do {
     expect(green.level == .green && green.reasonCode == "ok", "small growth is green")
     let y = eval(growthSeries(100), prev: .green)
     expect(y.level == .yellow && y.reasonCode == "growth_5d", "100 GB in 5 days on 1 TB is yellow")
-    expect(y.reason == "5 天内真实已用增长 93 GiB", "reason text: \(y.reason)")
+    expect(y.reason == "5 天内真实已用增长 100 GB", "reason text: \(y.reason)")
     expect(y.triggerBytes == 100 * GB && y.triggerWindow == .day5 && y.growthLevel == .yellow && y.spaceLevel == .green, "yellow verdict details")
     let r = eval(growthSeries(250), prev: .yellow)
     expect(r.level == .red && r.reasonCode == "growth_5d", "250 GB in 5 days is red")

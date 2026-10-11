@@ -132,10 +132,10 @@ enum DiskHealth {
             if targetRank == 0 {
                 (code, text) = ("ok", "磁盘正常")
             } else if growthRank >= spaceRank, let w = trigWindow, let b = trigBytes {
-                (code, text) = ("growth_" + w.key, "\(w.days) 天内真实已用增长 \(ByteText.gib(b))")
+                (code, text) = ("growth_" + w.key, "\(w.days) 天内真实已用增长 \(ByteText.gb(b))")
             } else {
                 let pct = Double(avail) / Double(total) * 100
-                (code, text) = ("low_space", "可用容量 \(ByteText.gib(avail))，占总容量 \(String(format: "%.1f", pct))%")
+                (code, text) = ("low_space", "可用容量 \(ByteText.gb(avail))，占总容量 \(String(format: "%.1f", pct))%")
             }
         } else if newRank < prevRank {
             (code, text) = ("recovering", "磁盘用量回落中，等级逐级下调")
