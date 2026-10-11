@@ -336,7 +336,8 @@ private struct CoarseLayer: View, Equatable {
                     .foregroundStyle(tok.textSecondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .annotation(position: .bottom, alignment: .leading, spacing: 0) {
-                        Text(String(format: "%.0f", th))
+                        // Only the warning threshold has a label. The higher one would touch it.
+                        Text(th == plot.thresholds.first ? String(format: "%.0f", th) : "")
                             .font(PanelFont.caption)
                             .foregroundStyle(tok.textSecondary)
                     }
