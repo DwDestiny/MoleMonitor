@@ -240,13 +240,8 @@ enum PanelFormat {
         return pieces.count == 2 ? (pieces[0], pieces[1]) : (pieces.first ?? "—", "")
     }
 
-    /// 1024-based swap size, as the system reports it: "1.2 GB", "820 MB".
-    static func swap(_ bytes: Int64?) -> String {
-        guard let bytes else { return "—" }
-        let gib = Double(bytes) / 1_073_741_824.0
-        if gib >= 1 { return String(format: "%.1f GB", gib) }
-        return String(format: "%.0f MB", Double(bytes) / 1_048_576.0)
-    }
+    /// Decimal swap size like the other sizes: "1.2 GB", "820 MB".
+    static func swap(_ bytes: Int64?) -> String { appMemory(bytes) }
 
     static func appMemory(_ bytes: Int64?) -> String {
         guard let bytes else { return "—" }
