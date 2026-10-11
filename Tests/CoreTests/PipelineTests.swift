@@ -11,6 +11,7 @@ func runPipelineTests() {
     runStatusExtrasTests()
     runPromptConsistencyTests()
     runPlannerTests()
+    runSleepStoreTests()
 }
 
 private func alertFor(_ item: HealthItem, _ level: HealthLevel, type: String, since: Date) -> AlertItem {
@@ -277,4 +278,23 @@ private func runPlannerTests() {
     let part = NotificationPlanner.schedule(both, budget: &tight, now: now)
     expect(part.map { $0.item } == [.memory, .disk], "the budget goes to the most serious first: \(part.map { $0.item.rawValue })")
     expect(NotificationPlanner.schedule(both, budget: &tight, now: now.addingTimeInterval(60)).isEmpty, "budget is spent")
+}
+
+private func runSleepStoreTests() {
+    section("SleepStore")
+    func rec(_ hoursAgo: Double, hours: Double = 6) -> SleepRecord {
+        let woke = now.addingTimeInterval(-hoursAgo * 3600)
+        return SleepRecord(sleptAt: woke.addingTimeInterval(-hours * 3600), wokeAt: woke, batteryBefore: 80, batteryAfter: 60, onBatteryBeforeSleep: true)
+    }
+    var list = [SleepRecord]()
+    for i in 0..<10 { list = SleepStore.adding(rec(Double(i) * 10 + 1), to: list, now: now) }
+    expect(list.count == 8 && list.last?.wokeAt == rec(1).wokeAt, "keeps the 8 newest records within 7 days: \(list.count)")
+    expect(list.allSatisfy { now.timeIntervalSince($0.wokeAt) <= 7 * 86400 }, "no record older than 7 days")
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("molemonitor-sleep-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    do { try SleepStore.write(list, dir: dir) } catch { expect(false, "sleeps.json writes: \(error)") }
+    expect(SleepStore.load(dir: dir, now: now) == list, "sleeps.json round-trips")
+    try? Data("not json".utf8).write(to: dir.appendingPathComponent(SleepStore.fileName))
+    expect(SleepStore.load(dir: dir, now: now).isEmpty, "a garbled file gives an empty list")
+    expect(SleepStore.load(dir: dir.appendingPathComponent("none"), now: now).isEmpty, "a missing file gives an empty list")
 }
