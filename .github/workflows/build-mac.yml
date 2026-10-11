@@ -1,0 +1,60 @@
+# Builds and tests MoleMonitor on an Apple Silicon runner. Public repository: standard runners are free.
+# Cost guard: one job, path filter, cancel superseded runs, 15 minute timeout, no schedule.
+name: build-mac
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Sources/**"
+      - "Tests/**"
+      - "scripts/**"
+      - "Vendor/**"
+      - ".github/workflows/build-mac.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-mac-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          /usr/bin/swiftc --version
+
+      - name: Core and CLI tests
+        run: |
+          set -o pipefail
+          SWIFTC=/usr/bin/swiftc python3 scripts/test_core.py
+          SWIFTC=/usr/bin/swiftc python3 scripts/test_cli.py
+
+      - name: Build app
+        run: python3 scripts/build.py
+
+      - name: Acceptance
+        env:
+          MOLEMONITOR_CI_OUT: ${{ runner.temp }}
+        run: python3 scripts/ci_acceptance.py
+
+      - name: Upload preview and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: molemonitor-ci
+          path: |
+            ${{ runner.temp }}/molemonitor-ci/preview.png
+            ${{ runner.temp }}/molemonitor-ci/status.json
+          if-no-files-found: ignore
+          retention-days: 3
