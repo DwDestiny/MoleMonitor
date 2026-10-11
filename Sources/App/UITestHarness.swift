@@ -881,7 +881,7 @@ final class UITestRunner {
         await closePanelQuietly()
         // Open 2: the full entrance again, with frame captures.
         PanelEntranceGate.resetForTest()
-        guard let second = await openPanel(offsets: [0, 60, 120, 200, 300, 450], via: .sendAction, holdMs: 600, prefix: "open1") else {
+        guard let second = await openPanel(offsets: [0, 60, 120, 200, 300, 450, 650], via: .sendAction, holdMs: 750, prefix: "open1") else {
             record("C", "入场动画在推进", false, since: now(), "The panel did not open the second time.")
             finish(abort: "The panel did not reopen for the frame captures.")
             return
@@ -938,6 +938,8 @@ final class UITestRunner {
             return nil
         }
         if let hv = hostView, let shot = capture(hv) { save(shot, "ui-open-first.png") }
+        // The first window-server capture of the process is slow. Do it now so the frames of the later opens are not delayed by it.
+        if let hv = hostView { _ = windowFrame(hv) }
         let visible = hostView?.window?.isVisible == true
         let liveOk = (result.liveSeenMs ?? .infinity) <= 1500
         let gap = probe.maxAppGap(from: result.refTime - 0.05, to: result.refTime + 1.5)
@@ -972,10 +974,11 @@ final class UITestRunner {
         for i in 0..<Swift.max(0, shots.count - 1) {
             fractions.append(UITestPixels.compare(shots[i].shot, shots[i + 1].shot).fraction)
         }
-        let enough = open.windowCapture && shots.count >= 6
-        let moving = enough ? fractions.prefix(4).filter { $0 > 0.005 }.count : 0
-        let settledPixels = enough && fractions[4] < 0.001
-        let total = enough ? UITestPixels.compare(shots[0].shot, shots[5].shot).fraction : 0
+        // The last frame is 200 ms after the one before it, so a finished animation gives no change between them.
+        let enough = open.windowCapture && shots.count >= 7
+        let moving = enough ? fractions.prefix(5).filter { $0 > 0.005 }.count : 0
+        let settledPixels = enough && fractions[5] < 0.001
+        let total = enough ? UITestPixels.compare(shots[0].shot, shots[6].shot).fraction : 0
         let pixelOk = enough && moving >= 2 && settledPixels && total > 0.01
 
         let layer = layerMotion(open)
@@ -992,7 +995,7 @@ final class UITestRunner {
         info["entranceFrameOffsetsMs"] = offsets.map(String.init).joined(separator: ",")
         info["layerSignatures"] = open.signatures.enumerated().filter { $0.offset % 3 == 0 }
             .map { String(format: "%.0f:%.2f/%d", $0.element.offset, $0.element.value, $0.element.count) }.joined(separator: " ")
-        let detail = "layer samples \(open.signatures.count), steps with a changing value at a constant layer count \(layer.steps), last change at \(Int(layer.settledMs)) ms, settled at the end=\(layer.settled), values \(String(format: "%.2f", layer.minValue))...\(String(format: "%.2f", layer.maxValue)), layers with a Core Animation animation (max) \(animatedMax); window-server frames \(shots.count) (capture works=\(open.windowCapture)) at \(offsets) ms, changed-pixel share per step \(fractions.map { String(format: "%.3f", $0) }); open call \(String(format: "%.0f", open.clickMs)) ms; longest main-thread gap after the show call \(String(format: "%.1f", gap)) ms; motion shown by \(how)"
+        let detail = "layer samples \(open.signatures.count), steps with a changing value at a constant layer count \(layer.steps), last change at \(Int(layer.settledMs)) ms, settled at the end=\(layer.settled), values \(String(format: "%.2f", layer.minValue))...\(String(format: "%.2f", layer.maxValue)), layers with a Core Animation animation (max) \(animatedMax); window-server frames \(shots.count) (capture works=\(open.windowCapture)) at \(offsets) ms, changed-pixel share per step \(fractions.map { String(format: "%.3f", $0) }), steps that moved \(moving) of 5, settled at the end=\(settledPixels); open call \(String(format: "%.0f", open.clickMs)) ms; longest main-thread gap after the show call \(String(format: "%.1f", gap)) ms; motion shown by \(how)"
         if pixelOk || layerOk {
             record("C", "入场动画在推进", true, since: t0, detail, values)
         } else if !open.windowCapture && layer.steps < 3 {
@@ -1219,7 +1222,7 @@ final class UITestRunner {
     // I: reopen, J: appearance
     func stepIJ(first: OpenResult) async {
         let t0 = now()
-        guard let again = await openPanel(offsets: [0, 60, 120, 200, 300, 450], via: .sendAction, holdMs: 600, prefix: "open2") else {
+        guard let again = await openPanel(offsets: [0, 60, 120, 200, 300, 450, 650], via: .sendAction, holdMs: 750, prefix: "open2") else {
             record("I", "再次打开", false, since: t0, "popover.isShown is false after the second click.")
             record("J", "深浅色", nil, since: now(), "The panel did not reopen.")
             return
