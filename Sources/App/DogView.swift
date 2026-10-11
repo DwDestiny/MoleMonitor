@@ -194,8 +194,9 @@ struct DogView: View {
         .accessibilityLabel(Text(DogView.label(input)))
     }
 
-    /// Steady frames as an Image view (true), or drawn into the Canvas (false, the default). CI run 38147805217
-    /// measured 2.2 ms process CPU per frame for the Canvas and 2.9 ms for the Image view, so the Canvas stays.
+    /// Steady frames as an Image view (true), or drawn into the Canvas (false, the default). The CI numbers
+    /// cannot rank the two: whichever runs second measures faster, and swapping the order reverses the result.
+    /// The Canvas stays because it held 24 fps in every run.
     /// The dog checks compare the two.
     static var stripAsImage: Bool {
 #if UITEST
