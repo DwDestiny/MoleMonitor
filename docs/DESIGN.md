@@ -1774,6 +1774,8 @@ struct ItemVerdict: Codable, Equatable {
 }
 ```
 
+`AlertItem` 现有声明只符合 `Codable`，而 `ItemVerdict` 要求 `Equatable`。骨架在 `HealthItems.swift` 用 `extension AlertItem: Equatable` 手写比较（不改 `DiskHealth.swift`）。I1 以后可以把 `Equatable` 移到原声明。
+
 **`Sources/Core/HealthRules.swift`（I1）**
 
 ```swift
@@ -1895,6 +1897,15 @@ struct AppUsage: Codable, Equatable, Identifiable {
 struct ProcessCoverage: Codable, Equatable { var readable: Int; var unreadable: Int }
 enum AppSortKey { case cpu, memory }
 
+/// 单个应用的窗口均值，供 CPU 单应用占满规则使用（PROJECT.md 3.2：30 分钟均值 ≥ 90% 为黄，10 分钟均值 < 50% 退出）。
+/// 骨架补充：`CPUHealth.evaluate` 引用了它，但 8.1 原先没有定义。
+struct AppWindowStat: Codable, Equatable {
+    var key: String
+    var name: String
+    var mean10m: Double?
+    var mean30m: Double?
+}
+
 enum AppRanking {
     static let defaultIgnore: Set<String>
     static func usage(previous: [ProcessSample], current: [ProcessSample], seconds: Double,
@@ -1983,6 +1994,13 @@ struct PromptEnvironment: Codable, Equatable {
     var appVersion: String, cliPath: String, dataDir: String
 }
 
+/// 骨架补充：`PromptInput.freshness` 引用了它，但 8.1 原先没有定义。
+enum PromptFreshness: Equatable {
+    case fresh
+    case stale(minutes: Int)
+    case notRunning(minutes: Int)
+}
+
 struct PromptInput: Equatable {
     var env: PromptEnvironment
     var sampledAt: Date
@@ -1992,8 +2010,12 @@ struct PromptInput: Equatable {
     var apps: [AppUsage]
     var appsBasis: String
     var cpuSummary: CPUSummary?
-    var diskGrowth: [String: DiskGrowth]
+    var diskGrowth: [String: DiskGrowth]   // DiskGrowth 的 Equatable 见下方说明
 }
+
+// DiskGrowth 现有声明只符合 Codable，而 PromptInput 要求 Equatable。
+// 骨架在 Prompt.swift 用 extension DiskGrowth: Equatable 手写比较（不改 DiskGrowth.swift）。
+// I1 以后可以把 Equatable 移到原声明。
 
 struct PromptOptions: Equatable {
     var includeAppNames = true
@@ -2055,6 +2077,7 @@ struct DogPart: Equatable {
     var ops: [DogPathOp]             // 部件局部坐标，单位 u
     var pivot: (x: Double, y: Double)   // 部件变换的旋转中心
     var role: DogPartRole            // fur、shade、ear、ink、tongue、blush
+    // 元组不能自动合成 Equatable。骨架手写了 static func ==，签名不变。
 }
 enum DogPartRole: String { case fur, shade, ear, ink, tongue, blush }
 
@@ -2134,13 +2157,15 @@ struct PreviewFixture {
     var status: StatusFile
     var diskSeries: [DiskPoint]
     var diskTrigger: DiskTrigger?
+    /// 8.5 表中该场景的固定 DogInput。骨架补充：8.1 原先没有这个字段，但 8.5 要求 fixture 含 DogInput。
+    var dogInput: DogInput
 }
 extension PreviewScenario {
     static func fixture(_ c: PreviewCase, full: Bool, now: Date) -> PreviewFixture
 }
 ```
 
-`full: false` 生成空数据（没有趋势、没有 App）。fixture 中的 App 名与数字都是虚构的。
+`full: false` 生成空数据：没有趋势、没有 App、没有睡眠记录、没有磁盘曲线。`verdicts`、`current`、`status`、`dogInput` 保持不变。fixture 中的 App 名与数字都是虚构的，bundle id 使用保留域名 `com.example.*`。`verdicts` 按显示顺序排列：问题项在前，正常项按固定优先级在后。`status` 只含磁盘与网络（现有字段），8.1 新增的 `items` 字段由 I1 补充。
 
 **`status.json` 的新增字段（schema_version 保持 1，只增加字段）：**
 
@@ -2215,7 +2240,7 @@ final class MonitorEngine: ObservableObject {
 
 ```
 AppDelegate（MoleMonitor.swift，I3）
-├── StatusIconController（StatusIcon.swift，I2）
+├── StatusIconController（StatusIcon.swift，I2；init(statusItem: NSStatusItem?)，apply(_:text:) 在主线程调用）
 │     └── 接收 MenuIconState 与文字，管理模板帧缓存与切换动画（头像取自 DogArt.menuHead，角标取自 DogArt.badge）
 └── NSPopover
       └── PanelRoot（PanelRoot.swift，I3）
@@ -2284,11 +2309,14 @@ I1 在主分支交付“空实现”骨架。空实现的定义：代码能编�
 | 1 | [8.1](#81-core-新类型纯-foundation) 的全部 Core 新类型 | 签名与字段完整。函数返回占位值（空数组、`nil`、固定值） |
 | 2 | `PanelLayout.plan` | 按问题项数量返回 3 档固定计划：0 项为安静计划 332，1 项为单问题计划 560，≥2 项为多问题计划 620。不做证据区弹性与压缩 |
 | 3 | `PreviewScenario.fixture` | 7 个场景（见下表）的固定数据，含固定 `DogInput` 值 |
-| 4 | `GlyphPaths` | `GlyphPaths.badge(_:style:)` 返回 10 × 10 pt 占位方块路径 |
-| 5 | `StatusIconController.apply(_:text:)` | 空函数 |
-| 6 | `DogGallery.render(to:)` | 空函数（创建目录，不写图） |
-| 7 | `MoleMonitor.swift` 中的 `--dog-gallery <目录>` 分发 | 1 行，调用 `DogGallery.render(to:)` |
+| 4 | `GlyphPaths` | `static func badge(_ item: HealthItem, style: GlyphStyle) -> CGPath` 返回 10 × 10 pt 占位方块路径。`enum GlyphStyle { case glyph, letter }`（骨架补充，对应 3.3 的字形方案与字母方案） |
+| 5 | `StatusIconController` | `@MainActor final class`，`init(statusItem: NSStatusItem?)`，`func apply(_ state: MenuIconState, text: String)` 是空函数。现有 `StatusIcon` 与 `StatusIconCache` 保持不变 |
+| 6 | `DogGallery` | `@MainActor enum`。`static func render(to dir: URL) -> String?` 创建目录，不写图，成功返回 `nil`。`static func run(_ args: [String]) -> Never` 解析参数并退出（成功 0，失败 1，缺少路径 2） |
+| 7 | `MoleMonitor.swift` 中的 `--dog-gallery <目录>` 分发 | 1 行：`if args.contains("--dog-gallery") { DogGallery.run(args) }`，`run` 内部调用 `render(to:)` |
+| 7a | `DogView` | `struct DogView: View`，`init(input: DogInput, size: CGSize)`。画一个带文字 “SKELETON” 的圆角矩形，无动画 |
 | 8 | `Tests/CoreTests/main.swift` 中调用 `runDogTests()` 的接入行 | 1 行。`DogTests.swift` 内的 `runDogTests()` 是空函数 |
+
+骨架的 `PanelLayout.plan` 按 2.3 的区块顺序排列区块。问题项取 `ProblemOrder.problems`（骨架不排序，保持输入顺序）。证据区高度固定 102，不压缩，`height` 等于 `tier`，`compressions` 为空，授权行只看 `showAuthorization`。I1 的真实实现替换这些固定值。
 
 `PreviewScenario.fixture` 的 7 个场景与固定 `DogInput`：
 

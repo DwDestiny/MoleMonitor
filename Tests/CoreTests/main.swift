@@ -568,6 +568,15 @@ runNetworkTests()
 
 runLiveTests()
 
+// MARK: - Redesign suites (skeleton: empty functions; each owner fills their own file)
+
+runPromptTests()
+runTrendTests()
+runHealthRuleTests()
+runPowerTests()
+runLayoutTests()
+runDogTests()
+
 // MARK: - Summary
 
 try? FileManager.default.removeItem(at: tmpRoot)

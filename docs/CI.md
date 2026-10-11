@@ -21,7 +21,7 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 | 5. Acceptance and UI regression gate | `python3 scripts/ci_acceptance.py`，检查项见 [scripts/README.md](../scripts/README.md) |
 | 6. Upload | 上传 artifact `molemonitor-ci`，保留 3 天，即使前面步骤失败也上传 |
 
-触发条件：推送到 `main` 且改动了 `Sources/`、`Tests/`、`scripts/`、`Vendor/` 或工作流文件，或手动触发（`workflow_dispatch`）。
+触发条件：推送到任意分支（`branches: ["**"]`）且改动了 `Sources/`、`Tests/`、`scripts/`、`Vendor/` 或工作流文件，或手动触发（`workflow_dispatch`）。
 
 ## 成本与免费额度
 
@@ -31,7 +31,7 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 | 作业数 | 1 | 不加多系统或多版本矩阵 |
 | 超时 | `timeout-minutes: 15` | 防止卡死后占用运行器 |
 | 触发 | 路径过滤，无 `schedule` | 文档改动不触发。不做定时运行 |
-| 并发 | `cancel-in-progress: true` | 同一分支的新提交取消旧运行 |
+| 并发 | `cancel-in-progress: true`，分组按分支 | 同一分支的新提交取消旧运行。不同分支的运行互不取消 |
 | 权限 | `contents: read` | 工作流不写仓库 |
 
 > **警告**：不要把仓库改为私有，除非先复核计费。私有仓库的 macOS 运行器按分钟计费，并且倍率高于 Linux。改为私有后，本工作流会开始产生费用。

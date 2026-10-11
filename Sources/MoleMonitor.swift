@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Command line arguments and MonitorEngine state (status.json data in the data directory).
-// Output: Menu bar app, or --self-test, --diagnose (headless) and --preview (static PNG) modes.
+// Output: Menu bar app, or --self-test, --diagnose (headless), --preview (static PNG) and --dog-gallery (PNG gallery) modes.
 // Pos: Entry point and app lifecycle; no cleanup or privileged commands, no Go collector.
 import AppKit
 import Combine
@@ -137,6 +137,7 @@ enum MoleMonitorMain {
             Diagnose.run(args)
             return
         }
+        if args.contains("--dog-gallery") { DogGallery.run(args) }
         if args.contains("--preview") {
             guard let path = argumentValue("--preview", in: args) else {
                 FileHandle.standardError.write(Data("--preview needs an absolute output path.\n".utf8))

@@ -171,3 +171,20 @@ enum IconText {
         }
     }
 }
+
+/// The redesigned menu bar icon (docs/DESIGN.md 3, 8.3). I3 owns the status item and calls `apply` on each change.
+/// SKELETON: `apply` does nothing. The current icon still comes from `StatusIcon` and `StatusIconCache` above.
+/// I2 implements it: template frame cache from `DogArt.menuHead` and `DogArt.badge`, switch animation.
+@MainActor
+final class StatusIconController {
+    private weak var statusItem: NSStatusItem?
+
+    /// `statusItem` is nil in a headless run. Not listed in DESIGN.md 8.3 at skeleton time.
+    init(statusItem: NSStatusItem?) {
+        self.statusItem = statusItem
+    }
+
+    func apply(_ state: MenuIconState, text: String) {
+        // SKELETON
+    }
+}
