@@ -54,7 +54,9 @@ private func dogWinding(_ polys: [[(Double, Double)]], _ x: Double, _ y: Double)
 }
 
 /// Coverage grid of a fill (stroke == nil) or a centered stroke of the given width.
-private func dogCoverage(_ polys: [[(Double, Double)]], w: Int, h: Int, stroke: Double? = nil, ss: Int = 8) -> [[Double]] {
+/// `insideOnly` keeps only the part of the stroke inside the fill (the clipped inner ring of the hollow icon).
+private func dogCoverage(_ polys: [[(Double, Double)]], w: Int, h: Int, stroke: Double? = nil, insideOnly: Bool = false,
+                         ss: Int = 8) -> [[Double]] {
     var grid = Array(repeating: Array(repeating: 0.0, count: w), count: h)
     for py in 0..<h {
         for px in 0..<w {
@@ -64,7 +66,7 @@ private func dogCoverage(_ polys: [[(Double, Double)]], w: Int, h: Int, stroke: 
                     let x = Double(px) + (Double(sx) + 0.5) / Double(ss)
                     let y = Double(py) + (Double(sy) + 0.5) / Double(ss)
                     if let width = stroke {
-                        if dogNearOutline(polys, x, y, width / 2) { c += 1 }
+                        if dogNearOutline(polys, x, y, width / 2), !insideOnly || dogWinding(polys, x, y) != 0 { c += 1 }
                     } else if dogWinding(polys, x, y) != 0 {
                         c += 1
                     }
@@ -97,21 +99,21 @@ func dogMenuGrid(_ posture: MenuPosture, badge: HealthItem?) -> [[Double]] {
     var a = Array(repeating: Array(repeating: 0.0, count: w), count: h)
     func over(_ c: [[Double]]) { for y in 0..<h { for x in 0..<w { a[y][x] = c[y][x] + a[y][x] * (1 - c[y][x]) } } }
     func clear(_ c: [[Double]]) { for y in 0..<h { for x in 0..<w { a[y][x] *= (1 - c[y][x]) } } }
-    let hollow = (posture == .hollow)
-    if hollow {
-        // Outer outline of the head and ear union: stroke 2 pt, clear every interior, then the face dots solid.
-        let silhouette = DogArt.menuHead(posture).filter { $0.role == .fur || $0.role == .ear }.map { dogPolygons($0.ops) }
-        for polys in silhouette { over(dogCoverage(polys, w: w, h: h, stroke: 2)) }
-        for polys in silhouette { clear(dogCoverage(polys, w: w, h: h)) }
+    if posture == .hollow {
+        // Inner ring of the silhouette (stroke 3 pt clipped to the head = 1.5 pt inside), then the face dots solid.
+        for part in DogArt.menuHead(posture) where part.role == .fur {
+            over(dogCoverage(dogPolygons(part.ops), w: w, h: h, stroke: 2 * 1.5, insideOnly: true))
+        }
         for part in DogArt.menuHead(posture) where part.role == .cutout { over(dogCoverage(dogPolygons(part.ops), w: w, h: h)) }
-    }
-    for part in DogArt.menuHead(posture) where !hollow {
-        let polys = dogPolygons(part.ops)
-        if part.role == .ear || part.role == .tongue { clear(dogCoverage(polys, w: w, h: h, stroke: 1.5)) }
-        if part.role == .cutout { clear(dogCoverage(polys, w: w, h: h)) } else { over(dogCoverage(polys, w: w, h: h)) }
+    } else {
+        for part in DogArt.menuHead(posture) {
+            let polys = dogPolygons(part.ops)
+            if part.role == .tongue { clear(dogCoverage(polys, w: w, h: h, stroke: 1.5)) }
+            if part.role == .cutout { clear(dogCoverage(polys, w: w, h: h)) } else { over(dogCoverage(polys, w: w, h: h)) }
+        }
     }
     if let badge {
-        clear(dogCoverage(dogPolygons(DogArt.menuBadgeCutout), w: w, h: h))
+        // No cutout: the badge box (x 16 to 24) never touches the head (x 0 to 15).
         let o = DogArt.menuBadgeOrigin
         for part in DogArt.badge(badge) {
             over(dogCoverage(dogPolygons(part.ops) { ($0 + o.x, $1 + o.y) }, w: w, h: h))
@@ -122,7 +124,8 @@ func dogMenuGrid(_ posture: MenuPosture, badge: HealthItem?) -> [[Double]] {
 
 func dogBadgeGrid(_ item: HealthItem) -> [[Double]] {
     let ops = DogArt.badge(item).flatMap { $0.ops }
-    return dogCoverage(dogPolygons(ops), w: 10, h: 10)
+    let side = Int(DogArt.badgeSize)
+    return dogCoverage(dogPolygons(ops), w: side, h: side)
 }
 
 // MARK: - Helpers
@@ -197,13 +200,19 @@ func runDogTests() {
     for posture in MenuPosture.allCases {
         for p in DogArt.menuHead(posture) {
             if !dogClosed(p.ops) { menuBad.append("\(posture.rawValue).\(p.name) open") }
-            for (x, y) in dogPoints(p.ops) where x < 0 || x > 24 || y < 0 || y > 18 { menuBad.append("\(posture.rawValue).\(p.name) outside"); break }
+            // Round 2: the whole head, ears and tongue included, stays left of the badge box (the drawn curve,
+            // not the control points).
+            for (x, y) in dogPolygons(p.ops).joined() where x < 0 || x > DogArt.menuHeadWidth || y < 0 || y > 18 {
+                menuBad.append("\(posture.rawValue).\(p.name) outside"); break
+            }
         }
     }
     for item in HealthItem.allCases {
         for p in DogArt.badge(item) {
             if !dogClosed(p.ops) { menuBad.append("badge \(item.rawValue) open") }
-            for (x, y) in dogPoints(p.ops) where x < 0 || x > 10 || y < 0 || y > 10 { menuBad.append("badge \(item.rawValue) outside"); break }
+            for (x, y) in dogPoints(p.ops) where x < 0 || x > DogArt.badgeSize || y < 0 || y > DogArt.badgeSize {
+                menuBad.append("badge \(item.rawValue) outside"); break
+            }
         }
         expect(!DogArt.badge(item).isEmpty && DogArt.badge(item).count <= 2, "badge \(item.rawValue) has 1 or 2 features")
     }
@@ -217,21 +226,42 @@ func runDogTests() {
     for (k, v) in pm.pairs.sorted(by: { $0.key < $1.key }) { print("  posture \(k): \(String(format: "%.3f", v))") }
     expect(pm.minimum >= IconMetrics.posturePass, "postures differ by XOR >= 0.20 at 1x (min \(String(format: "%.3f", pm.minimum)))")
     for (name, grid) in pGrids {
-        // Pixel centers of the three face cutouts: eyes (6, 8) and (12, 8), nose (9, 11).
-        for (cx, cy) in [(6, 8), (12, 8), (9, 11)] {
+        // Pixels under the three face cutouts: eyes (5, 8) and (9, 8), nose (7, 11); the pant nose sits 1 pt higher.
+        for (cx, cy) in [(5, 8), (9, 8), (7, name == "pant" ? 10 : 11)] {
             expect(grid[cy][cx] < 0.02, "\(name): face cutout pixel (\(cx), \(cy)) is fully clear (alpha \(grid[cy][cx]))")
         }
     }
+    let relaxedRaised = IconMetrics.xorRatio(pGrids[0].1, pGrids[1].1)
+    expect(relaxedRaised >= IconMetrics.relaxedRaisedPass,
+           "relaxed and raised differ by XOR >= 0.25 at 1x (\(String(format: "%.3f", relaxedRaised)))")
     let hollow = dogMenuGrid(.hollow, badge: nil)
     let hollowInk = hollow.joined().filter { $0 >= 0.5 }.count
     let filledInk = pGrids[0].1.joined().filter { $0 >= 0.5 }.count
-    expect(hollowInk > 20 && hollowInk < filledInk / 2, "hollow is an outline (\(hollowInk) of \(filledInk) solid pixels)")
+    expect(hollowInk > 40 && hollowInk * 10 < filledInk * 6, "hollow is a ring, lighter than the filled head (\(hollowInk) of \(filledInk) solid pixels)")
     let bGrids = HealthItem.allCases.map { ($0.rawValue, dogBadgeGrid($0)) }
     let bm = IconMetrics.matrix(bGrids)
     for (k, v) in bm.pairs.sorted(by: { $0.key < $1.key }) { print("  badge \(k): \(String(format: "%.3f", v))") }
     expect(bm.minimum >= IconMetrics.badgePass, "badge glyphs differ by XOR >= 0.35 at 1x (min \(String(format: "%.3f", bm.minimum)))")
-    let withBadge = dogMenuGrid(.raised, badge: .cpu)
-    expect(withBadge[12][13] < 0.05, "the badge gap clears the head next to the badge")
+    // Round 2: the badge never cuts the head. Columns 0 to 15 are the same with and without a badge.
+    let o = DogArt.menuBadgeOrigin, side = DogArt.badgeSize
+    expect(o.x >= DogArt.menuHeadWidth + 1 && o.x + side <= DogArt.menuSize.w && o.y + side <= DogArt.menuSize.h,
+           "the badge box sits right of the head, inside 24 x 18")
+    var headInBadge = [String]()
+    for posture in MenuPosture.allCases {
+        let plain = dogMenuGrid(posture, badge: nil)
+        for item in HealthItem.allCases {
+            let marked = dogMenuGrid(posture, badge: item)
+            var same = true, badgeInk = 0
+            for y in 0..<18 {
+                for x in 0..<16 where abs(marked[y][x] - plain[y][x]) > 1e-9 { same = false }
+                for x in 16..<24 where marked[y][x] >= 0.5 { badgeInk += 1 }
+            }
+            expect(same, "\(posture.rawValue) + \(item.rawValue): the badge leaves the head untouched")
+            expect(badgeInk >= 20, "\(posture.rawValue) + \(item.rawValue): the badge has at least 20 solid pixels (\(badgeInk))")
+        }
+        for y in 0..<18 { for x in 16..<24 where plain[y][x] > 0 { headInBadge.append("\(posture.rawValue) \(x),\(y)") } }
+    }
+    expect(headInBadge.isEmpty, "no head ink in the badge columns: \(headInBadge)")
     expect(IconMetrics.xorRatio([[1, 0]], [[1, 1]]) == 0.5, "xorRatio: 1 different of max 2 solid")
     expect(IconMetrics.xorRatio([[0.4]], [[0]]) == 0, "xorRatio: alpha below 0.5 is not solid")
 
@@ -301,7 +331,7 @@ func runDogTests() {
 
     // Steady gaits: phase accumulates; walk stays under 12 degrees per frame (DESIGN.md 9.1); trot and sprint
     // stay within their natural limit amplitude x 2 pi x f x dt (12 degrees is not reachable for them at 24 fps).
-    for (cpu, amp, fmax) in [(25.0, 16.0, 1.4), (60.0, 26.0, 2.4), (95.0, 40.0, 3.6)] {
+    for (cpu, amp, fmax) in [(25.0, 20.0, 1.4), (60.0, 34.0, 2.4), (95.0, 40.0, 3.6)] {
         var m3 = DogMotor(initialCPU: cpu)
         var phaseOK = true, previousPhase = m3.phase, jump3 = 0.0
         var legs3 = m3.step(dt: 0, input: dogInput(cpu: cpu)).legAngle
@@ -319,19 +349,27 @@ func runDogTests() {
 
     section("Dog static poses and overlays")
     let walk = DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 20))
-    expect(abs(walk.legAngle[0] - 16) < 1e-9 && abs(walk.legAngle[2] + 16) < 1e-9, "static walk is the phase pi/2 frame")
+    let walkSwing = 20 * sin(0.75 * Double.pi)
+    expect(abs(walk.legAngle[0] - walkSwing) < 1e-9 && abs(walk.legAngle[2] + walkSwing) < 1e-9, "static walk is the phase pi/2 frame")
+    expect(abs(walk.legLift[3] - 0.3) < 1e-9 && walk.legAngle[3] > 10, "static walk: the near fore paw is lifted and forward")
+    expect(abs(walk.bodyY + 2) < 1e-9 && abs(walk.earAngle - 10) < 1e-9, "static walk: body up 2 u, ears swing")
+    let walkB = DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 20), phase: Double.pi)
+    expect(abs(walkB.bodyY) < 1e-9 && walkB.legLift[2] > 0.29, "walk frame B: body down, the near hind paw lifted")
     let trot = DogMotor.staticPose(gait: .trot, input: dogInput(cpu: 60))
-    expect(abs(trot.legAngle[3] - 26) < 1e-9 && abs(trot.legAngle[1] + 26) < 1e-9, "static trot: diagonal pairs at +-26")
+    expect(abs(trot.legAngle[3] - 34) < 1e-9 && abs(trot.legAngle[1] + 34) < 1e-9 && trot.bodyPitch == 4,
+           "static trot: diagonal pairs at +-34, body leans 4 degrees")
     let sprint = DogMotor.staticPose(gait: .sprint, input: dogInput(cpu: 90))
-    expect(sprint.speedLines == 1 && sprint.earAngle < -20, "static sprint: speed lines and ears blown back")
+    expect(sprint.bodyPitch >= 8 && sprint.earAngle < -35, "static sprint: strong lean and ears blown back")
+    let sprintLayers = DogRig.layers(gait: .sprint, pose: sprint)
+    expect(!sprintLayers.contains { $0.part.name.hasPrefix("speed") }, "sprint has no speed lines")
     let gray = DogMotor.staticPose(gait: .trot, input: dogInput(cpu: 8, isStatic: true))
     expect(gray.opacity == 0.45 && gray.bubble == 0 && gray.legAngle == [0, 0, 0, 0], "collecting or stale: still, gray stand")
     let hot = DogMotor.staticPose(gait: .lie, input: dogInput(cpu: 5, thermal: .serious))
     expect(hot.mouthOpen == 1 && hot.tongue == 8, "thermal serious: pant with the static tongue")
     expect(DogRig.head(for: .lie, pose: hot) == .pant, "pant replaces the head")
     let heavy = DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 20, memory: .red))
-    expect(heavy.bundle == 1 && heavy.bodyY == 2, "memory red: bundle shown, not puffed, body 2 u lower")
-    expect(abs(heavy.legAngle[0] - 16 * 0.85) < 1e-9, "the bundle cuts the swing to 85 %")
+    expect(heavy.bundle == 1 && abs(heavy.bodyY - (walk.bodyY + 2)) < 1e-9, "memory red: bundle shown, not puffed, body 2 u lower")
+    expect(abs(heavy.legAngle[0] - walkSwing * 0.85) < 1e-9, "the bundle cuts the swing to 85 %")
     let worried = DogMotor.staticPose(gait: .lie, input: dogInput(cpu: 5, worst: .disk, level: .yellow))
     expect(worried.bubble == 1 && worried.earAngle == -25 && worried.headTilt == 8, "any problem: bubble, ears up, head tilt")
     let lieLayers = DogRig.layers(gait: .lie, pose: DogMotor.staticPose(gait: .lie, input: dogInput(cpu: 2)))

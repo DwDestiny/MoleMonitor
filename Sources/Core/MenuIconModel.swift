@@ -96,6 +96,8 @@ enum IconMetrics {
     /// Badge glyphs pass at this ratio (G1-5), postures at 0.20 (G1-4).
     static let badgePass = 0.35
     static let posturePass = 0.20
+    /// Relaxed against raised must reach this ratio (round 2, I2): "attention" has to read at 1x on its own.
+    static let relaxedRaisedPass = 0.25
 
     /// XOR pixel count divided by the larger solid pixel count. Inputs are alpha grids of the same size.
     static func xorRatio(_ a: [[Double]], _ b: [[Double]]) -> Double {

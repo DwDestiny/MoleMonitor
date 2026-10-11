@@ -24,6 +24,8 @@ enum DogGallery {
         var name: String
         var gait: DogGait
         var input: DogInput
+        /// Stride phase (radians). The default pi / 2 is the key frame the card shows.
+        var phase: Double = Double.pi / 2
     }
 
     static func input(cpu: Double? = 5, thermal: ThermalLevel = .nominal, memory: HealthLevel = .green,
@@ -38,7 +40,11 @@ enum DogGallery {
             CardPose(name: "lie", gait: .lie, input: input(cpu: 3)),
             CardPose(name: "stand", gait: .stand, input: input()),
             CardPose(name: "walk", gait: .walk, input: input(cpu: 25)),
+            CardPose(name: "walk-a", gait: .walk, input: input(cpu: 25), phase: Double.pi),
+            CardPose(name: "walk-b", gait: .walk, input: input(cpu: 25), phase: Double.pi * 1.5),
             CardPose(name: "trot", gait: .trot, input: input(cpu: 60)),
+            CardPose(name: "trot-a", gait: .trot, input: input(cpu: 60), phase: 0),
+            CardPose(name: "trot-b", gait: .trot, input: input(cpu: 60), phase: Double.pi * 1.5),
             CardPose(name: "sprint", gait: .sprint, input: input(cpu: 95)),
             CardPose(name: "pant", gait: .stand, input: input(thermal: .serious)),
             CardPose(name: "bundle", gait: .walk, input: input(cpu: 25, memory: .red)),
@@ -114,7 +120,7 @@ enum DogGallery {
                     for scale in [1, 2] {
                         let name = "card/\(pose.name)-\(Int(size.width))-\(dark ? "dark" : "light")@\(scale)x.png"
                         let image = draw(size, scale: scale, background: cardBackground[dark]) { ctx in
-                            DogRenderer.drawStatic(pose.input, gait: pose.gait, dark: dark,
+                            DogRenderer.drawStatic(pose.input, gait: pose.gait, phase: pose.phase, dark: dark,
                                                    in: CGRect(origin: .zero, size: size), ctx: ctx)
                         }
                         save(image, name, group: "card-\(Int(size.width))-\(dark)-\(scale)")
@@ -129,7 +135,7 @@ enum DogGallery {
         for dark in [false, true] {
             let size = cardSizes[0]
             let back = Color(cgColor: rgb(cardBackground[dark] ?? 0))
-            let view = DogView(input: cardPoses[3].input, size: size)
+            let view = DogView(input: input(cpu: 60), size: size)
                 .background(back)
                 .environment(\.colorScheme, dark ? .dark : .light)
             let renderer = ImageRenderer(content: view)
@@ -255,15 +261,21 @@ enum DogGallery {
             failures.append("Posture gate: minimum XOR \(rounded(m.minimum)) < \(IconMetrics.posturePass).")
         }
         let relaxed = grids[0].1
-        let face: [(String, Int, Int)] = [("eyeLeft", 6, 8), ("eyeRight", 12, 8), ("nose", 9, 11)]
+        // Round 2: relaxed and raised must differ more than the general gate, so that "attention" reads at 1x.
+        let relaxedRaised = IconMetrics.xorRatio(grids[0].1, grids[1].1)
+        if relaxedRaised < IconMetrics.relaxedRaisedPass {
+            failures.append("Relaxed and raised differ by \(rounded(relaxedRaised)) < \(IconMetrics.relaxedRaisedPass) at 1x.")
+        }
+        // Pixel centers of the eyes (5.5, 8.5), (9.5, 8.5) and the nose (7.5, 11.4) of the menu art.
+        let face: [(String, Int, Int)] = [("eyeLeft", 5, 8), ("eyeRight", 9, 8), ("nose", 7, 11)]
         var faceJSON = [String: Double]()
         for (name, x, y) in face {
             faceJSON[name] = rounded(relaxed[y][x])
             if relaxed[y][x] >= 0.02 { failures.append("Face cutout \(name) is not clear at 1x (alpha \(relaxed[y][x])).") }
         }
         let hollow = menuGrid(MenuIconState(posture: .hollow, badge: nil))
-        if solidCount(hollow) * 2 >= solidCount(relaxed) {
-            failures.append("Hollow icon is not lighter than half of the filled icon.")
+        if solidCount(hollow) * 10 >= solidCount(relaxed) * 6 {
+            failures.append("Hollow icon is not lighter than 60 % of the filled icon.")
         }
         var coverage = [String: Int]()
         for entry in menuStates where entry.style == choice {
@@ -273,6 +285,8 @@ enum DogGallery {
         menuJSON["postureXOR"] = m.pairs.mapValues(rounded)
         menuJSON["postureMinimum"] = rounded(m.minimum)
         menuJSON["postureThreshold"] = IconMetrics.posturePass
+        menuJSON["relaxedRaisedXOR"] = rounded(relaxedRaised)
+        menuJSON["relaxedRaisedThreshold"] = IconMetrics.relaxedRaisedPass
         menuJSON["faceCutoutAlpha"] = faceJSON
         menuJSON["solidPixels"] = coverage
         menuJSON["hollowSolid"] = solidCount(hollow)
@@ -298,7 +312,7 @@ enum DogGallery {
                     fill(cell, cardBackground[dark] ?? 0, in: ctx)
                     let dog = CGRect(x: cell.minX + (cell.width - cardSize.width) / 2, y: cell.minY + 4,
                                      width: cardSize.width, height: cardSize.height)
-                    DogRenderer.drawStatic(pose.input, gait: pose.gait, dark: dark, in: dog, ctx: ctx)
+                    DogRenderer.drawStatic(pose.input, gait: pose.gait, phase: pose.phase, dark: dark, in: dog, ctx: ctx)
                     let text = "\(pose.name) \(Int(cardSize.width))"
                     label(text, at: CGPoint(x: cell.minX + 4, y: cell.maxY - 5), size: 9, dark: dark, in: ctx)
                 }
@@ -349,14 +363,14 @@ enum DogGallery {
         let top: CGFloat = 30
         let size = CGSize(width: 70 + cell * 5 + 8, height: top + (cell + 24) * 4 + 8)
         let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
-            label("角标对照：每种 2 行，上为 8 倍矢量，下为 1x（10 × 10 像素）放大 8 倍", at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
+            label("角标对照：每种 2 行，上为 8 倍矢量，下为 1x（8 × 8 像素）放大 8 倍", at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
             for (s, style) in GlyphStyle.allCases.enumerated() {
                 for (i, item) in HealthItem.allCases.enumerated() {
                     let x = 70 + CGFloat(i) * cell
                     let yVector = top + CGFloat(s * 2) * (cell + 24)
                     let yPixel = yVector + cell + 24
                     label(item.label, at: CGPoint(x: x, y: yVector + 14), size: 10, in: ctx)
-                    let box = CGRect(x: x, y: yVector + 20, width: 80, height: 80)
+                    let box = CGRect(x: x, y: yVector + 20, width: 64, height: 64)
                     fill(box, barBackground[false] ?? 0, in: ctx)
                     ctx.saveGState()
                     ctx.translateBy(x: box.minX, y: box.minY)
@@ -365,12 +379,13 @@ enum DogGallery {
                     ctx.addPath(GlyphPaths.badgeYDown(item, style: style))
                     ctx.fillPath()
                     ctx.restoreGState()
-                    let one = draw(CGSize(width: 10, height: 10), scale: 1, background: barBackground[false]) { c1 in
+                    let side = CGFloat(DogArt.badgeSize)
+                    let one = draw(CGSize(width: side, height: side), scale: 1, background: barBackground[false]) { c1 in
                         c1.setFillColor(barInk(false))
                         c1.addPath(GlyphPaths.badgeYDown(item, style: style))
                         c1.fillPath()
                     }
-                    pixels(one, in: CGRect(x: x, y: yPixel + 4, width: 80, height: 80), ctx: ctx)
+                    pixels(one, in: CGRect(x: x, y: yPixel + 4, width: 64, height: 64), ctx: ctx)
                 }
                 let name = (style == .glyph) ? "字形" : "字母"
                 let yy = top + CGFloat(s * 2) * (cell + 24)

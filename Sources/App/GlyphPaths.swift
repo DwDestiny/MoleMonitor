@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: A health item and a glyph style (docs/DESIGN.md 3.3, 8.4, 8.5).
-// Output: The category badge path in a 10 x 10 pt box: `badge` is y up (AppKit), `badgeYDown` is y down.
+// Output: The category badge path: `badge` is y up in a 10 x 10 pt box (fixed contract, the card's CategoryGlyph),
+// `badgeYDown` is y down in a box of any size, by default the 8 x 8 pt menu bar box (DogArt.badgeSize).
 // Pos: One glyph source for the menu bar badge, the bubble and the card's CategoryGlyph (I3 calls it). Owner I2.
 //
-// Glyphs come from the fixed art in DogArt.badge. Letters (the fallback) come from SF Pro Rounded Bold,
-// cap height 8 pt, centered in the box. The menu bar uses `.glyph`: all 10 pairs pass the 1x XOR gate (badge-matrix.json).
+// Glyphs come from the fixed art in DogArt.badge (8 x 8 pt art), scaled to the box. Letters (the fallback) come from
+// SF Pro Rounded Bold, cap height 0.8 x the box, centered in the box. The menu bar uses `.glyph`: all 10 pairs pass the 1x XOR gate (badge-matrix.json).
 
 import AppKit
 import CoreGraphics
@@ -32,22 +33,25 @@ enum GlyphPaths {
         }
     }
 
-    /// Badge path for one health item, inside (0, 0, 10, 10), y up.
+    /// Badge path for one health item, inside (0, 0, 10, 10), y up. The signature and the box are fixed by the skeleton.
     static func badge(_ item: HealthItem, style: GlyphStyle) -> CGPath {
-        var flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(DogArt.badgeSize))
-        let down = badgeYDown(item, style: style)
+        let box: CGFloat = 10
+        var flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: box)
+        let down = badgeYDown(item, style: style, box: box)
         return down.copy(using: &flip) ?? down
     }
 
-    /// Badge path for one health item, inside (0, 0, 10, 10), y down (the DogArt coordinate system).
-    static func badgeYDown(_ item: HealthItem, style: GlyphStyle) -> CGPath {
+    /// Badge path for one health item, inside (0, 0, box, box), y down (the DogArt coordinate system).
+    static func badgeYDown(_ item: HealthItem, style: GlyphStyle, box: CGFloat = CGFloat(DogArt.badgeSize)) -> CGPath {
         switch style {
         case .glyph:
             let path = CGMutablePath()
-            for part in DogArt.badge(item) { path.addPath(cgPath(part.ops)) }
+            let k = box / CGFloat(DogArt.badgeSize)
+            let t = CGAffineTransform(scaleX: k, y: k)
+            for part in DogArt.badge(item) { path.addPath(cgPath(part.ops), transform: t) }
             return path
         case .letter:
-            return letterPath(letter(item))
+            return letterPath(letter(item), box: box)
         }
     }
 
@@ -66,21 +70,20 @@ enum GlyphPaths {
         return p
     }
 
-    /// SF Pro Rounded Bold letter, cap height 8 pt, centered in the 10 x 10 box, y down.
-    private static func letterPath(_ text: String) -> CGPath {
+    /// SF Pro Rounded Bold letter, cap height 0.8 x `box`, centered in the box, y down.
+    private static func letterPath(_ text: String, box: CGFloat) -> CGPath {
         let probe = roundedBold(10)
         let cap = probe.capHeight > 0 ? probe.capHeight : 7
-        let font = roundedBold(10 * 8 / cap) as CTFont
+        let font = roundedBold(10 * 0.8 * box / cap) as CTFont
         var chars = Array(text.utf16)
         var glyphs = [CGGlyph](repeating: 0, count: chars.count)
         guard CTFontGetGlyphsForCharacters(font, &chars, &glyphs, chars.count),
               let raw = CTFontCreatePathForGlyph(font, glyphs[0], nil) else {
-            return CGPath(rect: CGRect(x: 1, y: 1, width: 8, height: 8), transform: nil)
+            return CGPath(rect: CGRect(x: box * 0.1, y: box * 0.1, width: box * 0.8, height: box * 0.8), transform: nil)
         }
-        // Raw glyph path: y up, baseline at 0. Flip to y down, then center the ink box in the 10 x 10 box.
-        let box = raw.boundingBoxOfPath
-        let size = CGFloat(DogArt.badgeSize)
-        var t = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: size / 2 - box.midX, ty: size / 2 + box.midY)
+        // Raw glyph path: y up, baseline at 0. Flip to y down, then center the ink box in the box.
+        let ink = raw.boundingBoxOfPath
+        var t = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: box / 2 - ink.midX, ty: box / 2 + ink.midY)
         return raw.copy(using: &t) ?? raw
     }
 

@@ -5,7 +5,8 @@
 // Pos: Art assets: numbers, names and enums. No drawing code. Foundation only. Owner I2. DogRig never changes the shapes.
 //
 // Coordinates: the card dog uses a 120 x 90 u box, origin top left, y down, the dog faces right, ground y = 82.
-// The menu bar head uses a 24 x 18 pt box, y down. A badge uses a 10 x 10 pt box, y down.
+// The menu bar head uses a 24 x 18 pt box, y down: the head fills x 0 to 15, the badge sits at x 16 to 24, y 9 to 17.
+// A badge uses an 8 x 8 pt box, y down. The head and the badge never overlap, so no cutout gap is needed.
 // GlyphPaths and the menu renderer flip y for AppKit.
 //
 // Each shape is SVG-style path data (M, L, C, Z, absolute). The numbers were placed by hand on an authoring
@@ -50,20 +51,24 @@ enum DogBasePose: String, CaseIterable { case lie, stand, trot, pant }
 enum DogHeadVariant: String, CaseIterable { case smile, open, pant }
 
 /// Overlay art drawn on top of a base pose.
-enum DogOverlay: String, CaseIterable { case bundle, bubble, heat, speed }
+/// Round 2 (I2): the speed lines are gone. Sprint reads from the body lean and the blown-back ears.
+enum DogOverlay: String, CaseIterable { case bundle, bubble, heat }
 
 enum DogArt {
     static let designSize: (w: Double, h: Double) = (120, 90)
     static let groundY = 82.0
     /// The lie pose moves the whole head down by this offset (u). The head art itself is the same.
-    static let lieHeadOffset: (x: Double, y: Double) = (0, 20)
-    /// Where the badge glyph sits in the thought bubble (u): a 10 x 10 box centered in the bubble.
-    static let bubbleGlyphFrame: (x: Double, y: Double, size: Double) = (103.5, 4.5, 10)
+    static let lieHeadOffset: (x: Double, y: Double) = (3, 16)
+    /// Where the badge glyph sits in the thought bubble (u): a 15 x 15 box centered in the 22 u bubble,
+    /// about 40 % of the head diameter. The glyph is the same art as the menu bar badge (DogArt.badge).
+    static let bubbleGlyphFrame: (x: Double, y: Double, size: Double) = (101, 4, 15)
 
     static let menuSize: (w: Double, h: Double) = (24, 18)
-    /// Top-left corner of the 10 x 10 pt badge box in the menu head box (y down): x 14 to 24, y 8 to 18.
-    static let menuBadgeOrigin: (x: Double, y: Double) = (14, 8)
-    static let badgeSize = 10.0
+    /// Right edge of the menu head (pt). The head stays inside x 0 to 15 with and without a badge.
+    static let menuHeadWidth = 15.0
+    /// Top-left corner of the 8 x 8 pt badge box in the menu head box (y down): x 16 to 24, y 9 to 17.
+    static let menuBadgeOrigin: (x: Double, y: Double) = (16, 9)
+    static let badgeSize = 8.0
 
     /// The 4 key poses of the card version: lie, stand, one trot frame, pant.
     static func parts(for base: DogBasePose) -> [DogPart] {
@@ -100,12 +105,11 @@ enum DogArt {
         case .bundle: return bundle
         case .bubble: return bubble
         case .heat: return heat
-        case .speed: return speed
         }
     }
 
     /// The menu bar head: relaxed, raised ears, tongue out. Design box 24 x 18 pt, y down.
-    /// `hollow` uses the relaxed art; the renderer draws it as a 1 pt outline.
+    /// `hollow` uses the relaxed art; the renderer draws it as a 1.5 pt inner ring of the silhouette.
     static func menuHead(_ posture: MenuPosture) -> [DogPart] {
         switch posture {
         case .relaxed, .hollow: return menuRelaxed
@@ -114,10 +118,7 @@ enum DogArt {
         }
     }
 
-    /// The clear gap around the badge, in the 24 x 18 pt box, y down.
-    static var menuBadgeCutout: [DogPathOp] { menuBadgeCutoutPath }
-
-    /// Corner badge glyph in a 10 x 10 pt box, y down. At most 2 features, all solid (docs/DESIGN.md 3.3).
+    /// Corner badge glyph in an 8 x 8 pt box, y down. At most 2 features, all solid (docs/DESIGN.md 3.3).
     static func badge(_ item: HealthItem) -> [DogPart] {
         switch item {
         case .cpu: return badgeCpu
@@ -255,26 +256,25 @@ enum DogArt {
         DogPart(name: "head.tongue.line", ops: ops("M 104.45 43.61 L 104.46 43.84 L 104.48 44.16 L 104.49 44.53 L 104.51 44.94 L 104.53 45.38 L 104.55 45.84 L 104.57 46.28 L 104.58 46.7 L 104.59 47.08 L 104.6 47.4 L 104.6 47.68 L 104.6 47.94 L 104.6 48.18 L 104.59 48.41 L 104.58 48.62 L 104.57 48.81 L 104.56 48.98 L 104.56 49.14 L 104.55 49.27 L 104.55 49.38 C 104.54 49.71 105.01 49.74 105.05 49.42 L 105.06 49.31 L 105.08 49.18 L 105.09 49.02 L 105.11 48.85 L 105.13 48.66 L 105.15 48.44 L 105.17 48.21 L 105.18 47.96 L 105.19 47.69 L 105.2 47.4 L 105.2 47.07 L 105.2 46.69 L 105.2 46.26 L 105.19 45.82 L 105.18 45.37 L 105.17 44.92 L 105.16 44.51 L 105.16 44.13 L 105.15 43.82 L 105.15 43.59 C 105.15 43.13 104.43 43.16 104.45 43.61 Z"), pivot: (104.5, 42.6), role: .tongueLine, layer: 80),
     ]
 
-    /// Bundle on the back (memory red): two straps, the puffy sack, a bow knot and dots.
+    /// Furoshiki bundle on the back (memory red): round pack, dots, two folds, a knot with two pointed corners.
     static let bundle: [DogPart] = [
-        DogPart(name: "bundle.sack", ops: ops("M 36.5 39 C 35.42 37.65 36.17 33.67 37 31.5 C 37.83 29.33 39.58 27.38 41.5 26 C 43.42 24.62 46.08 23.67 48.5 23.2 C 50.92 22.73 53.75 22.73 56 23.2 C 58.25 23.67 60.4 24.57 62 26 C 63.6 27.43 64.93 29.7 65.6 31.8 C 66.27 33.9 66.77 37.3 66 38.6 C 65.23 39.9 63.33 39.5 61 39.6 C 58.67 39.7 54.92 39.2 52 39.2 C 49.08 39.2 46.08 39.63 43.5 39.6 C 40.92 39.57 37.58 40.35 36.5 39 Z"), pivot: (51, 38), role: .bundle, layer: 100),
-        DogPart(name: "bundle.fold", ops: ops("M 41.28 33.98 L 41.61 33.78 L 42.03 33.53 L 42.52 33.22 L 43.07 32.88 L 43.66 32.53 L 44.27 32.17 L 44.9 31.83 L 45.52 31.51 L 46.12 31.24 L 46.68 31.02 L 47.24 30.84 L 47.81 30.69 L 48.39 30.56 L 48.98 30.44 L 49.58 30.35 L 50.17 30.28 L 50.77 30.22 L 51.35 30.18 L 51.93 30.16 L 52.5 30.15 L 53.06 30.16 L 53.62 30.18 L 54.17 30.22 L 54.72 30.27 L 55.26 30.34 L 55.79 30.44 L 56.31 30.55 L 56.82 30.68 L 57.32 30.83 L 57.79 31.01 L 58.26 31.22 L 58.75 31.5 L 59.26 31.82 L 59.77 32.18 L 60.26 32.54 L 60.73 32.91 L 61.17 33.26 L 61.56 33.57 L 61.9 33.84 L 62.17 34.04 C 62.75 34.47 63.4 33.58 62.83 33.16 L 62.57 32.97 L 62.25 32.71 L 61.86 32.4 L 61.41 32.05 L 60.93 31.67 L 60.41 31.28 L 59.87 30.91 L 59.32 30.56 L 58.76 30.24 L 58.21 29.99 L 57.67 29.79 L 57.12 29.62 L 56.57 29.48 L 56 29.36 L 55.43 29.26 L 54.85 29.18 L 54.26 29.12 L 53.68 29.08 L 53.09 29.06 L 52.5 29.05 L 51.9 29.06 L 51.29 29.08 L 50.68 29.12 L 50.05 29.18 L 49.42 29.26 L 48.79 29.36 L 48.17 29.48 L 47.54 29.62 L 46.93 29.79 L 46.32 29.98 L 45.69 30.22 L 45.04 30.52 L 44.38 30.85 L 43.73 31.21 L 43.09 31.58 L 42.49 31.95 L 41.94 32.29 L 41.45 32.59 L 41.04 32.84 L 40.72 33.02 C 40.11 33.38 40.66 34.33 41.28 33.98 Z"), pivot: (51, 38), role: .strap, layer: 105),
-        DogPart(name: "bundle.knotL", ops: ops("M 51 23.4 C 50.8 22.8 48.47 22.47 47.4 22.6 C 46.33 22.73 44.93 23.53 44.6 24.2 C 44.27 24.87 44.73 26.27 45.4 26.6 C 46.07 26.93 47.67 26.73 48.6 26.2 C 49.53 25.67 51.2 24 51 23.4 Z"), pivot: (51, 38), role: .bundle, layer: 100),
-        DogPart(name: "bundle.knotR", ops: ops("M 54 23.4 C 54.2 22.8 56.53 22.47 57.6 22.6 C 58.67 22.73 60.07 23.53 60.4 24.2 C 60.73 24.87 60.27 26.27 59.6 26.6 C 58.93 26.93 57.33 26.73 56.4 26.2 C 55.47 25.67 53.8 24 54 23.4 Z"), pivot: (51, 38), role: .bundle, layer: 100),
-        DogPart(name: "bundle.knot", ops: ops("M 55.2 23.4 C 55.2 24.67 53.99 25.7 52.5 25.7 C 51.01 25.7 49.8 24.67 49.8 23.4 C 49.8 22.13 51.01 21.1 52.5 21.1 C 53.99 21.1 55.2 22.13 55.2 23.4 Z"), pivot: (51, 38), role: .bundle, layer: 100),
-        DogPart(name: "bundle.dot0", ops: ops("M 44.75 35.2 C 44.75 35.89 44.19 36.45 43.5 36.45 C 42.81 36.45 42.25 35.89 42.25 35.2 C 42.25 34.51 42.81 33.95 43.5 33.95 C 44.19 33.95 44.75 34.51 44.75 35.2 Z"), pivot: (51, 38), role: .bundleDot, layer: 110),
-        DogPart(name: "bundle.dot1", ops: ops("M 51.25 33.6 C 51.25 34.29 50.69 34.85 50 34.85 C 49.31 34.85 48.75 34.29 48.75 33.6 C 48.75 32.91 49.31 32.35 50 32.35 C 50.69 32.35 51.25 32.91 51.25 33.6 Z"), pivot: (51, 38), role: .bundleDot, layer: 110),
-        DogPart(name: "bundle.dot2", ops: ops("M 57.75 33.8 C 57.75 34.49 57.19 35.05 56.5 35.05 C 55.81 35.05 55.25 34.49 55.25 33.8 C 55.25 33.11 55.81 32.55 56.5 32.55 C 57.19 32.55 57.75 33.11 57.75 33.8 Z"), pivot: (51, 38), role: .bundleDot, layer: 110),
-        DogPart(name: "bundle.dot3", ops: ops("M 62.4 35.6 C 62.4 36.26 61.86 36.8 61.2 36.8 C 60.54 36.8 60 36.26 60 35.6 C 60 34.94 60.54 34.4 61.2 34.4 C 61.86 34.4 62.4 34.94 62.4 35.6 Z"), pivot: (51, 38), role: .bundleDot, layer: 110),
-        DogPart(name: "bundle.dot4", ops: ops("M 48.1 27.6 C 48.1 28.21 47.61 28.7 47 28.7 C 46.39 28.7 45.9 28.21 45.9 27.6 C 45.9 26.99 46.39 26.5 47 26.5 C 47.61 26.5 48.1 26.99 48.1 27.6 Z"), pivot: (51, 38), role: .bundleDot, layer: 110),
-        DogPart(name: "bundle.dot5", ops: ops("M 59.1 27.6 C 59.1 28.21 58.61 28.7 58 28.7 C 57.39 28.7 56.9 28.21 56.9 27.6 C 56.9 26.99 57.39 26.5 58 26.5 C 58.61 26.5 59.1 26.99 59.1 27.6 Z"), pivot: (51, 38), role: .bundleDot, layer: 110),
+        DogPart(name: "bundle.sack", ops: ops("M 37 39 C 35.92 37.62 36.67 33.58 37.5 31.5 C 38.33 29.42 40.17 27.72 42 26.5 C 43.83 25.28 46.25 24.58 48.5 24.2 C 50.75 23.82 53.33 23.82 55.5 24.2 C 57.67 24.58 59.83 25.23 61.5 26.5 C 63.17 27.77 64.75 29.78 65.5 31.8 C 66.25 33.82 67.08 37.27 66 38.6 C 64.92 39.93 61.42 39.67 59 39.8 C 56.58 39.93 54 39.4 51.5 39.4 C 49 39.4 46.42 39.87 44 39.8 C 41.58 39.73 38.08 40.38 37 39 Z"), pivot: (51, 38), role: .bundle, layer: 100),
+        DogPart(name: "bundle.dot0", ops: ops("M 45.35 34.5 C 45.35 35.14 44.84 35.65 44.2 35.65 C 43.56 35.65 43.05 35.14 43.05 34.5 C 43.05 33.86 43.56 33.35 44.2 33.35 C 44.84 33.35 45.35 33.86 45.35 34.5 Z"), pivot: (51, 38), role: .bundleDot, layer: 105),
+        DogPart(name: "bundle.dot1", ops: ops("M 52.65 33.4 C 52.65 34.04 52.14 34.55 51.5 34.55 C 50.86 34.55 50.35 34.04 50.35 33.4 C 50.35 32.76 50.86 32.25 51.5 32.25 C 52.14 32.25 52.65 32.76 52.65 33.4 Z"), pivot: (51, 38), role: .bundleDot, layer: 105),
+        DogPart(name: "bundle.dot2", ops: ops("M 59.95 34.5 C 59.95 35.14 59.44 35.65 58.8 35.65 C 58.16 35.65 57.65 35.14 57.65 34.5 C 57.65 33.86 58.16 33.35 58.8 33.35 C 59.44 33.35 59.95 33.86 59.95 34.5 Z"), pivot: (51, 38), role: .bundleDot, layer: 105),
+        DogPart(name: "bundle.dot3", ops: ops("M 49 29.4 C 49 29.95 48.55 30.4 48 30.4 C 47.45 30.4 47 29.95 47 29.4 C 47 28.85 47.45 28.4 48 28.4 C 48.55 28.4 49 28.85 49 29.4 Z"), pivot: (51, 38), role: .bundleDot, layer: 105),
+        DogPart(name: "bundle.dot4", ops: ops("M 56 29.4 C 56 29.95 55.55 30.4 55 30.4 C 54.45 30.4 54 29.95 54 29.4 C 54 28.85 54.45 28.4 55 28.4 C 55.55 28.4 56 28.85 56 29.4 Z"), pivot: (51, 38), role: .bundleDot, layer: 105),
+        DogPart(name: "bundle.foldL", ops: ops("M 49.09 26.07 L 48.83 26.33 L 48.48 26.65 L 48.07 27.03 L 47.6 27.46 L 47.09 27.94 L 46.57 28.45 L 46.04 28.99 L 45.52 29.55 L 45.04 30.12 L 44.6 30.71 L 44.18 31.33 L 43.77 32.03 L 43.35 32.78 L 42.95 33.55 L 42.57 34.33 L 42.21 35.08 L 41.87 35.78 L 41.58 36.4 L 41.34 36.92 L 41.14 37.32 C 40.92 37.78 41.61 38.14 41.86 37.68 L 42.07 37.29 L 42.34 36.77 L 42.65 36.15 L 42.99 35.47 L 43.37 34.73 L 43.77 33.98 L 44.18 33.23 L 44.59 32.52 L 45.01 31.86 L 45.4 31.29 L 45.82 30.77 L 46.29 30.25 L 46.8 29.73 L 47.32 29.23 L 47.84 28.75 L 48.35 28.3 L 48.83 27.88 L 49.26 27.51 L 49.63 27.19 L 49.91 26.93 C 50.49 26.41 49.64 25.51 49.09 26.07 Z"), pivot: (51, 38), role: .strap, layer: 106),
+        DogPart(name: "bundle.foldR", ops: ops("M 53.09 26.93 L 53.37 27.19 L 53.74 27.51 L 54.17 27.88 L 54.65 28.3 L 55.16 28.75 L 55.68 29.23 L 56.2 29.73 L 56.71 30.25 L 57.18 30.77 L 57.6 31.29 L 57.99 31.86 L 58.41 32.52 L 58.82 33.23 L 59.23 33.98 L 59.63 34.73 L 60.01 35.47 L 60.35 36.15 L 60.66 36.77 L 60.93 37.29 L 61.14 37.68 C 61.39 38.14 62.08 37.78 61.86 37.32 L 61.66 36.92 L 61.42 36.4 L 61.13 35.78 L 60.79 35.08 L 60.43 34.33 L 60.05 33.55 L 59.65 32.78 L 59.23 32.03 L 58.82 31.33 L 58.4 30.71 L 57.96 30.12 L 57.48 29.55 L 56.96 28.99 L 56.43 28.45 L 55.91 27.94 L 55.4 27.46 L 54.93 27.03 L 54.52 26.65 L 54.17 26.33 L 53.91 26.07 C 53.36 25.51 52.51 26.41 53.09 26.93 Z"), pivot: (51, 38), role: .strap, layer: 106),
+        DogPart(name: "bundle.cornerL", ops: ops("M 50.2 24.6 C 50.06 24.04 47 20.92 46.2 20.2 C 45.4 19.48 42.4 17.24 42.2 17.4 C 42 17.56 43.66 20.96 44.2 21.8 C 44.74 22.64 47 25.52 47.6 25.8 C 48.2 26.08 50.34 25.16 50.2 24.6 Z"), pivot: (51, 38), role: .bundle, layer: 110),
+        DogPart(name: "bundle.cornerR", ops: ops("M 52.8 24.6 C 52.94 24.04 56 20.92 56.8 20.2 C 57.6 19.48 60.6 17.24 60.8 17.4 C 61 17.56 59.34 20.96 58.8 21.8 C 58.26 22.64 56 25.52 55.4 25.8 C 54.8 26.08 52.66 25.16 52.8 24.6 Z"), pivot: (51, 38), role: .bundle, layer: 110),
+        DogPart(name: "bundle.knot", ops: ops("M 54.7 24.6 C 54.7 26.04 53.27 27.2 51.5 27.2 C 49.73 27.2 48.3 26.04 48.3 24.6 C 48.3 23.16 49.73 22 51.5 22 C 53.27 22 54.7 23.16 54.7 24.6 Z"), pivot: (51, 38), role: .strap, layer: 115),
     ]
 
     /// Thought bubble (any problem). The glyph goes in bubbleGlyphFrame.
     static let bubble: [DogPart] = [
-        DogPart(name: "bubble.tail2", ops: ops("M 98.9 19.4 C 98.9 20.12 98.32 20.7 97.6 20.7 C 96.88 20.7 96.3 20.12 96.3 19.4 C 96.3 18.68 96.88 18.1 97.6 18.1 C 98.32 18.1 98.9 18.68 98.9 19.4 Z"), pivot: (108.5, 9.5), role: .bubble, layer: 120),
-        DogPart(name: "bubble.tail1", ops: ops("M 102.7 15.6 C 102.7 16.76 101.76 17.7 100.6 17.7 C 99.44 17.7 98.5 16.76 98.5 15.6 C 98.5 14.44 99.44 13.5 100.6 13.5 C 101.76 13.5 102.7 14.44 102.7 15.6 Z"), pivot: (108.5, 9.5), role: .bubble, layer: 120),
-        DogPart(name: "bubble.main", ops: ops("M 99 9 C 99 6.77 100.33 3.93 102 2.6 C 103.67 1.27 106.75 0.87 109 1 C 111.25 1.13 114 1.98 115.5 3.4 C 117 4.82 118 7.47 118 9.5 C 118 11.53 117 14.18 115.5 15.6 C 114 17.02 111.25 17.93 109 18 C 106.75 18.07 103.67 17.5 102 16 C 100.33 14.5 99 11.23 99 9 Z"), pivot: (108.5, 9.5), role: .bubble, layer: 120),
+        DogPart(name: "bubble.tail1", ops: ops("M 97.8 21.8 C 97.8 22.57 97.17 23.2 96.4 23.2 C 95.63 23.2 95 22.57 95 21.8 C 95 21.03 95.63 20.4 96.4 20.4 C 97.17 20.4 97.8 21.03 97.8 21.8 Z"), pivot: (108.5, 11.5), role: .bubble, layer: 120),
+        DogPart(name: "bubble.main", ops: ops("M 97.5 11.5 C 97.5 8.9 98.87 5.52 100.7 3.7 C 102.53 1.88 105.9 0.6 108.5 0.6 C 111.1 0.6 114.48 1.88 116.3 3.7 C 118.12 5.52 119.4 8.9 119.4 11.5 C 119.4 14.1 118.12 17.48 116.3 19.3 C 114.48 21.12 111.1 22.4 108.5 22.4 C 105.9 22.4 102.53 21.12 100.7 19.3 C 98.87 17.48 97.5 14.1 97.5 11.5 Z"), pivot: (108.5, 11.5), role: .bubble, layer: 120),
     ]
 
     /// Two heat waves above the head (pant).
@@ -283,73 +283,59 @@ enum DogArt {
         DogPart(name: "fx.heat2", ops: ops("M 92.48 10.94 L 92.59 10.8 L 92.77 10.62 L 93.01 10.39 L 93.28 10.13 L 93.57 9.84 L 93.85 9.52 L 94.11 9.19 L 94.34 8.83 L 94.51 8.44 L 94.58 7.99 L 94.48 7.53 L 94.25 7.16 L 93.97 6.85 L 93.66 6.58 L 93.35 6.33 L 93.06 6.09 L 92.81 5.87 L 92.63 5.68 L 92.54 5.55 L 92.52 5.49 L 92.53 5.4 L 92.61 5.21 L 92.77 4.97 L 92.98 4.7 L 93.22 4.43 L 93.48 4.16 L 93.74 3.91 L 93.98 3.68 L 94.19 3.47 L 94.33 3.3 C 94.71 2.86 94.08 2.28 93.67 2.7 L 93.54 2.83 L 93.35 3 L 93.1 3.22 L 92.82 3.48 L 92.53 3.76 L 92.24 4.06 L 91.97 4.37 L 91.74 4.71 L 91.56 5.08 L 91.48 5.51 L 91.57 5.95 L 91.78 6.32 L 92.05 6.63 L 92.34 6.91 L 92.65 7.17 L 92.93 7.42 L 93.17 7.65 L 93.34 7.84 L 93.41 7.97 L 93.42 8.01 L 93.39 8.08 L 93.31 8.25 L 93.15 8.47 L 92.93 8.72 L 92.68 8.98 L 92.41 9.23 L 92.15 9.47 L 91.9 9.7 L 91.68 9.9 L 91.52 10.06 C 90.93 10.66 91.93 11.58 92.48 10.94 Z"), pivot: (93, 9), role: .effect, layer: 130),
     ]
 
-    /// Three speed lines behind the dog (sprint).
-    static let speed: [DogPart] = [
-        DogPart(name: "fx.speed1", ops: ops("M 14 39.2 L 13.36 39.2 L 12.48 39.2 L 11.42 39.2 L 10.24 39.2 L 9 39.2 L 7.76 39.2 L 6.58 39.2 L 5.52 39.2 L 4.64 39.2 L 4 39.2 C 2.96 39.2 2.96 40.8 4 40.8 L 4.64 40.8 L 5.52 40.8 L 6.58 40.8 L 7.76 40.8 L 9 40.8 L 10.24 40.8 L 11.42 40.8 L 12.48 40.8 L 13.36 40.8 L 14 40.8 C 15.04 40.8 15.04 39.2 14 39.2 Z"), pivot: (14, 40), role: .effect, layer: 130),
-        DogPart(name: "fx.speed2", ops: ops("M 16 49.2 L 15.1 49.2 L 13.87 49.2 L 12.39 49.2 L 10.74 49.2 L 9 49.2 L 7.26 49.2 L 5.61 49.2 L 4.13 49.2 L 2.9 49.2 L 2 49.2 C 0.96 49.2 0.96 50.8 2 50.8 L 2.9 50.8 L 4.13 50.8 L 5.61 50.8 L 7.26 50.8 L 9 50.8 L 10.74 50.8 L 12.39 50.8 L 13.87 50.8 L 15.1 50.8 L 16 50.8 C 17.04 50.8 17.04 49.2 16 49.2 Z"), pivot: (16, 50), role: .effect, layer: 130),
-        DogPart(name: "fx.speed3", ops: ops("M 14 57.2 L 13.49 57.2 L 12.78 57.2 L 11.94 57.2 L 10.99 57.2 L 10 57.2 L 9.01 57.2 L 8.06 57.2 L 7.22 57.2 L 6.51 57.2 L 6 57.2 C 4.96 57.2 4.96 58.8 6 58.8 L 6.51 58.8 L 7.22 58.8 L 8.06 58.8 L 9.01 58.8 L 10 58.8 L 10.99 58.8 L 11.94 58.8 L 12.78 58.8 L 13.49 58.8 L 14 58.8 C 15.04 58.8 15.04 57.2 14 57.2 Z"), pivot: (14, 58), role: .effect, layer: 130),
-    ]
-
-    /// Menu bar head, relaxed. 24 x 18 pt box, y down.
+    /// Menu bar head, relaxed: one union silhouette in x 0..15, face cutouts. 24 x 18 pt box, y down.
     static let menuRelaxed: [DogPart] = [
-        DogPart(name: "head", ops: ops("M 3.96 11.5 C 2.82 11.85 1.98 9.09 3.12 8.75 C 2.04 8.55 2.5 5.95 3.58 6.15 C 2.68 5.56 4.1 3.37 5 3.96 C 4.38 3.08 6.52 1.58 7.14 2.46 C 6.95 1.39 9.53 0.94 9.72 2 C 9.98 0.95 12.52 1.59 12.26 2.64 C 12.94 1.8 14.97 3.45 14.29 4.28 C 15.23 3.76 16.5 6.04 15.56 6.56 C 16.73 6.46 16.98 9.31 15.8 9.41 C 16.67 9.73 15.91 11.81 15.04 11.5 C 15.54 11.79 14.1 14.29 13.6 14 C 13.93 14.54 11.63 15.94 11.3 15.4 C 11.3 16.6 7.7 16.6 7.7 15.4 C 7.37 15.94 5.07 14.54 5.4 14 C 4.9 14.29 3.46 11.79 3.96 11.5 Z"), pivot: (9.5, 8.5), role: .fur, layer: 0),
-        DogPart(name: "earLeft", ops: ops("M 3.4 5.6 C 3.66 5.3 5.16 6.6 4.9 6.9 C 5.31 6.87 5.51 9.97 5.1 10 C 5.53 10.07 5.03 13.27 4.6 13.2 C 5.07 13.73 3.47 15.13 3 14.6 C 2.6 15.1 1.1 13.9 1.5 13.4 C 1.02 13.44 0.72 9.84 1.2 9.8 C 0.77 9.72 1.37 6.52 1.8 6.6 C 1.6 6.28 3.2 5.28 3.4 5.6 Z"), pivot: (3.4, 4.5), role: .ear, layer: 0),
-        DogPart(name: "earRight", ops: ops("M 15.6 5.6 C 15.34 5.3 13.84 6.6 14.1 6.9 C 13.69 6.87 13.49 9.97 13.9 10 C 13.47 10.07 13.97 13.27 14.4 13.2 C 13.93 13.73 15.53 15.13 16 14.6 C 16.4 15.1 17.9 13.9 17.5 13.4 C 17.98 13.44 18.28 9.84 17.8 9.8 C 18.23 9.72 17.63 6.52 17.2 6.6 C 17.4 6.28 15.8 5.28 15.6 5.6 Z"), pivot: (15.6, 4.5), role: .ear, layer: 0),
-        DogPart(name: "cut.eyeLeft", ops: ops("M 7.45 8.5 C 7.45 9.02 7.02 9.45 6.5 9.45 C 5.98 9.45 5.55 9.02 5.55 8.5 C 5.55 7.98 5.98 7.55 6.5 7.55 C 7.02 7.55 7.45 7.98 7.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.eyeRight", ops: ops("M 13.45 8.5 C 13.45 9.02 13.02 9.45 12.5 9.45 C 11.98 9.45 11.55 9.02 11.55 8.5 C 11.55 7.98 11.98 7.55 12.5 7.55 C 13.02 7.55 13.45 7.98 13.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.nose", ops: ops("M 10.65 11.5 C 10.65 12 10.14 12.4 9.5 12.4 C 8.86 12.4 8.35 12 8.35 11.5 C 8.35 11 8.86 10.6 9.5 10.6 C 10.14 10.6 10.65 11 10.65 11.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "head", ops: ops("M 7.5 2.1 C 7.77 1.09 10.52 1.83 10.25 2.84 C 10.93 2.13 12.84 3.98 12.16 4.69 C 12.41 4.66 12.54 5.87 12.3 5.9 C 12.48 5.58 14.38 6.68 14.2 7 C 14.92 6.94 15.22 10.54 14.5 10.6 C 15.35 10.81 14.55 14.01 13.7 13.8 C 13.76 14.28 12.16 14.48 12.1 14 C 12.15 13.85 11.05 13.45 11 13.6 C 11.18 13.92 9.58 14.82 9.4 14.5 C 9.44 14.88 7.54 15.08 7.5 14.7 C 7.46 15.08 5.56 14.88 5.6 14.5 C 5.42 14.82 3.82 13.92 4 13.6 C 3.95 13.45 2.85 13.85 2.9 14 C 2.84 14.48 1.24 14.28 1.3 13.8 C 0.45 14.01 -0.35 10.81 0.5 10.6 C -0.22 10.54 0.08 6.94 0.8 7 C 0.62 6.68 2.52 5.58 2.7 5.9 C 2.46 5.87 2.59 4.66 2.84 4.69 C 2.16 3.98 4.07 2.13 4.75 2.84 C 4.48 1.83 7.23 1.09 7.5 2.1 Z"), pivot: (7.5, 8.5), role: .fur, layer: 0),
+        DogPart(name: "cut.eyeLeft", ops: ops("M 6.45 8.5 C 6.45 9.02 6.02 9.45 5.5 9.45 C 4.98 9.45 4.55 9.02 4.55 8.5 C 4.55 7.98 4.98 7.55 5.5 7.55 C 6.02 7.55 6.45 7.98 6.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "cut.eyeRight", ops: ops("M 10.45 8.5 C 10.45 9.02 10.02 9.45 9.5 9.45 C 8.98 9.45 8.55 9.02 8.55 8.5 C 8.55 7.98 8.98 7.55 9.5 7.55 C 10.02 7.55 10.45 7.98 10.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "cut.nose", ops: ops("M 8.65 11.4 C 8.65 11.9 8.14 12.3 7.5 12.3 C 6.86 12.3 6.35 11.9 6.35 11.4 C 6.35 10.9 6.86 10.5 7.5 10.5 C 8.14 10.5 8.65 10.9 8.65 11.4 Z"), pivot: (0, 0), role: .cutout, layer: 0),
     ]
 
-    /// Menu bar head, raised. 24 x 18 pt box, y down.
+    /// Menu bar head, raised: one union silhouette in x 0..15, face cutouts. 24 x 18 pt box, y down.
     static let menuRaised: [DogPart] = [
-        DogPart(name: "head", ops: ops("M 3.96 11.5 C 2.82 11.85 1.98 9.09 3.12 8.75 C 2.04 8.55 2.5 5.95 3.58 6.15 C 2.68 5.56 4.1 3.37 5 3.96 C 4.38 3.08 6.52 1.58 7.14 2.46 C 6.95 1.39 9.53 0.94 9.72 2 C 9.98 0.95 12.52 1.59 12.26 2.64 C 12.94 1.8 14.97 3.45 14.29 4.28 C 15.23 3.76 16.5 6.04 15.56 6.56 C 16.73 6.46 16.98 9.31 15.8 9.41 C 16.67 9.73 15.91 11.81 15.04 11.5 C 15.54 11.79 14.1 14.29 13.6 14 C 13.93 14.54 11.63 15.94 11.3 15.4 C 11.3 16.6 7.7 16.6 7.7 15.4 C 7.37 15.94 5.07 14.54 5.4 14 C 4.9 14.29 3.46 11.79 3.96 11.5 Z"), pivot: (9.5, 8.5), role: .fur, layer: 0),
-        DogPart(name: "earLeft", ops: ops("M 3.6 3.6 C 3.92 3.28 5.52 4.88 5.2 5.2 C 5.65 5.28 5.05 8.68 4.6 8.6 C 5 8.81 3.4 11.81 3 11.6 C 3.29 12.22 1.59 13.02 1.3 12.4 C 0.57 12.55 0.17 10.55 0.9 10.4 C 0.27 10.38 0.37 6.58 1 6.6 C 0.71 6.48 1.61 4.28 1.9 4.4 C 1.74 4.06 3.44 3.26 3.6 3.6 Z"), pivot: (3.4, 4.5), role: .ear, layer: 0),
-        DogPart(name: "earRight", ops: ops("M 15.4 3.6 C 15.08 3.28 13.48 4.88 13.8 5.2 C 13.35 5.28 13.95 8.68 14.4 8.6 C 14 8.81 15.6 11.81 16 11.6 C 15.71 12.22 17.41 13.02 17.7 12.4 C 18.43 12.55 18.83 10.55 18.1 10.4 C 18.73 10.38 18.63 6.58 18 6.6 C 18.29 6.48 17.39 4.28 17.1 4.4 C 17.26 4.06 15.56 3.26 15.4 3.6 Z"), pivot: (15.6, 4.5), role: .ear, layer: 0),
-        DogPart(name: "cut.eyeLeft", ops: ops("M 7.45 8.5 C 7.45 9.02 7.02 9.45 6.5 9.45 C 5.98 9.45 5.55 9.02 5.55 8.5 C 5.55 7.98 5.98 7.55 6.5 7.55 C 7.02 7.55 7.45 7.98 7.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.eyeRight", ops: ops("M 13.45 8.5 C 13.45 9.02 13.02 9.45 12.5 9.45 C 11.98 9.45 11.55 9.02 11.55 8.5 C 11.55 7.98 11.98 7.55 12.5 7.55 C 13.02 7.55 13.45 7.98 13.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.nose", ops: ops("M 10.65 11.5 C 10.65 12 10.14 12.4 9.5 12.4 C 8.86 12.4 8.35 12 8.35 11.5 C 8.35 11 8.86 10.6 9.5 10.6 C 10.14 10.6 10.65 11 10.65 11.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "head", ops: ops("M 7.5 2.1 C 7.77 1.09 10.52 1.83 10.25 2.84 C 10.81 2.21 12.51 3.74 11.95 4.37 C 11.86 4.28 12.41 3.71 12.5 3.8 C 12.29 3.36 13.94 2.56 14.15 3 C 14.9 2.91 15.2 5.41 14.45 5.5 C 14.87 5.67 14.12 7.47 13.7 7.3 C 13.76 7.52 12.66 7.82 12.6 7.6 C 12.32 7.63 12.62 10.43 12.9 10.4 C 13.48 10.7 11.98 13.6 11.4 13.3 C 11.64 13.7 9.64 14.9 9.4 14.5 C 9.44 14.88 7.54 15.08 7.5 14.7 C 7.46 15.08 5.56 14.88 5.6 14.5 C 5.36 14.9 3.36 13.7 3.6 13.3 C 3.02 13.6 1.52 10.7 2.1 10.4 C 2.38 10.43 2.68 7.63 2.4 7.6 C 2.34 7.82 1.24 7.52 1.3 7.3 C 0.88 7.47 0.13 5.67 0.55 5.5 C -0.2 5.41 0.1 2.91 0.85 3 C 1.06 2.56 2.71 3.36 2.5 3.8 C 2.59 3.71 3.14 4.28 3.05 4.37 C 2.49 3.74 4.19 2.21 4.75 2.84 C 4.48 1.83 7.23 1.09 7.5 2.1 Z"), pivot: (7.5, 8.5), role: .fur, layer: 0),
+        DogPart(name: "cut.eyeLeft", ops: ops("M 6.45 8.5 C 6.45 9.02 6.02 9.45 5.5 9.45 C 4.98 9.45 4.55 9.02 4.55 8.5 C 4.55 7.98 4.98 7.55 5.5 7.55 C 6.02 7.55 6.45 7.98 6.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "cut.eyeRight", ops: ops("M 10.45 8.5 C 10.45 9.02 10.02 9.45 9.5 9.45 C 8.98 9.45 8.55 9.02 8.55 8.5 C 8.55 7.98 8.98 7.55 9.5 7.55 C 10.02 7.55 10.45 7.98 10.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "cut.nose", ops: ops("M 8.65 11.4 C 8.65 11.9 8.14 12.3 7.5 12.3 C 6.86 12.3 6.35 11.9 6.35 11.4 C 6.35 10.9 6.86 10.5 7.5 10.5 C 8.14 10.5 8.65 10.9 8.65 11.4 Z"), pivot: (0, 0), role: .cutout, layer: 0),
     ]
 
-    /// Menu bar head, pant. 24 x 18 pt box, y down.
+    /// Menu bar head, pant: one union silhouette in x 0..15, face cutouts. 24 x 18 pt box, y down.
     static let menuPant: [DogPart] = [
-        DogPart(name: "head", ops: ops("M 3.96 11.5 C 2.82 11.85 1.98 9.09 3.12 8.75 C 2.04 8.55 2.5 5.95 3.58 6.15 C 2.68 5.56 4.1 3.37 5 3.96 C 4.38 3.08 6.52 1.58 7.14 2.46 C 6.95 1.39 9.53 0.94 9.72 2 C 9.98 0.95 12.52 1.59 12.26 2.64 C 12.94 1.8 14.97 3.45 14.29 4.28 C 15.23 3.76 16.5 6.04 15.56 6.56 C 16.73 6.46 16.98 9.31 15.8 9.41 C 16.67 9.73 15.91 11.81 15.04 11.5 C 15.54 11.79 14.1 14.29 13.6 14 C 13.93 14.54 11.63 15.94 11.3 15.4 C 11.3 16.6 7.7 16.6 7.7 15.4 C 7.37 15.94 5.07 14.54 5.4 14 C 4.9 14.29 3.46 11.79 3.96 11.5 Z"), pivot: (9.5, 8.5), role: .fur, layer: 0),
-        DogPart(name: "earLeft", ops: ops("M 4.2 3 C 4.6 2.76 5.8 4.76 5.4 5 C 5.75 5.21 4.15 7.81 3.8 7.6 C 4.1 7.92 2.2 9.72 1.9 9.4 C 1.61 9.73 0.71 8.93 1 8.6 C 0.12 8.6 0.12 6.2 1 6.2 C 0.52 6.06 1.22 3.66 1.7 3.8 C 1.46 3.56 2.66 2.36 2.9 2.6 C 2.98 2.34 4.28 2.74 4.2 3 Z"), pivot: (3.4, 4.5), role: .ear, layer: 0),
-        DogPart(name: "earRight", ops: ops("M 14.8 3 C 14.4 2.76 13.2 4.76 13.6 5 C 13.25 5.21 14.85 7.81 15.2 7.6 C 14.9 7.92 16.8 9.72 17.1 9.4 C 17.39 9.73 18.29 8.93 18 8.6 C 18.88 8.6 18.88 6.2 18 6.2 C 18.48 6.06 17.78 3.66 17.3 3.8 C 17.54 3.56 16.34 2.36 16.1 2.6 C 16.02 2.34 14.72 2.74 14.8 3 Z"), pivot: (15.6, 4.5), role: .ear, layer: 0),
-        DogPart(name: "cut.eyeLeft", ops: ops("M 7.45 8.5 C 7.45 9.02 7.02 9.45 6.5 9.45 C 5.98 9.45 5.55 9.02 5.55 8.5 C 5.55 7.98 5.98 7.55 6.5 7.55 C 7.02 7.55 7.45 7.98 7.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.eyeRight", ops: ops("M 13.45 8.5 C 13.45 9.02 13.02 9.45 12.5 9.45 C 11.98 9.45 11.55 9.02 11.55 8.5 C 11.55 7.98 11.98 7.55 12.5 7.55 C 13.02 7.55 13.45 7.98 13.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.nose", ops: ops("M 10.65 11.5 C 10.65 12 10.14 12.4 9.5 12.4 C 8.86 12.4 8.35 12 8.35 11.5 C 8.35 11 8.86 10.6 9.5 10.6 C 10.14 10.6 10.65 11 10.65 11.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.mouth", ops: ops("M 7.4 13 C 7.68 12.73 8.8 13.4 9.5 13.4 C 10.2 13.4 11.32 12.73 11.6 13 C 11.88 13.27 11.55 14.57 11.2 15 C 10.85 15.43 10.07 15.6 9.5 15.6 C 8.93 15.6 8.15 15.43 7.8 15 C 7.45 14.57 7.12 13.27 7.4 13 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "tongue", ops: ops("M 8 14.8 C 8.27 14.42 9 14.3 9.5 14.3 C 10 14.3 10.73 14.42 11 14.8 C 11.27 15.18 11.35 16.12 11.1 16.6 C 10.85 17.08 10.03 17.7 9.5 17.7 C 8.97 17.7 8.15 17.08 7.9 16.6 C 7.65 16.12 7.73 15.18 8 14.8 Z"), pivot: (0, 0), role: .tongue, layer: 0),
+        DogPart(name: "head", ops: ops("M 7.5 2.1 C 7.77 1.09 10.52 1.83 10.25 2.84 C 10.87 2.17 12.68 3.86 12.06 4.52 C 12.15 4.44 12.6 4.91 12.5 5 C 12.5 4.56 14.15 4.56 14.15 5 C 14.93 4.91 15.23 7.51 14.45 7.6 C 14.98 7.8 14.23 9.8 13.7 9.6 C 13.74 9.8 12.74 10 12.7 9.8 C 12.54 9.81 12.64 11.41 12.8 11.4 C 13.18 11.68 11.78 13.58 11.4 13.3 C 11.64 13.7 9.64 14.9 9.4 14.5 C 9.44 14.88 7.54 15.08 7.5 14.7 C 7.46 15.08 5.56 14.88 5.6 14.5 C 5.36 14.9 3.36 13.7 3.6 13.3 C 3.22 13.58 1.82 11.68 2.2 11.4 C 2.36 11.41 2.46 9.81 2.3 9.8 C 2.26 10 1.26 9.8 1.3 9.6 C 0.77 9.8 0.02 7.8 0.55 7.6 C -0.23 7.51 0.07 4.91 0.85 5 C 0.85 4.56 2.5 4.56 2.5 5 C 2.4 4.91 2.85 4.44 2.94 4.52 C 2.32 3.86 4.13 2.17 4.75 2.84 C 4.48 1.83 7.23 1.09 7.5 2.1 Z"), pivot: (7.5, 8.5), role: .fur, layer: 0),
+        DogPart(name: "cut.eyeLeft", ops: ops("M 6.45 8.5 C 6.45 9.02 6.02 9.45 5.5 9.45 C 4.98 9.45 4.55 9.02 4.55 8.5 C 4.55 7.98 4.98 7.55 5.5 7.55 C 6.02 7.55 6.45 7.98 6.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "cut.eyeRight", ops: ops("M 10.45 8.5 C 10.45 9.02 10.02 9.45 9.5 9.45 C 8.98 9.45 8.55 9.02 8.55 8.5 C 8.55 7.98 8.98 7.55 9.5 7.55 C 10.02 7.55 10.45 7.98 10.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "cut.nose", ops: ops("M 8.65 10.5 C 8.65 11 8.14 11.4 7.5 11.4 C 6.86 11.4 6.35 11 6.35 10.5 C 6.35 10 6.86 9.6 7.5 9.6 C 8.14 9.6 8.65 10 8.65 10.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "cut.mouth", ops: ops("M 5.2 12.3 C 5.52 12.05 6.73 12.8 7.5 12.8 C 8.27 12.8 9.48 12.05 9.8 12.3 C 10.12 12.55 9.78 13.85 9.4 14.3 C 9.02 14.75 8.13 15 7.5 15 C 6.87 15 5.98 14.75 5.6 14.3 C 5.22 13.85 4.88 12.55 5.2 12.3 Z"), pivot: (0, 0), role: .cutout, layer: 0),
+        DogPart(name: "tongue", ops: ops("M 5.8 13.8 C 6.12 13.25 6.93 13.3 7.5 13.3 C 8.07 13.3 8.88 13.25 9.2 13.8 C 9.52 14.35 9.68 15.92 9.4 16.6 C 9.12 17.28 8.13 17.9 7.5 17.9 C 6.87 17.9 5.88 17.28 5.6 16.6 C 5.32 15.92 5.48 14.35 5.8 13.8 Z"), pivot: (0, 0), role: .tongue, layer: 0),
     ]
 
-    /// Clear gap around the badge: 12 x 12 pt rounded square, 1 pt larger than the badge on each side.
-    static let menuBadgeCutoutPath: [DogPathOp] = ops("M 16.2 7 L 21.8 7 C 23.56736 7 25 8.43264 25 10.2 L 25 15.8 C 25 17.56736 23.56736 19 21.8 19 L 16.2 19 C 14.43264 19 13 17.56736 13 15.8 L 13 10.2 C 13 8.43264 14.43264 7 16.2 7 Z")
-
-    /// Badge glyph: cpu. 10 x 10 pt box, y down.
+    /// Badge glyph: cpu. 8 x 8 pt box, y down, on the 1x pixel grid.
     static let badgeCpu: [DogPart] = [
-        DogPart(name: "cpu.core", ops: ops("M 3.8 3 L 6.2 3 C 6.64 3 7 3.36 7 3.8 L 7 6.2 C 7 6.64 6.64 7 6.2 7 L 3.8 7 C 3.36 7 3 6.64 3 6.2 L 3 3.8 C 3 3.36 3.36 3 3.8 3 Z"), pivot: (5, 5), role: .ink, layer: 0),
-        DogPart(name: "cpu.ring", ops: ops("M 7 0 L 7.6 0 C 8.925519999999999 0 10 1.0744799999999999 10 2.4 L 10 7.6 C 10 8.925519999999999 8.925519999999999 10 7.6 10 L 2.4 10 C 1.0744799999999999 10 0 8.925519999999999 0 7.6 L 0 2.4 C 0 1.0744799999999999 1.0744799999999999 0 2.4 0 L 3 0 L 3 1 L 2.4 1 C 1.62678 1 1 1.62678 1 2.4 L 1 7.6 C 1 8.37322 1.62678 9 2.4 9 L 7.6 9 C 8.37322 9 9 8.37322 9 7.6 L 9 2.4 C 9 1.62678 8.37322 1 7.6 1 L 7 1 Z"), pivot: (5, 5), role: .ink, layer: 0),
+        DogPart(name: "cpu.core", ops: ops("M 2.6 2 L 5.4 2 C 5.73 2 6 2.27 6 2.6 L 6 5.4 C 6 5.73 5.73 6 5.4 6 L 2.6 6 C 2.27 6 2 5.73 2 5.4 L 2 2.6 C 2 2.27 2.27 2 2.6 2 Z"), pivot: (4, 4), role: .ink, layer: 0),
+        DogPart(name: "cpu.ring", ops: ops("M 5 0 L 6.0 0 C 7.1 0 8 0.9 8 2.0 L 8 6.0 C 8 7.1 7.1 8 6.0 8 L 2.0 8 C 0.9 8 0 7.1 0 6.0 L 0 2.0 C 0 0.9 0.9 0 2.0 0 L 3 0 L 3 1 L 2 1 C 1.45 1 1 1.45 1 2 L 1 6 C 1 6.55 1.45 7 2 7 L 6 7 C 6.55 7 7 6.55 7 6 L 7 2 C 7 1.45 6.55 1 6 1 L 5 1 Z"), pivot: (4, 4), role: .ink, layer: 0),
     ]
 
-    /// Badge glyph: memory. 10 x 10 pt box, y down.
+    /// Badge glyph: memory. 8 x 8 pt box, y down, on the 1x pixel grid.
     static let badgeMemory: [DogPart] = [
-        DogPart(name: "memory.bar", ops: ops("M 1.2 3 L 8.8 3 C 9.46 3 10 3.54 10 4.2 L 10 5.8 C 10 6.46 9.46 7 8.8 7 L 1.2 7 C 0.54 7 0 6.46 0 5.8 L 0 4.2 C 0 3.54 0.54 3 1.2 3 Z"), pivot: (5, 5), role: .ink, layer: 0),
+        DogPart(name: "memory.bar", ops: ops("M 0.9 1 L 7.1 1 C 7.6 1 8 1.4 8 1.9 L 8 4.1 C 8 4.6 7.6 5 7.1 5 L 0.9 5 C 0.4 5 0 4.6 0 4.1 L 0 1.9 C 0 1.4 0.4 1 0.9 1 Z"), pivot: (4, 4), role: .ink, layer: 0),
+        DogPart(name: "memory.pins", ops: ops("M 1 4 L 3 4 L 3 7 L 1 7 Z M 5 4 L 7 4 L 7 7 L 5 7 Z"), pivot: (4, 4), role: .ink, layer: 0),
     ]
 
-    /// Badge glyph: thermal. 10 x 10 pt box, y down.
+    /// Badge glyph: thermal. 8 x 8 pt box, y down, on the 1x pixel grid.
     static let badgeThermal: [DogPart] = [
-        DogPart(name: "thermal.stem", ops: ops("M 5 0 L 5 0 C 5.55 0 6 0.45 6 1 L 6 6 C 6 6.55 5.55 7 5 7 L 5 7 C 4.45 7 4 6.55 4 6 L 4 1 C 4 0.45 4.45 0 5 0 Z"), pivot: (5, 5), role: .ink, layer: 0),
-        DogPart(name: "thermal.bulb", ops: ops("M 7.5 7.5 C 7.5 8.88 6.38 10 5 10 C 3.62 10 2.5 8.88 2.5 7.5 C 2.5 6.12 3.62 5 5 5 C 6.38 5 7.5 6.12 7.5 7.5 Z"), pivot: (5, 5), role: .ink, layer: 0),
+        DogPart(name: "thermal.stem", ops: ops("M 4 0 L 4 0 C 4.55 0 5 0.45 5 1 L 5 4 C 5 4.55 4.55 5 4 5 L 4 5 C 3.45 5 3 4.55 3 4 L 3 1 C 3 0.45 3.45 0 4 0 Z"), pivot: (4, 4), role: .ink, layer: 0),
+        DogPart(name: "thermal.bulb", ops: ops("M 6.2 5.8 C 6.2 7.02 5.22 8 4 8 C 2.78 8 1.8 7.02 1.8 5.8 C 1.8 4.58 2.78 3.6 4 3.6 C 5.22 3.6 6.2 4.58 6.2 5.8 Z"), pivot: (4, 4), role: .ink, layer: 0),
     ]
 
-    /// Badge glyph: disk. 10 x 10 pt box, y down.
+    /// Badge glyph: disk. 8 x 8 pt box, y down, on the 1x pixel grid.
     static let badgeDisk: [DogPart] = [
-        DogPart(name: "disk.body", ops: ops("M 2 1.6 C 2 0.6 3.34 0 5 0 C 6.66 0 8 0.6 8 1.6 L 8 8.4 C 8 9.4 6.66 10 5 10 C 3.34 10 2 9.4 2 8.4 Z"), pivot: (5, 5), role: .ink, layer: 0),
+        DogPart(name: "disk.lid", ops: ops("M 1 2 C 1 0.8 2.34 0 4 0 C 5.66 0 7 0.8 7 2 L 1 2 Z"), pivot: (4, 4), role: .ink, layer: 0),
+        DogPart(name: "disk.body", ops: ops("M 1 3 L 7 3 L 7 6.8 C 7 7.6 5.66 8 4 8 C 2.34 8 1 7.6 1 6.8 Z"), pivot: (4, 4), role: .ink, layer: 0),
     ]
 
-    /// Badge glyph: power. 10 x 10 pt box, y down.
+    /// Badge glyph: power. 8 x 8 pt box, y down, on the 1x pixel grid.
     static let badgePower: [DogPart] = [
-        DogPart(name: "power.bolt", ops: ops("M 6.5 0 L 1.5 6 L 4 6 L 3.5 10 L 8.5 4 L 6 4 Z"), pivot: (5, 5), role: .ink, layer: 0),
+        DogPart(name: "power.bolt", ops: ops("M 4 0 L 7 0 L 5.2 3 L 7.5 3 L 2.5 8 L 3.6 4.6 L 1 4.6 Z"), pivot: (4, 4), role: .ink, layer: 0),
     ]
     // ART-END
 }

@@ -132,9 +132,11 @@ enum DogRenderer {
     }
 
     /// Draws the static frame of an input into `rect` (y-down context).
-    static func drawStatic(_ input: DogInput, gait: DogGait? = nil, dark: Bool, in rect: CGRect, ctx: CGContext) {
+    /// `phase` picks a stride frame; the default pi / 2 is the key frame (the gallery also draws frames A and B).
+    static func drawStatic(_ input: DogInput, gait: DogGait? = nil, phase: Double = Double.pi / 2, dark: Bool,
+                           in rect: CGRect, ctx: CGContext) {
         let g = gait ?? DogMotor.staticGait(for: input)
-        let pose = DogMotor.staticPose(gait: g, input: input)
+        let pose = DogMotor.staticPose(gait: g, input: input, phase: phase)
         let glyph = (pose.bubble > 0) ? input.worstProblem.map { DogArt.badge($0) } : nil
         let layers = DogRig.layers(gait: g, pose: pose, glyph: glyph)
         ctx.saveGState()
@@ -145,12 +147,15 @@ enum DogRenderer {
     }
 }
 
-/// The menu bar template icon: Bichon head, badge gap, badge (DESIGN.md 3.1 to 3.4). Alpha is all that matters.
+/// The menu bar template icon: Bichon head on the left, badge on the right (DESIGN.md 3.1 to 3.4). Alpha is all that matters.
+/// Round 2 (I2): the head (x 0 to 15) and the badge (x 16 to 24) never overlap, so there is no badge gap and the head
+/// is never cut. The ears are part of one head silhouette, so there is no ear gap either.
 enum MenuIconRenderer {
     static let size = CGSize(width: DogArt.menuSize.w, height: DogArt.menuSize.h)
-    /// Gap between an ear (or the tongue) and the head: half of this stroke width (0.75 pt).
+    /// Clear stroke around the tongue: half of it (0.75 pt) separates the tongue from the chin.
     static let knockout: CGFloat = 1.5
-    static let hollowLine: CGFloat = 1
+    /// Width of the hollow ring, inside the silhouette (1.5 pt, so that it covers whole pixels at 2x and most of a pixel at 1x).
+    static let hollowLine: CGFloat = 1.5
 
     /// Draws the icon at `origin` (top left) in a y-down context, 1 unit = 1 pt. `ink` is the template ink.
     static func draw(_ state: MenuIconState, style: GlyphStyle, ink: CGColor, at origin: CGPoint = .zero, in ctx: CGContext) {
@@ -159,36 +164,38 @@ enum MenuIconRenderer {
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
         ctx.setFillColor(ink)
         ctx.setStrokeColor(ink)
-        let hollow = (state.posture == .hollow)
-        if hollow {
-            // Outer outline of the head and ear union only: stroke 2 pt (1 pt lands outside), clear every
-            // interior, then draw the three face dots solid. No inner lines, so it reads as one light outline.
-            let parts = DogArt.menuHead(state.posture)
-            let silhouette = parts.filter { $0.role == .fur || $0.role == .ear }.map { DogPathCache.path($0.ops) }
-            ctx.setLineWidth(hollowLine * 2)
-            ctx.setLineJoin(.round)
-            for path in silhouette {
-                ctx.addPath(path)
-                ctx.strokePath()
-            }
-            for path in silhouette { fill(path, clear: true, in: ctx) }
-            for part in parts where part.role == .cutout { fill(DogPathCache.path(part.ops), clear: false, in: ctx) }
-        }
-        for part in DogArt.menuHead(state.posture) where !hollow {
-            let path = DogPathCache.path(part.ops)
-            if part.role == .ear || part.role == .tongue {
+        let parts = DogArt.menuHead(state.posture)
+        if state.posture == .hollow {
+            // Inner ring of the silhouette: clip to the head, stroke twice the ring width, so the ring lies
+            // fully inside the outline and the outer edge stays where the solid icon has it. Then the face, solid.
+            for part in parts where part.role == .fur {
+                let path = DogPathCache.path(part.ops)
                 ctx.saveGState()
-                ctx.setBlendMode(.clear)
-                ctx.setLineWidth(knockout)
+                ctx.addPath(path)
+                ctx.clip()
+                ctx.setLineWidth(hollowLine * 2)
                 ctx.setLineJoin(.round)
                 ctx.addPath(path)
                 ctx.strokePath()
                 ctx.restoreGState()
             }
-            fill(path, clear: part.role == .cutout, in: ctx)
+            for part in parts where part.role == .cutout { fill(DogPathCache.path(part.ops), clear: false, in: ctx) }
+        } else {
+            for part in parts {
+                let path = DogPathCache.path(part.ops)
+                if part.role == .tongue {
+                    ctx.saveGState()
+                    ctx.setBlendMode(.clear)
+                    ctx.setLineWidth(knockout)
+                    ctx.setLineJoin(.round)
+                    ctx.addPath(path)
+                    ctx.strokePath()
+                    ctx.restoreGState()
+                }
+                fill(path, clear: part.role == .cutout, in: ctx)
+            }
         }
         if let badge = state.badge {
-            fill(DogPathCache.path(DogArt.menuBadgeCutout), clear: true, in: ctx)
             let o = DogArt.menuBadgeOrigin
             ctx.translateBy(x: o.x, y: o.y)
             ctx.addPath(GlyphPaths.badgeYDown(badge.item, style: style))
