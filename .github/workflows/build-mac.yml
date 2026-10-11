@@ -44,6 +44,9 @@ jobs:
       - name: Build app
         run: python3 scripts/build.py
 
+      - name: Dog gallery
+        run: dist/MoleMonitor.app/Contents/MacOS/MoleMonitor --dog-gallery "${{ runner.temp }}/molemonitor-dog"
+
       - name: Build UI test variant (交互与动效回归门禁)
         run: python3 scripts/build.py --ui-test
 
@@ -62,5 +65,7 @@ jobs:
             ${{ runner.temp }}/molemonitor-ci/status.json
             ${{ runner.temp }}/molemonitor-ui/*.png
             ${{ runner.temp }}/molemonitor-ui/ui-report.json
+            ${{ runner.temp }}/molemonitor-dog/**/*.png
+            ${{ runner.temp }}/molemonitor-dog/*.json
           if-no-files-found: ignore
           retention-days: 3

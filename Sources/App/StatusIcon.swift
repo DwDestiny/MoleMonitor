@@ -173,18 +173,35 @@ enum IconText {
 }
 
 /// The redesigned menu bar icon (docs/DESIGN.md 3, 8.3). I3 owns the status item and calls `apply` on each change.
-/// SKELETON: `apply` does nothing. The current icon still comes from `StatusIcon` and `StatusIconCache` above.
-/// I2 implements it: template frame cache from `DogArt.menuHead` and `DogArt.badge`, switch animation.
+/// Stage 1: one static template NSImage per state (Bichon head from `DogArt.menuHead`, badge from `GlyphPaths`),
+/// cached, assigned only when the state or the text changes. No timer. Stage 2 adds the one-shot switch animation.
+/// The stage 1 `StatusIcon` and `StatusIconCache` above stay until I3 moves the status item to this controller.
 @MainActor
 final class StatusIconController {
     private weak var statusItem: NSStatusItem?
+    private var images = [MenuIconState: NSImage]()
+    private var current: (state: MenuIconState, text: String)?
 
     /// `statusItem` is nil in a headless run. Not listed in DESIGN.md 8.3 at skeleton time.
     init(statusItem: NSStatusItem?) {
         self.statusItem = statusItem
     }
 
+    /// At most 16 states exist (3 postures x 5 badges + hollow), so the cache stays small.
+    func image(for state: MenuIconState) -> NSImage {
+        if let hit = images[state] { return hit }
+        let made = MenuIconRenderer.image(state)
+        images[state] = made
+        return made
+    }
+
     func apply(_ state: MenuIconState, text: String) {
-        // SKELETON
+        if let current, current.state == state, current.text == text { return }
+        current = (state, text)
+        guard let button = statusItem?.button else { return }
+        button.image = image(for: state)
+        button.imagePosition = .imageOnly
+        button.toolTip = text
+        button.setAccessibilityLabel(text)
     }
 }
