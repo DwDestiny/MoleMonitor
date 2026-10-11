@@ -103,6 +103,9 @@ struct DogFrame: Equatable {
     var pose: DogPose
     var fadeFrom: DogGait?
     var fade = 1.0
+    /// Steady frames only (no gait blend, the bubble absent or settled): the place in the gait loop, 0 to 1. The pose
+    /// is then `DogMotor.loopPose(gait:loop:input:)` of this value, so the view may draw a cached strip frame instead.
+    var loop: Double?
 }
 
 struct DogMotor {
@@ -169,33 +172,85 @@ struct DogMotor {
         phase += 2 * Double.pi * frequency * dt
         if phase > 2000 * Double.pi { phase -= 2000 * Double.pi }   // Keeps precision; a whole number of cycles
 
-        var pose = DogMotor.gaitPose(gait, phase: phase, time: time)
+        var pose = DogMotor.loopedPose(gait, phase: phase, time: time, input: input)
         var out = DogFrame(gait: gait, pose: pose)
+        var steady = true
         if let from = previousGait {
             let k = (time - blendStart) / blendDuration
             if k >= 1 {
                 previousGait = nil
             } else {
                 let s = smoothstep(k)
-                let old = DogMotor.gaitPose(from, phase: phase, time: time)
+                let old = DogMotor.loopedPose(from, phase: phase, time: time, input: input)
                 pose = DogMotor.blend(old, pose, s)
+                steady = false
                 if DogRig.artChanges(from, gait) {
                     out.fadeFrom = from
                     out.fade = s
                 }
             }
         }
-        pose = DogMotor.applyOverlays(pose, input: input, time: time, animated: true)
         // The bubble pops once when it appears (scale 0.6 -> 1, DESIGN.md 5.3), then stays still.
         if pose.bubble > 0 {
             let since = bubbleSince ?? time
             bubbleSince = since
             pose.bubble = DogMotor.pop(time - since)
+            if pose.bubble != 1 { steady = false }
         } else {
             bubbleSince = nil
         }
         out.pose = pose
+        if steady { out.loop = DogMotor.loopFraction(gait, phase: phase, time: time) }
         return out
+    }
+
+    // MARK: Gait loops (stage 2, frame cost)
+
+    /// Loop period of the idle gaits, s: lie breathes and wags once in 2 s, stand breathes once and wags 3 times in 2.5 s.
+    static func idlePeriod(_ g: DogGait) -> Double? {
+        switch g {
+        case .lie: return 2.0
+        case .stand: return 2.5
+        default: return nil
+        }
+    }
+
+    /// Pant cycles per gait loop, so the pant repeats with the loop: lie 5 (2.5 Hz), stand 6 (2.4 Hz),
+    /// walk 2 (1.6 to 2.8 Hz), trot and sprint 1 (1.6 to 3.6 Hz, one pant per stride).
+    static func pantCycles(_ g: DogGait) -> Double {
+        switch g {
+        case .lie: return 5
+        case .stand: return 6
+        case .walk: return 2
+        case .trot, .sprint: return 1
+        }
+    }
+
+    /// The place in the gait loop, 0 to 1: the stride phase for the moving gaits, the time in the idle loop for lie
+    /// and stand.
+    static func loopFraction(_ g: DogGait, phase: Double, time: Double) -> Double {
+        let tau = 2 * Double.pi
+        let x: Double
+        if let period = idlePeriod(g) { x = time / period } else { x = phase / tau }
+        let f = x - x.rounded(.down)
+        return f >= 1 ? 0 : f
+    }
+
+    /// Gait pose plus the overlays, all periodic in the gait loop.
+    static func loopedPose(_ g: DogGait, phase: Double, time: Double, input: DogInput) -> DogPose {
+        let loop = loopFraction(g, phase: phase, time: time)
+        return applyOverlays(gaitPose(g, phase: phase, time: time), input: input, loop: loop, gait: g, animated: true)
+    }
+
+    /// The pose of a steady frame at loop place `loop` (0 to 1). Equal to the motor pose of a steady frame with the
+    /// same gait, loop place and input: the view caches the drawing of each loop place (DESIGN.md 4.6, stage 2).
+    static func loopPose(gait g: DogGait, loop: Double, input: DogInput) -> DogPose {
+        let tau = 2 * Double.pi
+        let phase = idlePeriod(g) == nil ? tau * loop : 0
+        let time = (idlePeriod(g) ?? 0) * loop
+        var pose = loopedPose(g, phase: phase, time: time, input: input)
+        if pose.bubble > 0 { pose.bubble = 1 }
+        return pose
     }
 
     /// The bubble pop: spring(response 0.40, dampingFraction 0.78) from 0.6 to 1 (DESIGN.md 5.3). 1 after 1.2 s.
@@ -207,13 +262,13 @@ struct DogMotor {
         return 1 - 0.4 * exp(-zeta * w * t) * (cos(wd * t) + zeta / root * sin(wd * t))
     }
 
-    /// Static pose. The default phase pi / 2 is the key frame for Reduce Motion and the card.
-    /// The gallery also asks for phase 0 and pi (frames A and B of one stride).
     /// Group opacity of the gray dog (collecting, stale). The renderer also uses the muted gray palette for it.
     /// Stage 2: 0.45 with the normal palette was too faint in light mode (0.9 % ink in the M19 gate), so the gray look
     /// now comes from the palette and the opacity only softens it.
     static let grayOpacity = 0.85
 
+    /// Static pose. The default phase pi / 2 is the key frame for Reduce Motion and the card.
+    /// The gallery also asks for phase 0 and pi (frames A and B of one stride).
     static func staticPose(gait: DogGait, input: DogInput, phase: Double = Double.pi / 2) -> DogPose {
         if input.isStatic {
             var pose = gaitPose(.stand, phase: Double.pi / 2, time: 0)
@@ -224,7 +279,7 @@ struct DogMotor {
         }
         var pose = gaitPose(gait, phase: phase, time: 0)
         pose.breath = 0
-        return applyOverlays(pose, input: input, time: 0, animated: false)
+        return applyOverlays(pose, input: input, loop: 0, gait: gait, animated: false)
     }
 
     /// The gait the motor would show for a fixed input (the gallery and the first frame).
@@ -283,14 +338,16 @@ struct DogMotor {
         return p
     }
 
-    /// Thermal pant and the attention bubble on top of the gait pose.
-    static func applyOverlays(_ base: DogPose, input: DogInput, time t: Double, animated: Bool) -> DogPose {
+    /// Thermal pant, the attention bubble and memory red on top of the gait pose. Stage 2: the pant runs
+    /// `pantCycles(gait)` times per gait loop (`loop` 0 to 1), so a steady frame repeats with the loop.
+    static func applyOverlays(_ base: DogPose, input: DogInput, loop: Double, gait: DogGait, animated: Bool) -> DogPose {
         var p = base
         let tau = 2 * Double.pi
         if input.thermal == .serious || input.thermal == .critical {
+            let a = tau * pantCycles(gait) * loop
             p.mouthOpen = 1
-            p.tongue = animated ? 8 + sin(tau * 2.5 * t) : 8
-            p.breath = animated ? 0.03 * sin(tau * 2.5 * t) : 0
+            p.tongue = animated ? 8 + sin(a) : 8
+            p.breath = animated ? 0.03 * sin(a) : 0
             p.eyesClosed = min(p.eyesClosed, 0.2)
         }
         if input.worstProblem != nil, input.worstLevel == .yellow || input.worstLevel == .red {
@@ -494,7 +551,8 @@ struct MenuMotionConditions: Equatable {
 
 enum MenuMotion {
     static let frameCount = 8
-    static let frameInterval = 0.075
+    /// Stage 2: 70 ms (490 ms per play) leaves 110 ms of the 600 ms limit for a late timer (CI showed 64 to 78 ms).
+    static let frameInterval = 0.07
     /// The same health item plays at most once in this time, s.
     static let throttle: TimeInterval = 300
     static let badgePeak = 1.2
@@ -533,7 +591,7 @@ enum MenuMotion {
         return item
     }
 
-    /// The frames of one switch, at most 8 (75 ms apart). Empty when there is nothing to play. The last frame
+    /// The frames of one switch, at most 8 (70 ms apart). Empty when there is nothing to play. The last frame
     /// draws like the still target. Head: the silhouette and the face morph point by point (ear angle and head tilt),
     /// the mouth and the tongue of the pant head grow from their top edge (tongue length). Badge: a new badge pops
     /// 0 -> 1.2 -> 1, a badge that goes away plays the same curve backward.

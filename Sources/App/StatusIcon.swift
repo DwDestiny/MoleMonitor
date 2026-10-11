@@ -6,6 +6,7 @@
 
 import AppKit
 import Foundation
+import QuartzCore
 
 /// Corner badge kind. `none` means a template image that follows the menu bar color.
 enum IconBadge: Hashable {
@@ -175,7 +176,7 @@ enum IconText {
 /// The redesigned menu bar icon (docs/DESIGN.md 3, 8.3). I3 owns the status item and calls `apply` on each change.
 /// Still states: one template NSImage per state (Bichon head from `DogArt.menuHead`, badge from `GlyphPaths`), cached,
 /// assigned only when the state changes. Stage 2 (I2): a change of posture or badge plays one switch animation
-/// (DESIGN.md 3.5): at most 8 frames, 75 ms apart (525 ms), from one Timer made for this play and invalidated after
+/// (DESIGN.md 3.5): at most 8 frames, 70 ms apart (490 ms), from one Timer made for this play and invalidated after
 /// the last frame. The frames come from MenuMotion (DogRig) and the same MenuIconRenderer, made once per switch and
 /// cached. Reduce Motion, a locked screen, a sleeping display, a hidden icon or the 5 minute throttle switch directly.
 /// No timer exists between plays; the icon never moves on its own.
@@ -195,6 +196,8 @@ final class StatusIconController {
     private var timer: Timer?
     private var playing = [NSImage]()
     private var playIndex = 0
+    private var playStart: CFTimeInterval = 0
+    private var activity: NSObjectProtocol?
 
     /// Replaces the motion conditions read at the moment of a switch (the dog checks). Nil reads the system.
     var conditionsOverride: (() -> MenuMotionConditions)?
@@ -255,21 +258,31 @@ final class StatusIconController {
         lastPlayed[item] = now
         playing = frames(from: previous, to: state)
         playIndex = 0
+        playStart = CACurrentMediaTime()
+        // A menu bar app has no visible window, so App Nap may coalesce its timers. The activity keeps the 70 ms
+        // ticks on time for the 490 ms of the play only; stopPlay ends it.
+        activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical],
+                                                         reason: "Menu bar icon switch animation")
         button.image = playing[0]
         onImage?(1)
         let t = Timer(timeInterval: MenuMotion.frameInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        t.tolerance = 0
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }
 
+    /// Shows the frame that is due now (frame k is due at k x 70 ms). A late tick skips the frames it missed, so a
+    /// slow main thread shortens the play instead of stretching it past 600 ms.
     private func tick() {
-        playIndex += 1
-        guard playIndex < playing.count, let button = self.button else {
+        let due = Int(((CACurrentMediaTime() - playStart) / MenuMotion.frameInterval).rounded())
+        let next = min(max(due, playIndex + 1), playing.count - 1)
+        guard next > playIndex, let button = self.button else {
             stopPlay()
             return
         }
+        playIndex = next
         button.image = playing[playIndex]
         onImage?(playIndex + 1)
         if playIndex == playing.count - 1 { stopPlay() }
@@ -279,6 +292,8 @@ final class StatusIconController {
         timer?.invalidate()
         timer = nil
         playing = []
+        if let activity { ProcessInfo.processInfo.endActivity(activity) }
+        activity = nil
     }
 
     /// The images of one switch. The last one is the cached still image of the target. At most 8 switches are kept.

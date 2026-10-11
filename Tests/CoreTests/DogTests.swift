@@ -678,6 +678,56 @@ func runDogTests() {
     expect(memWorst < -5, "animated memory red: the plume stays low (\(memWorst))")
     expect(DogMotor.staticPose(gait: .walk, input: dogInput(cpu: nil, isStatic: true)).tailAngle == 0, "gray dog: no droop, no motion")
 
+    section("Dog gait loops (stage 2, cached strip frames)")
+    func poseDiff(_ a: DogPose, _ b: DogPose) -> Double {
+        var d = [a.bodyY - b.bodyY, a.bodyPitch - b.bodyPitch, a.breath - b.breath, a.headY - b.headY, a.headTilt - b.headTilt,
+                 a.earAngle - b.earAngle, a.tailAngle - b.tailAngle, a.mouthOpen - b.mouthOpen, a.tongue - b.tongue,
+                 a.eyesClosed - b.eyesClosed, a.bubble - b.bubble, a.opacity - b.opacity]
+        for i in 0..<4 { d.append(a.legAngle[i] - b.legAngle[i]); d.append(a.legLift[i] - b.legLift[i]) }
+        return d.map { abs($0) }.max() ?? 0
+    }
+    let loopInputs: [(String, [DogInput])] = [
+        ("cpu wave", [dogInput(cpu: 5), dogInput(cpu: 30), dogInput(cpu: 65), dogInput(cpu: 97), dogInput(cpu: 2)]),
+        ("hot, attention, memory red", [dogInput(cpu: 25, thermal: .serious, memory: .red, worst: .memory, level: .red),
+                                        dogInput(cpu: 55, thermal: .critical, worst: .cpu, level: .yellow),
+                                        dogInput(cpu: 3, thermal: .serious), dogInput(cpu: 88, worst: .disk, level: .red)]),
+    ]
+    for (name, phases) in loopInputs {
+        var m = DogMotor(initialCPU: phases[0].cpuPercent)
+        var worst = 0.0, steadyCount = 0, total = 0, blendWithLoop = 0
+        var seen = Set<DogGait>()
+        for input in phases {
+            for i in 0..<(24 * 14) {
+                let dt = [1.0 / 24, 1.0 / 30, 1.0 / 60, 0.1][i % 4]
+                let f = m.frame(dt: dt, input: input)
+                total += 1
+                if let loop = f.loop {
+                    steadyCount += 1
+                    seen.insert(f.gait)
+                    expect(loop >= 0 && loop < 1, "\(name): loop place in [0, 1)")
+                    worst = max(worst, poseDiff(f.pose, DogMotor.loopPose(gait: f.gait, loop: loop, input: input)))
+                }
+                if f.fadeFrom != nil, f.loop != nil { blendWithLoop += 1 }
+            }
+        }
+        expect(worst < 1e-6, "\(name): a steady frame equals loopPose at its loop place (worst \(worst))")
+        expect(steadyCount > total / 2 && blendWithLoop == 0, "\(name): most frames are steady, no crossfade frame is (\(steadyCount)/\(total))")
+        expect(seen.count >= 2, "\(name): steady frames in \(seen.count) gaits")
+    }
+    for g in DogGait.allCases {
+        for input in [dogInput(cpu: 50), dogInput(cpu: 50, thermal: .serious, memory: .red, worst: .cpu, level: .red)] {
+            let wrap = poseDiff(DogMotor.loopPose(gait: g, loop: 0, input: input), DogMotor.loopPose(gait: g, loop: 1 - 1e-9, input: input))
+            expect(wrap < 1e-5, "\(g.rawValue): the loop closes (\(wrap))")
+        }
+    }
+    var popMotor = DogMotor(initialCPU: 30)
+    _ = popMotor.frame(dt: 1.0 / 24, input: dogInput(cpu: 30))
+    let popping = popMotor.frame(dt: 1.0 / 24, input: dogInput(cpu: 30, worst: .disk, level: .yellow))
+    expect(popping.loop == nil, "a popping bubble is not a steady frame")
+    for _ in 0..<40 { _ = popMotor.frame(dt: 1.0 / 24, input: dogInput(cpu: 30, worst: .disk, level: .yellow)) }
+    let settled = popMotor.frame(dt: 1.0 / 24, input: dogInput(cpu: 30, worst: .disk, level: .yellow))
+    expect(settled.loop != nil && settled.pose.bubble == 1, "a settled bubble is steady again")
+
     section("Dog affine")
     let r = DogAffine.rotate(90, about: (0, 0)).apply(1, 0)
     expect(abs(r.x) < 1e-9 && abs(r.y - 1) < 1e-9, "positive rotation turns clockwise on a y-down screen")

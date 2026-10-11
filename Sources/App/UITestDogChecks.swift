@@ -23,6 +23,7 @@ enum DogFrameProbe {
         var gait: DogGait
         var legs: [Double]
         var crossfade: Bool
+        var cached: Bool
         var stepNs: UInt64
         var drawNs: UInt64
     }
@@ -44,14 +45,20 @@ enum DogFrameProbe {
 
     static func clock() -> UInt64 { clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) }
 
-    static func record(date: Date, frame: DogFrame, stepNs: UInt64, drawNs: UInt64) {
+    /// Strip bitmaps held by the newest DogView.
+    private(set) static var bitmaps = 0
+
+    /// `drawnLegs` are the legs of the drawn image: the strip pose when the frame came from the strip cache.
+    static func record(date: Date, frame: DogFrame, drawnLegs: [Double], cached: Bool, stepNs: UInt64, drawNs: UInt64,
+                       bitmaps: Int) {
         guard recording else { return }
+        self.bitmaps = bitmaps
         if let last = entries.last, last.date == date {
             redraws += 1
             return
         }
-        entries.append(Entry(date: date, gait: frame.gait, legs: frame.pose.legAngle, crossfade: frame.fadeFrom != nil,
-                             stepNs: stepNs, drawNs: drawNs))
+        entries.append(Entry(date: date, gait: frame.gait, legs: drawnLegs, crossfade: frame.fadeFrom != nil,
+                             cached: cached, stepNs: stepNs, drawNs: drawNs))
     }
 
     static func reset() {
@@ -172,10 +179,13 @@ final class UITestDogChecks {
 
     private func runAll() async {
         DogFrameProbe.recording = true
+        let sys = StatusIconController.systemConditions()
+        // The CI runner has the system Reduce Motion on (run 38145280772). The gates force it off through the injection
+        // point and turn it on only for (e).
+        DogFrameProbe.forceReduceMotion = false
         setUpWindow()
         await sleep(0.5)
         info["screenMaxFPS"] = String(NSScreen.main?.maximumFramesPerSecond ?? 0)
-        let sys = StatusIconController.systemConditions()
         info["systemReduceMotion"] = String(sys.reduceMotion)
         info["systemScreenLocked"] = String(sys.screenLocked)
         info["systemDisplayAsleep"] = String(sys.displayAsleep)
@@ -204,9 +214,14 @@ final class UITestDogChecks {
         func p(_ a: [Double], _ q: Double) -> Double { a.isEmpty ? 0 : a[min(a.count - 1, Int(Double(a.count) * q))] }
         func mean(_ a: [Double]) -> Double { a.isEmpty ? 0 : a.reduce(0, +) / Double(a.count) }
         let fps = Double(n) / openWall
+        let hits = entries.filter { $0.cached }.count
+        let hitTotals = entries.filter { $0.cached }.map { Double($0.stepNs + $0.drawNs) / 1000 }.sorted()
         record("DA", "card open: frames in 3 s", (60...80).contains(n),
-               "\(n) frames (\(String(format: "%.1f", fps)) fps), \(DogFrameProbe.redraws) extra redraws",
+               "\(n) frames (\(String(format: "%.1f", fps)) fps), \(DogFrameProbe.redraws) extra redraws, "
+                   + "\(hits) from the strip cache, \(DogFrameProbe.bitmaps) bitmaps",
                ["frames": Double(n), "fps": fps, "redraws": Double(DogFrameProbe.redraws),
+                "stripFrames": Double(hits), "stripBitmaps": Double(DogFrameProbe.bitmaps),
+                "stripFrameUsMean": mean(hitTotals), "stripFrameUsP95": p(hitTotals, 0.95),
                 "frameUsMean": mean(totals), "frameUsP50": p(totals, 0.5), "frameUsP95": p(totals, 0.95),
                 "stepUsMean": mean(steps), "drawUsMean": mean(draws), "drawUsP95": p(draws, 0.95),
                 "processCpuPercentOpen": openCPU / openWall * 100])
@@ -319,7 +334,7 @@ final class UITestDogChecks {
         controller.apply(MenuIconState(posture: .raised, badge: MenuBadge(item: .disk)), text: "b")
         let timerNow = controller.timerCount
         await sleep(0.8)
-        DogFrameProbe.forceReduceMotion = nil
+        DogFrameProbe.forceReduceMotion = false
         let ok = frames == 0 && events == [0, 0] && timerNow == 0 && controller.timerCount == 0
         record("DE", "Reduce Motion: no frames, no timer", ok,
                "card animated frames \(frames), menu images \(events), timers \(timerNow)/\(controller.timerCount)",
@@ -356,6 +371,35 @@ final class UITestDogChecks {
         bench("sprint-104", cpu: 95, size: CGSize(width: 104, height: 78))
         bench("walk-pant-72", cpu: 25, thermal: .serious, size: CGSize(width: 72, height: 54))
         bench("lie-104", cpu: 3, size: CGSize(width: 104, height: 78))
+        // The strip cache path: motor step, cache lookup (draw on a miss) and one bitmap draw, 10 s of trot at 24 fps.
+        do {
+            let size = CGSize(width: 104, height: 78)
+            let input = Self.input(cpu: 60, problem: .cpu, level: .yellow)
+            var motor = DogMotor(initialCPU: 60)
+            let driver = DogDriver()
+            if let space = CGColorSpace(name: CGColorSpace.sRGB),
+               let ctx = CGContext(data: nil, width: 208, height: 156, bitsPerComponent: 8, bytesPerRow: 208 * 4, space: space,
+                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                var hits = [Double](), misses = [Double]()
+                for _ in 0..<240 {
+                    let start = CPUClock.now()
+                    let frame = motor.frame(dt: 1.0 / 24, input: input)
+                    let before = driver.stripBitmapCount
+                    ctx.clear(CGRect(x: 0, y: 0, width: 208, height: 156))
+                    if let strip = driver.stripImage(frame, input: input, dark: false, size: size, scale: 2) {
+                        ctx.draw(strip.image, in: CGRect(x: 0, y: 0, width: 208, height: 156))
+                    }
+                    let us = Double(CPUClock.now() - start) / 1000
+                    if driver.stripBitmapCount > before { misses.append(us) } else { hits.append(us) }
+                }
+                hits.sort()
+                info["bench-strip-hit-us-mean"] = String(format: "%.0f", hits.isEmpty ? 0 : hits.reduce(0, +) / Double(hits.count))
+                info["bench-strip-hit-us-p95"] = String(format: "%.0f", hits.isEmpty ? 0 : hits[Int(Double(hits.count) * 0.95)])
+                info["bench-strip-miss-us-mean"] = String(format: "%.0f", misses.isEmpty ? 0 : misses.reduce(0, +) / Double(misses.count))
+                info["bench-strip-hits"] = String(hits.count)
+                info["bench-strip-misses"] = String(misses.count)
+            }
+        }
         // Crossfade frames draw two dogs: a stepped switch lie -> walk.
         var motor = DogMotor(initialCPU: 5)
         var crossfadeTimes = [Double]()

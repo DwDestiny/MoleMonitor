@@ -9,6 +9,9 @@
 // Each frame advances it by the real time since the last frame, at most 0.1 s. The view exists only while the
 // status card is open (NSPopover releases its content on close), so a closed card has no frame callbacks.
 // Reduce Motion, collecting and stale: the timeline is paused and the dog is the static frame (DESIGN.md 4.7).
+// Frame cost (DESIGN.md 4.6): vector drawing of one frame took about 2.3 ms on the CI runner, over the 0.4 ms budget.
+// So steady frames (no gait blend, no bubble pop) come from a strip cache: 24 bitmaps per gait loop, drawn on first
+// use with the same renderer and reused while the card stays open. Blends, crossfades and pops stay vector.
 
 import SwiftUI
 
@@ -44,6 +47,59 @@ final class DogDriver {
     private(set) var lastStepNs: UInt64 = 0
 #endif
 
+    // MARK: Strip cache
+
+    /// Bitmaps per gait loop. 24 keeps the sprint step under the leg speed limit (15 degrees of stride per bitmap).
+    static let stripFrames = 24
+    /// Strips kept at once (the current look and the one before it). A 104 x 78 pt strip at 2x is about 3.1 MB.
+    static let maxStrips = 2
+
+    private struct StripKey: Hashable {
+        var gait: DogGait
+        var pant: Bool
+        var problem: HealthItem?
+        var level: HealthLevel
+        var memoryRed: Bool
+        var dark: Bool
+        var width: Int
+        var height: Int
+    }
+
+    private var strips = [StripKey: [Int: CGImage]]()
+    private var stripOrder = [StripKey]()
+
+    /// The cached bitmap of a steady frame and the pose it shows, or nil (draw vector). `size` is the dog box in points.
+    func stripImage(_ frame: DogFrame, input: DogInput, dark: Bool, size: CGSize, scale: CGFloat) -> (image: CGImage, pose: DogPose)? {
+        guard let loop = frame.loop, frame.fadeFrom == nil else { return nil }
+        let w = Int((size.width * scale).rounded()), h = Int((size.height * scale).rounded())
+        guard w > 0, h > 0 else { return nil }
+        let attention = input.worstProblem != nil && (input.worstLevel == .yellow || input.worstLevel == .red)
+        let key = StripKey(gait: frame.gait, pant: input.thermal == .serious || input.thermal == .critical,
+                           problem: attention ? input.worstProblem : nil, level: attention ? input.worstLevel : .green,
+                           memoryRed: input.memoryLevel == .red, dark: dark, width: w, height: h)
+        let n = DogDriver.stripFrames
+        let index = Int((loop * Double(n)).rounded()) % n
+        let pose = DogMotor.loopPose(gait: frame.gait, loop: Double(index) / Double(n), input: input)
+        if let hit = strips[key]?[index] { return (hit, pose) }
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: scale, y: -scale)
+        DogRenderer.drawFrame(DogFrame(gait: frame.gait, pose: pose), input: input, dark: dark,
+                              in: CGRect(origin: .zero, size: size), ctx: ctx)
+        guard let image = ctx.makeImage() else { return nil }
+        if strips[key] == nil {
+            stripOrder.append(key)
+            if stripOrder.count > DogDriver.maxStrips { strips[stripOrder.removeFirst()] = nil }
+        }
+        strips[key, default: [:]][index] = image
+        return (image, pose)
+    }
+
+    /// Bitmaps held now (the dog checks).
+    var stripBitmapCount: Int { strips.values.reduce(0) { $0 + $1.count } }
+
     /// The gait to show in a paused (static) view: the motor's gait if it ran, else the gait of the input.
     func staticGait(_ input: DogInput) -> DogGait {
         if input.isStatic { return .stand }
@@ -56,6 +112,7 @@ struct DogView: View {
     var size: CGSize
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.displayScale) private var displayScale
     @State private var driver = DogDriver()
 
     init(input: DogInput, size: CGSize) {
@@ -75,6 +132,7 @@ struct DogView: View {
         let dark = (colorScheme == .dark)
         let still = reduceMotion || input.isStatic
         let driver = self.driver
+        let scale = max(1, displayScale)
         TimelineView(.animation(minimumInterval: 1.0 / 24, paused: still)) { timeline in
             if still {
                 let gait = driver.staticGait(input)
@@ -90,12 +148,19 @@ struct DogView: View {
 #if UITEST
                     let drawStart = DogFrameProbe.clock()
 #endif
-                    context.withCGContext { cg in
-                        DogRenderer.drawFrame(frame, input: input, dark: dark, in: DogView.fit(canvasSize), ctx: cg)
+                    let box = DogView.fit(canvasSize)
+                    let strip = driver.stripImage(frame, input: input, dark: dark, size: box.size, scale: scale)
+                    if let strip {
+                        context.draw(Image(decorative: strip.image, scale: scale), in: box)
+                    } else {
+                        context.withCGContext { cg in
+                            DogRenderer.drawFrame(frame, input: input, dark: dark, in: box, ctx: cg)
+                        }
                     }
 #if UITEST
-                    DogFrameProbe.record(date: date, frame: frame, stepNs: driver.lastStepNs,
-                                         drawNs: DogFrameProbe.clock() - drawStart)
+                    DogFrameProbe.record(date: date, frame: frame, drawnLegs: strip?.pose.legAngle ?? frame.pose.legAngle,
+                                         cached: strip != nil, stepNs: driver.lastStepNs,
+                                         drawNs: DogFrameProbe.clock() - drawStart, bitmaps: driver.stripBitmapCount)
 #endif
                 }
             }

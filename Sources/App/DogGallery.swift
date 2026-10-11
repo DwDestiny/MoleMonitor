@@ -672,13 +672,13 @@ enum DogGallery {
         ("关注 内存 → 正常", MenuIconState(posture: .raised, badge: MenuBadge(item: .memory)), MenuIconState(posture: .relaxed, badge: nil)),
     ]
 
-    /// Contact sheet of the menu bar switch: the start state, then the 8 frames (75 ms apart). Each frame as a 2x
+    /// Contact sheet of the menu bar switch: the start state, then the 8 frames (70 ms apart). Each frame as a 2x
     /// vector and as 1x pixels zoomed 2x on the light menu bar; the dark bar repeats the vector row.
     private static func sheetMenuSwitch(_ style: GlyphStyle) {
         let cellW: CGFloat = 80, rowH: CGFloat = 132, top: CGFloat = 30, left: CGFloat = 8
         let size = CGSize(width: left + cellW * 9 + 8, height: top + rowH * CGFloat(menuSwitches.count) + 8)
         let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
-            label("菜单栏切换动画：每行起始态 + 8 帧（每帧 75 ms）。上：浅色 2 倍矢量。中：1x 像素放大 2 倍。下：深色 2 倍矢量",
+            label("菜单栏切换动画：每行起始态 + 8 帧（每帧 70 ms）。上：浅色 2 倍矢量。中：1x 像素放大 2 倍。下：深色 2 倍矢量",
                   at: CGPoint(x: 8, y: 18), size: 11, in: ctx)
             for (r, sw) in menuSwitches.enumerated() {
                 let y = top + CGFloat(r) * rowH
