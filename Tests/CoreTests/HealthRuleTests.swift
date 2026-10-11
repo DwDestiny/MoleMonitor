@@ -191,7 +191,11 @@ private func runMemoryRuleTests() {
 
     // Swap growth.
     func swapRamp(_ gbEnd: Double) -> [TrendPoint] {
-        gen(0, 40) { m in pt(m, pressure: .normal, swap: Int64(Double(gib) * (1 + (m >= 10 ? (m - 10) / 30.0 * gbEnd : 0)))) }
+        gen(0, 40) { (m: Double) -> TrendPoint in
+            let extra: Double = m >= 10 ? (m - 10) / 30.0 * gbEnd : 0
+            let swap: Int64 = Int64(Double(gib) * (1.0 + extra))
+            return pt(m, pressure: .normal, swap: swap)
+        }
     }
     let grow = replayMemory(swapRamp(3.0))
     let g = grow.last
@@ -206,7 +210,11 @@ private func runMemoryRuleTests() {
 
     // swapTrend arrows.
     func trendFor(_ delta: Double, physical: Int64 = 17_179_869_184) -> SwapTrend? {
-        let p = gen(0, 40) { m in pt(m, swap: Int64(Double(gib) * (4 + (m >= 10 ? (m - 10) / 30.0 * delta : 0)))) }
+        let p = gen(0, 40) { (m: Double) -> TrendPoint in
+            let extra: Double = m >= 10 ? (m - 10) / 30.0 * delta : 0
+            let swap: Int64 = Int64(Double(gib) * (4.0 + extra))
+            return pt(m, swap: swap)
+        }
         return MemoryHealth.swapTrend(points: p, physicalBytes: physical, now: p.last!.t)
     }
     expect(trendFor(3.0) == .steepUp, "+3 GiB is steepUp")

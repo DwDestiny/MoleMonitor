@@ -83,7 +83,12 @@ func runTrendTests() {
     expect(TrendBuffer().cpuSummary(now: now) == nil, "no points gives no summary")
 
     section("TrendMath")
-    let pts: [TrendPoint] = (0..<20).map { tp(Double(19 - $0) * 30, cpu: $0 < 10 ? 20 : 90) }
+    var pts = [TrendPoint]()
+    for i in 0..<20 {
+        let age: Double = Double(19 - i) * 30.0
+        let load: Double = i < 10 ? 20.0 : 90.0
+        pts.append(tp(age, cpu: load))
+    }
     let run = TrendMath.run(pts, now: now)
     expect(run.count == 20, "run takes all continuous points")
     expect(TrendMath.run(pts, now: now.addingTimeInterval(200)).isEmpty, "a stale run is empty")
