@@ -941,14 +941,15 @@ final class UITestRunner {
         }
         // The icon follows the engine one main-queue hop later, so wait for the icon itself.
         _ = await waitFor(timeoutMs: 8000) {
-            self.engine.diskLevel == .red && button.image?.isTemplate == false && (button.accessibilityLabel() ?? "").contains("磁盘")
+            self.delegate.menuIconState?.badge?.item == .disk && button.image?.isTemplate == true && (button.accessibilityLabel() ?? "").contains("磁盘")
         }
         let label = button.accessibilityLabel() ?? ""
         let hasImage = button.image != nil
         let templateFlag = button.image?.isTemplate
-        let ok = hasImage && label.contains("磁盘") && engine.diskLevel == .red && templateFlag == false
+        let badge = delegate.menuIconState?.badge?.item
+        let ok = hasImage && label.contains("磁盘") && engine.diskLevel == .red && templateFlag == true && badge == .disk
         record("A", "状态栏与图标", ok, since: t0,
-               "image=\(hasImage) isTemplate=\(templateFlag.map { "\($0)" } ?? "nil") level=\(engine.diskLevel) label=\(label)",
+               "image=\(hasImage) isTemplate=\(templateFlag.map { "\($0)" } ?? "nil") level=\(engine.diskLevel) badge=\(badge?.rawValue ?? "nil") posture=\(delegate.menuIconState?.posture.rawValue ?? "nil") label=\(label)",
                ["buttonHasWindow": button.window != nil ? 1 : 0])
         return true
     }

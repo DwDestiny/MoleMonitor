@@ -254,6 +254,15 @@ for file in panel_files:
     if re.search(r"\bTimer\b|TimelineView|Timer\.publish", text):
         timer_hits.append(file.name)
 check(not timer_hits, "source audit: no Timer or TimelineView in the panel files", str(timer_hits))
+# The placeholder text of the skeleton is gone from every view the panel and the menu bar use.
+skeleton_hits = []
+for file in sorted((root / "Sources/App").glob("*.swift")) + [root / "Sources/MoleMonitor.swift"]:
+    text = re.sub(r"//.*", "", file.read_text(encoding="utf-8"))
+    if re.search(r'"[^"\n]*SKELETON[^"\n]*"', text):
+        skeleton_hits.append(file.name)
+check(not skeleton_hits, "source audit: no SKELETON string literal in the app sources", str(skeleton_hits))
+# The release binary does not draw the placeholder either.
+check(b"SKELETON" not in release_bytes, "release binary does not contain the SKELETON placeholder text")
 ui_app = root / "dist-uitest/MoleMonitor.app"
 ui_bin = ui_app / "Contents/MacOS/MoleMonitor"
 skipped_ui = []
@@ -291,7 +300,7 @@ else:
     check(ui_report is not None, "UI test wrote ui-report.json")
     if ui_report:
         by_id = {item["id"]: item for item in ui_report["items"]}
-        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2"]:
+        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19"]:
             check(letter in by_id, f"UI item {letter} reported")
         for item in ui_report["items"]:
             label = f"UI {item['id']} {item['name']}"

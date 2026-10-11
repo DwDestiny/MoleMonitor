@@ -3,6 +3,7 @@
 // Input: Command line arguments and MonitorEngine state (status.json data in the data directory).
 // Output: Menu bar app, or --self-test, --diagnose (headless), --preview (28 static PNG files) and --dog-gallery (PNG gallery) modes.
 // Pos: Entry point and app lifecycle; no cleanup or privileged commands, no Go collector.
+//      The menu bar icon is `StatusIconController` (I2) driven by `MenuIconModel`; the status item has no title text.
 //      The status card is hosted here: PanelModel + PanelRoot in an NSPopover. AppKit sets the popover height (three tiers).
 import AppKit
 import Combine
@@ -17,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // Internal (not private) so the UI regression harness can drive the real objects; no behavior change.
     let engine = MonitorEngine()
-    private let iconCache = StatusIconCache()
     let popover = NSPopover()
     private(set) var statusItem: NSStatusItem?
 #if UITEST
@@ -25,11 +25,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var testAnchor: NSView?
 #endif
     private var cancellables = Set<AnyCancellable>()
-    private var lastIconState: IconState?
+    /// The last icon state given to the controller (posture and badge). The UI regression reads it.
+    private(set) var menuIconState: MenuIconState?
     private lazy var iconController = StatusIconController(statusItem: statusItem)
     /// Model of the open status card. Created on open, released on close.
     private(set) var panelModel: PanelModel?
     private var planObserver: AnyCancellable?
+#if UITEST
+    /// Test only: while true, the engine does not change the menu bar icon (the icon check drives it by hand).
+    var suspendIconUpdates = false
+#endif
 #if UITEST
     /// Test only: a model with fixture data. When set, the next open shows it and does not attach the engine.
     var testModel: PanelModel?
@@ -50,22 +55,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.behavior = .transient
         popover.delegate = self
 
-        applyIcon(status: engine.status, level: engine.diskLevel)
-        // The sink receives the new values. Do not re-read the engine here: @Published fires before it stores.
-        Publishers.CombineLatest(engine.$status, engine.$diskLevel)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] status, level in
-                self?.applyIcon(status: status, level: level)
-            }
-            .store(in: &cancellables)
-
-        // The menu bar icon follows the verdicts and the data state of the engine. StatusIconController is I2's view.
+        // Hollow icon until the first evaluation.
+        applyMenuIcon(verdicts: [], dataState: .collecting)
+        // The menu bar icon follows the verdicts and the data state of the engine. The sink receives the new values.
         Publishers.CombineLatest(engine.$verdicts, engine.$dataState)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] verdicts, dataState in
-                let now = Date()
-                self?.iconController.apply(MenuIconModel.state(verdicts, dataState: dataState),
-                                           text: MenuIconModel.text(verdicts, dataState: dataState, now: now))
+                self?.applyMenuIcon(verdicts: verdicts, dataState: dataState)
             }
             .store(in: &cancellables)
         // A tapped notification opens the card and expands the item of the notification.
@@ -90,17 +86,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: Icon
 
-    private func applyIcon(status: StatusFile?, level: HealthLevel) {
-        let state = IconState(badge: StatusIcon.badge(for: level),
-                              description: IconText.description(status: status, level: level))
-        guard state != lastIconState, let button = statusItem?.button else { return }
-        // Assign the image only when the badge changes; the text may change more often.
-        if lastIconState?.badge != state.badge || button.image == nil {
-            button.image = iconCache.image(for: state.badge)
-        }
-        button.toolTip = state.description
-        button.setAccessibilityLabel(state.description)
-        lastIconState = state
+    /// Posture and badge come from `MenuIconModel` (Core). The tooltip and the VoiceOver text are the same text. The icon has no title text
+    /// (docs/DESIGN.md 3.1: the icon is the Bichon head with a category badge only).
+    func applyMenuIcon(verdicts: [ItemVerdict], dataState: DataState) {
+#if UITEST
+        if suspendIconUpdates { return }
+#endif
+        let state = MenuIconModel.state(verdicts, dataState: dataState)
+        let text = MenuIconModel.text(verdicts, dataState: dataState, now: Date())
+        menuIconState = state
+        iconController.apply(state, text: text)
     }
 
     // MARK: Panel

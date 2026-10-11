@@ -3,7 +3,7 @@
 // Input: PanelData and the mode (quiet or problem) from the layout plan.
 // Output: The hero block: the dog, the headline, the subtitle and the lamps.
 // Pos: First block of the status card (docs/DESIGN.md 2.2). Quiet mode: dog 104 x 78 and three lamp rows. Problem mode: dog 72 x 54, headline, lamp row.
-//      DogView is I2's view. Here it is a placeholder call with the fixed DogInput.
+//      DogView is I2's view (static pose in stage 1). It draws the gray collecting and stale looks itself from `DogInput.isStatic`.
 
 import SwiftUI
 
@@ -95,11 +95,9 @@ private struct HeroDog: View {
 
     var body: some View {
         DogView(input: data.dogInput, size: size)
-            .opacity(data.isCollecting ? 0.45 : 1)
-            .saturation(data.staleSince != nil ? 0 : 1)
             .frame(width: size.width, height: size.height)
             .uiTestFrame("dog")
-            .accessibilityHidden(true)
+            .accessibilityIdentifier("dog")
     }
 }
 

@@ -79,6 +79,43 @@ enum UITestContrast {
     }
 }
 
+/// The pixels of the dog region: how many pixels differ from the dominant color, and how many distinct colors the region has.
+struct UITestDogStats {
+    var ink: Int
+    var area: Int
+    var colors: Int
+
+    static func measure(_ shot: UITestShot, region: CGRect, surface: UITestContrast.RGB) -> UITestDogStats? {
+        guard let m = UITestContrast.measure(shot, region: region, surface: surface) else { return nil }
+        let box = UITestPixels.pixelRegion(region, of: shot)
+        var seen = Set<Int>()
+        for y in box.y0..<box.y1 {
+            for x in box.x0..<box.x1 {
+                let i = (y * shot.w + x) * 4
+                let r: Int = Int(shot.rgba[i]) >> 3
+                let g: Int = Int(shot.rgba[i + 1]) >> 3
+                let b: Int = Int(shot.rgba[i + 2]) >> 3
+                seen.insert((r << 10) | (g << 5) | b)
+            }
+        }
+        return UITestDogStats(ink: m.ink, area: (box.x1 - box.x0) * (box.y1 - box.y0), colors: seen.count)
+    }
+}
+
+/// What the menu bar icon must show per scenario (docs/DESIGN.md 3.2). Written by hand, not computed by `MenuIconModel`.
+enum UITestIconExpectation {
+    static func expected(_ c: PreviewCase) -> (posture: MenuPosture, badge: HealthItem?) {
+        switch c {
+        case .allGreen: return (.relaxed, nil)
+        case .collecting, .stale: return (.hollow, nil)
+        case .cpuYellow: return (.raised, .cpu)
+        case .diskRed: return (.pant, .disk)
+        case .powerYellow: return (.raised, .power)
+        case .multi: return (.pant, .disk)
+        }
+    }
+}
+
 final class UITestTextBox: @unchecked Sendable {
     var value: String?
 }
@@ -159,6 +196,8 @@ extension UITestRunner {
         var stableNotes = [String]()
         let copyBox = UITestTextBox()
         var tierByCase = [String: Double]()
+        var dogProblems = [String]()
+        var dogNotes = [String]()
 
         for c in PreviewCase.allCases {
             guard let model = await openFixture(c, copyBox: copyBox), let hv = hostView else {
@@ -204,6 +243,19 @@ extension UITestRunner {
             }
             if lampFrames.map({ $0.item }) != lampItems { orderProblems.append("\(name): the lamp order differs from ProblemOrder.all") }
 
+            // M19: no placeholder text in the accessibility tree, and a dog element with a Chinese label (when the tree is readable)
+            if c == .allGreen || c == .diskRed {
+                let nodes = axNodes()
+                let placeholder = "SKEL" + "ETON"
+                if nodes.contains(where: { $0.label.contains(placeholder) || $0.value.contains(placeholder) }) {
+                    dogProblems.append("\(name): the accessibility tree contains the placeholder text")
+                }
+                if let dogNode = nodes.first(where: { $0.id == "dog" }) {
+                    if !dogNode.label.hasPrefix("比熊") { dogProblems.append("\(name): dog label '\(dogNode.label)'") }
+                    dogNotes.append("\(name) dog label '\(dogNode.label)'")
+                }
+            }
+
             // M3: the height is one of the three tiers
             let height = Double(hv.bounds.height)
             let expected = problems.isEmpty ? PanelMetrics.heightQuiet : (problems.count == 1 ? PanelMetrics.heightSingle : PanelMetrics.heightMulti)
@@ -232,6 +284,15 @@ extension UITestRunner {
                     frameFiles.append("ui-m-\(name)-\(dark ? "dark" : "light").png")
                 }
                 let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
+                let dogKey = name + (dark ? " dark" : " light")
+                if let rect = panelRect("dog"), let stats = UITestDogStats.measure(shot, region: rect, surface: surface) {
+                    let share = Double(stats.ink) / Double(Swift.max(1, stats.area))
+                    dogNotes.append("\(dogKey) \(Int(rect.width))x\(Int(rect.height)) ink \(stats.ink) (\(String(format: "%.1f", share * 100)) %), \(stats.colors) colors")
+                    if share < 0.01 { dogProblems.append("\(dogKey): ink share \(String(format: "%.3f", share)) < 0.01") }
+                    if stats.colors < 12 { dogProblems.append("\(dogKey): only \(stats.colors) colors, not a drawn dog") }
+                } else {
+                    dogProblems.append("\(dogKey): no dog region or no ink")
+                }
                 for target in contrastTargets(model) {
                     guard let rect = panelRect(target.id), rect.width > 2, rect.height > 2 else { continue }
                     guard let m = UITestContrast.measure(shot, region: rect, surface: surface) else {
@@ -323,8 +384,13 @@ extension UITestRunner {
         if !ringProblems.isEmpty { note11 += "; failures: " + ringProblems.joined(separator: "; ") }
         let values11: [String: Double] = ["problems": Double(ringProblems.count)]
         record("M11", "无焦点环（Q9）", ringProblems.isEmpty && !ringNotes.isEmpty, since: t0, note11, values11)
+        var note19 = dogNotes.joined(separator: "; ")
+        if !dogProblems.isEmpty { note19 += "; failures: " + dogProblems.joined(separator: "; ") }
+        let values19: [String: Double] = ["problems": Double(dogProblems.count), "measured": Double(dogNotes.count)]
+        record("M19", "面板里比熊真实渲染", dogProblems.isEmpty && dogNotes.count >= 14, since: t0, note19, values19)
         stepLargeType()
         await stepColdFirstFrame(copyBox: copyBox)
+        await stepIcon()
     }
 
     /// Pixels near the system focus ring color in the ring zone around a frame (`margin` points outside the frame, plus the frame).
@@ -389,6 +455,76 @@ extension UITestRunner {
         note += "The text is built from the fixture with PromptBuilder; the engine copy is judged in N1."
         let values: [String: Double] = ["copiedSeconds": seconds, "changedShare": changed, "textLength": Double(text.count)]
         record("M13", "复制状态机", ok, since: t0, note, values)
+    }
+
+    // MARK: M14, menu bar icon states
+
+    /// The menu bar icon of each scenario: the state the app gave to `StatusIconController`, the image and the text.
+    /// The real menu bar is not needed. The engine is held back while this runs.
+    func stepIcon() async {
+        let t0 = now()
+        delegate.suspendIconUpdates = true
+        var problems = [String]()
+        var notes = [String]()
+        var hashes = [String: String]()
+        let button = delegate.statusItem?.button
+        for c in PreviewCase.allCases {
+            let data = PanelModel.fixtureData(c, full: true, now: Date())
+            let want = UITestIconExpectation.expected(c)
+            let modelState = MenuIconModel.state(data.verdicts, dataState: data.dataState)
+            if modelState.posture != want.posture || modelState.badge?.item != want.badge {
+                problems.append("\(c.rawValue): MenuIconModel gives \(modelState.posture.rawValue)/\(modelState.badge?.item.rawValue ?? "-")")
+            }
+            delegate.suspendIconUpdates = false
+            delegate.applyMenuIcon(verdicts: data.verdicts, dataState: data.dataState)
+            delegate.suspendIconUpdates = true
+            let applied = delegate.menuIconState
+            if applied?.posture != want.posture || applied?.badge?.item != want.badge {
+                problems.append("\(c.rawValue): the app applied \(applied?.posture.rawValue ?? "nil")/\(applied?.badge?.item.rawValue ?? "-")")
+            }
+            let text = MenuIconModel.text(data.verdicts, dataState: data.dataState, now: Date())
+            var line = "\(c.rawValue)=\(want.posture.rawValue)/\(want.badge?.rawValue ?? "-")"
+            if let button, let image = button.image {
+                if !image.isTemplate { problems.append("\(c.rawValue): the icon is not a template image") }
+                if abs(Double(image.size.width) - 24) > 0.01 { problems.append("\(c.rawValue): the icon is \(image.size.width) pt wide") }
+                if button.toolTip != text { problems.append("\(c.rawValue): the tooltip differs from the icon text") }
+                if (button.accessibilityLabel() ?? "") != text { problems.append("\(c.rawValue): the accessibility label differs from the icon text") }
+                if let tiff = image.tiffRepresentation { hashes[c.rawValue] = String(tiff.hashValue) }
+            } else {
+                line += " (no button image here)"
+            }
+            // The problem items appear in ProblemOrder in the text.
+            var last = -1
+            for v in ProblemOrder.problems(data.verdicts) {
+                if let r = text.range(of: v.item.label) {
+                    let at = text.distance(from: text.startIndex, to: r.lowerBound)
+                    if at < last { problems.append("\(c.rawValue): the problem order in the text is wrong") }
+                    last = at
+                } else {
+                    problems.append("\(c.rawValue): the text lacks \(v.item.label)")
+                }
+            }
+            notes.append(line)
+        }
+        // Different states need different images.
+        let states: [String: String] = ["allGreen": "allGreen", "collecting": "collecting", "stale": "collecting",
+                                        "cpuYellow": "cpuYellow", "diskRed": "diskRed", "powerYellow": "powerYellow", "multi": "diskRed"]
+        var byState = [String: String]()
+        for (name, state) in states {
+            guard let h = hashes[name] else { continue }
+            if let old = byState[state], old != h { problems.append("the same state \(state) gives different images") }
+            byState[state] = h
+        }
+        if !hashes.isEmpty, Set(byState.values).count != byState.count {
+            problems.append("two different states give the same image")
+        }
+        delegate.suspendIconUpdates = false
+        // Hand the icon back to the engine.
+        delegate.applyMenuIcon(verdicts: engine.verdicts, dataState: engine.dataState)
+        var note = notes.joined(separator: ", ") + "; images compared: \(hashes.count)"
+        if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
+        let values: [String: Double] = ["problems": Double(problems.count), "images": Double(hashes.count)]
+        record("M14", "菜单栏图标状态", problems.isEmpty, since: t0, note, values)
     }
 
     // MARK: N1 and N2, the real engine drives the card
