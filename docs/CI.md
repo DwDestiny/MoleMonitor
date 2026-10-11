@@ -1,0 +1,92 @@
+---
+title: "MoleMonitor · CI 回归门禁"
+type: ci
+last_updated: 2026-10-11
+---
+
+# CI 回归门禁
+
+GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行回归检查。结果是回归门禁，不是真机验收。工作流文件是 [build-mac.yml](../.github/workflows/build-mac.yml)。
+
+## 工作流做什么
+
+工作流 `build-mac` 只有一个作业 `build-test`，运行在 `macos-15`。步骤按顺序执行：
+
+| 步骤 | 内容 |
+|---|---|
+| 1. Toolchain | 输出系统版本、芯片、Xcode 和 `swiftc` 版本 |
+| 2. Core and CLI tests | `scripts/test_core.py`（353 条断言）与 `scripts/test_cli.py`（79 项检查） |
+| 3. Build app | `python3 scripts/build.py`，输出 `dist/` |
+| 4. Build UI test variant | `python3 scripts/build.py --ui-test`，输出 `dist-uitest/` |
+| 5. Acceptance and UI regression gate | `python3 scripts/ci_acceptance.py`，检查项见 [scripts/README.md](../scripts/README.md) |
+| 6. Upload | 上传 artifact `molemonitor-ci`，保留 3 天，即使前面步骤失败也上传 |
+
+触发条件：推送到 `main` 且改动了 `Sources/`、`Tests/`、`scripts/`、`Vendor/` 或工作流文件，或手动触发（`workflow_dispatch`）。
+
+## 成本与免费额度
+
+| 约束 | 值 | 依据 |
+|---|---|---|
+| 运行器 | `macos-15` | 公开仓库使用标准运行器免费。`macos-14` 将于 2026-11-02 退役，因此不用 |
+| 作业数 | 1 | 不加多系统或多版本矩阵 |
+| 超时 | `timeout-minutes: 15` | 防止卡死后占用运行器 |
+| 触发 | 路径过滤，无 `schedule` | 文档改动不触发。不做定时运行 |
+| 并发 | `cancel-in-progress: true` | 同一分支的新提交取消旧运行 |
+| 权限 | `contents: read` | 工作流不写仓库 |
+
+> **警告**：不要把仓库改为私有，除非先复核计费。私有仓库的 macOS 运行器按分钟计费，并且倍率高于 Linux。改为私有后，本工作流会开始产生费用。
+
+> **警告**：不要给 `build-mac.yml` 加 `schedule`，不要加多系统矩阵，不要去掉超时。这些改动会增加用量。
+
+免费额度和退役日期来自 GitHub 的公开说明。额度规则可能变化。改动工作流前，先到 GitHub 文档复核。
+
+## 如何读结果
+
+1. 列出最近的运行：`gh run list --workflow build-mac.yml`。
+2. 实时跟踪一次运行：`gh run watch`。
+3. 查看失败步骤的日志：`gh run view <run-id> --log-failed`。
+4. 下载 artifact：`gh run download <run-id> -n molemonitor-ci`。如果省略 `<run-id>`，`gh` 会让你选择。
+
+日志中每个检查输出一行 `PASS`、`FAIL` 或 `SKIP`。最后一行是 `ACCEPTANCE PASSED` 或 `ACCEPTANCE FAILED`。`SKIP` 不是通过，也不是失败，日志末尾会集中列出。
+
+artifact 的内容：
+
+| 文件 | 内容 |
+|---|---|
+| `preview-<等级>-<外观>.png` | 6 张静态状态卡图：green、yellow、red，各有 light 与 dark |
+| `status.json` | 22 秒无界面采样写出的状态文件 |
+| `ui-*.png` | `--ui-test` 的窗口截图 |
+| `ui-report.json` | `--ui-test` 的报告：各项状态、数值、主线程间隔统计 |
+
+## `--ui-test` 各项
+
+`--ui-test` 运行测试变体里的真实 `NSStatusItem`、`NSPopover` 与引擎。它用合成事件做交互，使用预置的红色磁盘历史和临时数据目录。
+
+| 项 | 名称 | 检查内容 |
+|---|---|---|
+| A | 状态栏与图标 | 菜单栏按钮有图标，红色磁盘等级的无障碍文字含“磁盘”，图标不是模板图像 |
+| B | 打开 | 点击后状态卡显示，窗口可见，实时采样在 1.5 秒内启动，定时器共 2 个，冷启动首次打开的主线程最长间隔小于 600 ms |
+| C | 入场动画在推进 | 用窗口截图或图层数值，确认入场动画在推进并最终稳定 |
+| D | 实时折线在滚动 | 实时 CPU 折线的点数递增，相邻截图的像素有变化 |
+| E | 主线程流畅度 | 120 Hz 定时器测主线程间隔：要求 p95 小于 40 ms，max 小于 250 ms |
+| F | 悬停交互 | 合成鼠标悬停到磁盘图上，图的像素发生变化 |
+| G | 按钮交互与降级文案 | 授权状态为“未决定”时，授权按钮可点。其他状态时，降级文案符合预期 |
+| H | 关闭 | 按 Esc 在 400 ms 内关闭，实时定时器停止，缓冲清空，视图控制器被释放 |
+| I | 再次打开 | 第二次打开比第一次更快稳定（150 ms 淡入），实时采样重新启动，定时器共 2 个 |
+| J | 深浅色 | 浅色与深色外观的截图都非空白，且彼此不同 |
+| K | 退出 | 点击“退出”按钮，进程以退出码 0 结束，`status.json` 在退出时被写入 |
+| L | 关闭面板零成本 | 关闭 3 秒后，实时采样为关，只剩 1 个定时器（5 分钟 tick），缓冲为空，CPU 小于 5% 单核 |
+
+最新全绿运行（run 38115054435）的实测数字见 [VERIFICATION.md](VERIFICATION.md) 条目 3。
+
+## 局限
+
+- 虚拟机是软件渲染。结果不代表真机 GPU 帧率，也不代表动画是否丝滑。
+- 主线程间隔只能证明没有长阻塞。冷启动首次打开有一次约 215 至 440 ms 的卡顿。
+- 美观、字体、间距、Retina 表现和真实菜单栏位置需要人看。
+- 虚拟机里无人点击系统授权框。授权框是否真实弹出，要在 Mac 上确认。
+- 部分项依赖窗口截图或辅助功能树。虚拟机里读不到时，该项标为 `skipped`，不算通过。
+- 只覆盖 `macos-15` 和 arm64。macOS 14 与其他芯片未验证。
+- 虚拟机的 CPU、内存、磁盘数字不能外推到真机。
+
+真机待验清单见 [HANDOFF.md](HANDOFF.md) 的“下一步”。

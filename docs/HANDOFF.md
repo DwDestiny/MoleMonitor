@@ -6,22 +6,26 @@ last_updated: 2026-10-11
 
 # Claude 接手说明
 
-阶段 1 的代码已经写完。`Sources/Core/` 与 CLI 已在 Linux 上测试。`Sources/App/` 与 `scripts/build.py` 尚未在 Mac 上编译或运行。项目在 Linux VPS 上可以继续设计、改源码和写文档。AppKit、SwiftUI、UserNotifications、IOKit 的构建与运行检查必须在 Apple Silicon Mac 上完成。Linux 的静态检查不能替代这些结果。
+阶段 1 的代码已经写完，状态卡已重做，并已加上 GitHub Actions 回归门禁。`Sources/Core/` 与 CLI 在 Linux 上测试。`Sources/App/` 在 CI 的 macOS 虚拟机上构建并通过回归门禁，但没有在用户的 Mac 上人工验收。项目在 Linux VPS 上可以继续设计、改源码和写文档。AppKit、SwiftUI、UserNotifications、IOKit 的真机检查必须在 Apple Silicon Mac 上完成。
 
 ## 当前状态
 
 | 部分 | 状态 |
 |---|---|
 | 产品方向 | 只检测和预警，不做清理。设计真源是 [PROJECT.md](PROJECT.md) |
-| `Sources/Core/` | 完成。Linux 上 294 条断言通过 |
-| `Sources/cli/`（`molemonitor-cli`） | 完成。Linux 上 79 项检查通过，耗时 p50 约 11 ms，p95 约 16 ms |
-| `Sources/App/`（Engine、Sampler、Notifier、StatusIcon、Panel） | 已写完。只做过 Linux 桩类型检查，未在 Mac 上编译或运行 |
-| `Sources/MoleMonitor.swift` | 入口分流：`--self-test`、`--diagnose`、`--preview`、正常 App。未在 Mac 上编译 |
+| `Sources/Core/` | 完成。Linux 上 353 条断言通过 |
+| `Sources/cli/`（`molemonitor-cli`） | 完成。Linux 上 79 项检查通过。CI 虚拟机上 p50 8.1 ms，p95 11.8 ms |
+| `Sources/App/`（Engine、Sampler、LiveSampler、Notifier、StatusIcon、Panel） | 已写完。状态卡已重做：磁盘 30 天趋势图，实时卡（网速与整机 CPU，60 秒窗口，每 2 秒采样，只在状态卡打开期间采样，实时点不落盘），入场动画，宽 340 pt。已通过 CI 回归门禁 |
+| `Sources/App/UITestHarness.swift` | 界面回归测试代码。只在 `-D UITEST` 构建中存在 |
+| `Sources/MoleMonitor.swift` | 入口分流：`--self-test`、`--diagnose`、`--preview`、正常 App |
 | `Sources/Sensors.swift` | 保留的只读 SMC。阶段 1 不引用，阶段 2 使用 |
-| `scripts/build.py` | 已重写：不下载，编译 App 和 CLI，ad-hoc 签名。未在 Mac 上运行 |
+| `scripts/build.py` | 编译 App 和 CLI，ad-hoc 签名。`--ui-test` 构建测试变体。已在 CI 上运行 |
+| `scripts/ci_acceptance.py`、`.github/workflows/build-mac.yml` | CI 回归门禁。最新全绿运行：Actions run 38115054435。说明见 [CI.md](CI.md) |
 | 旧方案 | Go 采集器、`fetch_status.py`、1 Hz 界面定时器已删除 |
 
-> **注意**：在 Mac 上首次构建之前，不要把 `Sources/App/` 写成已验证。第一版的验证记录只属于已废弃的旧方案，见 [VERIFICATION.md](VERIFICATION.md)。
+实时网速与 CPU 曲线是从阶段 2 提前的仅显示功能。CPU 的健康规则仍属阶段 2。
+
+> **注意**：CI 结果是回归门禁，不是真机验收。不要写成“验收通过”。虚拟机是软件渲染，不能证明真机帧率、观感、菜单栏位置和通知授权框。见 [VERIFICATION.md](VERIFICATION.md) 条目 3。
 
 ## 范围
 
@@ -33,7 +37,7 @@ last_updated: 2026-10-11
 
 阶段 1 之后的计划：
 
-1. 阶段 2：CPU、内存、泄漏检测、前 5 名应用、网速与流量。
+1. 阶段 2：CPU 健康规则、内存、泄漏检测、前 5 名应用。实时网速与 CPU 曲线已提前完成。
 2. 阶段 3：温度与热状态，自绘比熊。
 3. 阶段 4：睡眠掉电。
 
@@ -59,16 +63,44 @@ dist/MoleMonitor.app/Contents/MacOS/MoleMonitor --diagnose --seconds 22
 dist/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status --brief
 ```
 
-可见 App 检查、安装、登录启动、公证与发行按用户具体授权执行。
+构建界面测试变体，输出到 `dist-uitest/`：
+
+```bash
+python3 scripts/build.py --ui-test
+```
+
+在 arm64 macOS 上运行本地回归门禁。先运行 `python3 scripts/build.py` 和 `python3 scripts/build.py --ui-test`。脚本在 Linux 或 Intel Mac 上直接退出。运行时，状态卡会在屏幕上显示约 30 秒。
+
+```bash
+python3 scripts/ci_acceptance.py
+```
+
+在 CI 上查看运行结果：
+
+```bash
+gh run list --workflow build-mac.yml
+gh run watch
+gh run download -n molemonitor-ci
+```
+
+可见 App 检查、安装、登录启动、公证与发行按用户具体授权执行。CI 的 `--ui-test` 在虚拟机上显示状态卡，这不改变这条规则。
 
 ## 下一步
 
+用户先在自己的 Mac 上过一遍，然后进入阶段 2。
+
 1. 在 Mac 上运行 `python3 scripts/build.py`。
 2. 如果编译失败，把完整编译错误粘贴回 Claude。Claude 在 VPS 上修改源码。
-3. 构建成功后，运行 `--self-test`、`codesign --verify` 和 `--diagnose --seconds 22`。
-4. 运行 `python3 scripts/test_core.py` 和 `python3 scripts/test_cli.py`，确认 Mac 上同样通过。
-5. 按 [PROJECT.md](PROJECT.md) 第 11 节验证 V10、V11、V17、V19、V22，并在 Mac 上测 CLI 耗时。
+3. 运行 `--self-test`、`codesign --verify` 和 `--diagnose --seconds 22`。
+4. 获得用户授权后，打开 `dist/MoleMonitor.app`。检查以下 5 项：
+   - 点击菜单栏图标，状态卡打开。检查磁盘趋势图和实时卡。
+   - 通知授权框是否弹出。
+   - 动效手感：第一次打开的入场动画，之后的 150 ms 淡入。
+   - 系统深色与浅色外观。
+   - 菜单栏图标的外观和红色角标。
+5. 按 [PROJECT.md](PROJECT.md) 第 11 节验证 V10、V11、V17、V19、V22。
 6. 把结果写入 [VERIFICATION.md](VERIFICATION.md) 的新条目，不覆盖旧记录。
+7. 真机检查完成后，开始阶段 2：CPU 健康规则、内存、泄漏检测、前 5 名应用。
 
 ## 代码与第三方来源
 

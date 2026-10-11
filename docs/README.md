@@ -11,6 +11,7 @@ last_updated: 2026-10-11
 | [PROJECT.md](PROJECT.md) | 产品范围、技术决定、数据口径与架构 |
 | [VERIFICATION.md](VERIFICATION.md) | 脱敏验证摘要、已验与待验边界、后续检查方法 |
 | [HANDOFF.md](HANDOFF.md) | Claude 接手范围、平台限制、命令和下一步 |
+| [CI.md](CI.md) | GitHub Actions 回归门禁：做什么、成本、如何读结果、局限 |
 | [AGENTS.md](AGENTS.md) | 文档维护约定 |
 
 公开文档记录可复核的实现与验证范围。包含设备、应用快照和本地目录信息的原始诊断及迁移材料未随公开源码分发；不要以摘要代替尚未完成的实机验收。

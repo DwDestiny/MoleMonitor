@@ -10,8 +10,9 @@ last_updated: 2026-10-11
 
 | 脚本 | 平台 | 用途 |
 |---|---|---|
-| `build.py` | 仅 Mac（arm64，macOS 14+） | 编译 App 与 CLI，组装并签名 `dist/MoleMonitor.app` |
-| `test_core.py` | Linux 与 Mac | 编译并运行 `Tests/CoreTests/`，共 294 条断言 |
+| `build.py` | 仅 Mac（arm64，macOS 14+） | 编译 App 与 CLI，组装并签名 `dist/MoleMonitor.app`。加 `--ui-test` 则构建 `dist-uitest/MoleMonitor.app` |
+| `ci_acceptance.py` | 仅 arm64 macOS | 回归门禁：对已构建的 App 做签名、自检、真实采样、CLI 读回、预览图和界面回归检查 |
+| `test_core.py` | Linux 与 Mac | 编译并运行 `Tests/CoreTests/`，共 353 条断言 |
 | `test_cli.py` | Linux 与 Mac | 编译 `molemonitor-cli`，运行 79 项检查 |
 
 ## build.py
@@ -28,6 +29,25 @@ last_updated: 2026-10-11
 6. 先对 CLI，再对整个 App 做 ad-hoc 签名。
 
 脚本只删除并重建本项目的 `dist/MoleMonitor.app`。脚本不安装 App，不修改登录项。
+
+加参数 `--ui-test` 时，脚本用 `-D UITEST` 编译，输出到 `dist-uitest/MoleMonitor.app`，不改动 `dist/`。该变体含界面回归测试代码，不得分发。
+
+## ci_acceptance.py
+
+在 arm64 macOS 上，先运行 `python3 scripts/build.py` 和 `python3 scripts/build.py --ui-test`，再运行 `python3 scripts/ci_acceptance.py`。其他平台上脚本直接退出。环境变量 `MOLEMONITOR_CI_OUT` 指定输出目录，默认是系统临时目录。
+
+脚本按以下顺序检查：
+
+1. 签名、`Info.plist` 版本号、`LSUIElement`、标识符。
+2. `--self-test`。
+3. 22 秒真实无界面采样，以及实时采样探针（状态卡打开时开启，关闭后停止）。
+4. 数据文件权限（目录 0700，文件 0600）。
+5. CLI 读回与只读，CLI 耗时（30 次）。
+6. 6 张预览 PNG 的尺寸。
+7. 发布二进制不含测试代码，`Panel.swift` 的按钮有标识符和中文标签。
+8. 运行测试变体的 `--ui-test`，核对项 A 至 L。项的含义见 [CI.md](../docs/CI.md)。
+
+脚本不安装 App，不修改登录项。运行 `--ui-test` 时，状态卡会在屏幕上显示约 30 秒，使用临时数据目录。结果是回归门禁，不是真机验收。
 
 ## 测试脚本
 

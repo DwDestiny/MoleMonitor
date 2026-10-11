@@ -8,7 +8,7 @@ last_updated: 2026-10-11
 
 MoleMonitor 是 macOS 菜单栏上的轻量状态监测与预警工具。它只检测和预警，不做清理。清理由用户的 agent 调用 [Mole](https://github.com/tw93/Mole) CLI 完成。
 
-> **注意**：阶段 1 的代码已经写完。`Sources/Core/` 与 CLI 已在 Linux 上测试。`Sources/App/` 尚未在 Mac 上编译或运行。完整目标设计见 [docs/PROJECT.md](docs/PROJECT.md)，验证范围见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
+> **注意**：阶段 1 的代码已经写完。`Sources/Core/` 与 CLI 已在 Linux 上测试。`Sources/App/` 已在 GitHub Actions 的 macOS 虚拟机上通过回归门禁（见 [docs/CI.md](docs/CI.md)），但尚未在用户的 Mac 上人工验收。完整目标设计见 [docs/PROJECT.md](docs/PROJECT.md)，验证范围见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
 
 ## 功能
 
@@ -17,7 +17,7 @@ MoleMonitor 是 macOS 菜单栏上的轻量状态监测与预警工具。它只�
 | 位置 | 内容 |
 |---|---|
 | 菜单栏 | 小狗符号加两个灰点。磁盘为红色时，图标右上角显示红色角标 |
-| 状态卡 | 磁盘真实已用与增长量、网络流量、未消除的提醒、通知授权状态、CLI 命令示例、退出 |
+| 状态卡 | 磁盘 30 天趋势图与增长量。实时卡：网速（上下行）与整机 CPU 折线，60 秒窗口，只在状态卡打开期间采样，不落盘。流量两行文字。未消除的提醒。通知授权状态。CLI 命令示例。退出 |
 | 系统通知 | 磁盘短期大量增长，磁盘剩余空间低 |
 | CLI | `molemonitor-cli` 读取状态，输出 JSON 或一行中文 |
 
@@ -78,9 +78,9 @@ dist/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 7
 
 | 范围 | 状态 |
 |---|---|
-| `Sources/Core/`、CLI | 在 Linux 上通过测试：Core 294 条断言，CLI 79 项检查 |
-| `Sources/App/` | 只做过 Linux 桩类型检查，未在 Mac 上编译或运行 |
-| 菜单栏、状态卡、通知、网卡计数器 | 未验证，等待 Mac 首次构建 |
+| `Sources/Core/`、CLI | 在 Linux 上通过测试：Core 353 条断言，CLI 79 项检查 |
+| `Sources/App/` | 在 CI 的 macOS 虚拟机上构建并通过回归门禁（Actions run 38115054435）。不是真机验收 |
+| 动画帧率、观感、真实菜单栏位置、通知授权框、网卡计数器的特殊场景 | 未验证，需要用户在自己的 Mac 上确认 |
 
 详情见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
 
@@ -90,12 +90,13 @@ dist/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 7
 |---|---|
 | [Sources/](Sources/README.md) | Core 逻辑、App 界面与引擎、CLI |
 | [Tests/](Tests) | Core 与 CLI 的测试源码 |
-| [scripts/](scripts/README.md) | 本地构建与测试脚本 |
+| [scripts/](scripts/README.md) | 本地构建、测试与 CI 回归门禁脚本 |
+| [.github/workflows/build-mac.yml](.github/workflows/build-mac.yml) | GitHub Actions 回归门禁，说明见 [docs/CI.md](docs/CI.md) |
 | [Vendor/NOTICE.md](Vendor/NOTICE.md) | 第三方许可与归属 |
-| [docs/](docs/README.md) | 产品设计、验证摘要、接手说明 |
+| [docs/](docs/README.md) | 产品设计、验证摘要、接手说明、CI 说明 |
 | [AGENTS.md](AGENTS.md) | 开发协作约定 |
 | [CLAUDE.md](CLAUDE.md) · [接手说明](docs/HANDOFF.md) | Claude 协作入口与当前状态 |
-| `dist/` | 可再生成的构建产物，不纳入版本管理 |
+| `dist/`、`dist-uitest/` | 可再生成的构建产物，不纳入版本管理 |
 
 ## 许可证与归属
 

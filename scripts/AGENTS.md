@@ -9,5 +9,9 @@
 - 缺少 `Sources/cli/main.swift` 时，`build.py` 必须失败。不得静默跳过 CLI。
 - 保留 SMCKit 与 Stats 的许可证和归属文件。签名只针对打包副本。
 - `test_core.py` 与 `test_cli.py` 必须能在 Linux 上运行。它们只用 Foundation 源码。不得让它们依赖 AppKit。
-- 改 `build.py` 后，必须在 Mac 上实际构建，核验 App 与 CLI 的签名，并运行 `--self-test`。在 Mac 构建之前，`build.py` 只算未验证。
+- 改 `build.py` 后，必须在 Mac 或 CI 上实际构建，核验 App 与 CLI 的签名，并运行 `--self-test`。在 macOS 构建之前，`build.py` 只算未验证。
+- `--ui-test` 只写 `dist-uitest/`，不改动 `dist/`。`dist-uitest/` 不得分发。
+- `ci_acceptance.py` 不安装 App，不修改登录项，不联网。它只在 arm64 macOS 上运行。
+- 改 `ci_acceptance.py` 后，在 CI 上跑一遍。不得为了通过而放宽阈值。放宽时必须在 [docs/CI.md](../docs/CI.md) 写明原因。
+- `.github/workflows/build-mac.yml` 的成本约束：不得加 `schedule`，不得加多系统或多版本矩阵，保持单作业，保持 `timeout-minutes: 15`，保持路径过滤和并发取消。改动前先读 [docs/CI.md](../docs/CI.md)。
 - 改测试脚本后，运行该脚本并确认全部通过。
