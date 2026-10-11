@@ -1,23 +1,572 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: An output directory from `--dog-gallery <directory>` (docs/DESIGN.md 4.8, 8.5).
-// Output: The PNG gallery of all static dog poses and manifest.json. A release feature, not test code.
-// Pos: Review and CI tool; the app never calls it at run time. Owner I2.
-// SKELETON: creates the directory and writes no image.
+// Output: PNG gallery of all static dog poses, menu bar icons and badges (1x and 2x, light and dark), contact sheets,
+//         a menu bar mock-up with 8x pixel zoom, manifest.json (file names and pixel hashes), badge-matrix.json and
+//         menu-metrics.json (1x XOR ratios measured on the real Core Graphics raster, DESIGN.md 3.3 and 9.4 G1).
+// Pos: Review and CI tool; the app never calls it at run time. Offline, no network. Owner I2.
+//
+// Self-check: returns an error when two different poses give the same pixels, or when a 1x metric fails its gate.
 
+import AppKit
+import CoreGraphics
+import CoreText
 import Foundation
+import ImageIO
+import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 enum DogGallery {
+    // MARK: Content
+
+    struct CardPose {
+        var name: String
+        var gait: DogGait
+        var input: DogInput
+    }
+
+    static func input(cpu: Double? = 5, thermal: ThermalLevel = .nominal, memory: HealthLevel = .green,
+                      problem: HealthItem? = nil, level: HealthLevel = .green, isStatic: Bool = false) -> DogInput {
+        DogInput(cpuPercent: cpu, thermal: thermal, memoryLevel: memory, worstProblem: problem,
+                 worstLevel: level, isStatic: isStatic)
+    }
+
+    /// The card poses of DESIGN.md 4.4 and 4.8: key poses, gaits, overlays, gray.
+    static var cardPoses: [CardPose] {
+        [
+            CardPose(name: "lie", gait: .lie, input: input(cpu: 3)),
+            CardPose(name: "stand", gait: .stand, input: input()),
+            CardPose(name: "walk", gait: .walk, input: input(cpu: 25)),
+            CardPose(name: "trot", gait: .trot, input: input(cpu: 60)),
+            CardPose(name: "sprint", gait: .sprint, input: input(cpu: 95)),
+            CardPose(name: "pant", gait: .stand, input: input(thermal: .serious)),
+            CardPose(name: "bundle", gait: .walk, input: input(cpu: 25, memory: .red)),
+            CardPose(name: "attention", gait: .stand, input: input(problem: .disk, level: .yellow)),
+            CardPose(name: "alarm", gait: .stand, input: input(thermal: .critical, problem: .thermal, level: .red)),
+            CardPose(name: "gray", gait: .stand, input: input(cpu: nil, isStatic: true)),
+        ]
+    }
+
+    static let cardSizes: [CGSize] = [CGSize(width: 104, height: 78), CGSize(width: 72, height: 54)]
+    static let cardBackground: [Bool: UInt32] = [false: 0xECECEC, true: 0x2A2A2C]
+    /// Menu bar backgrounds and the ink the system gives a template image there (approximate).
+    static let barBackground: [Bool: UInt32] = [false: 0xF2F2F2, true: 0x252527]
+    static func barInk(_ dark: Bool) -> CGColor {
+        dark ? CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.9) : CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.85)
+    }
+
+    static var menuStates: [(name: String, state: MenuIconState, style: GlyphStyle)] {
+        var out = [(name: String, state: MenuIconState, style: GlyphStyle)]()
+        for posture in MenuPosture.allCases {
+            out.append((posture.rawValue + "-none", MenuIconState(posture: posture, badge: nil), .glyph))
+            for style in GlyphStyle.allCases {
+                for item in HealthItem.allCases {
+                    let name = posture.rawValue + "-" + item.rawValue + "-" + style.rawValue
+                    out.append((name, MenuIconState(posture: posture, badge: MenuBadge(item: item)), style))
+                }
+            }
+        }
+        return out
+    }
+
+    // MARK: Output state
+
+    private static var manifest = [[String: Any]]()
+    private static var root = URL(fileURLWithPath: "/")
+    private static var failures = [String]()
+
     /// Renders the gallery into `dir`. Returns an error text, or nil on success.
     static func render(to dir: URL) -> String? {
-        // SKELETON: creates the directory, writes no image.
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        } catch {
-            return "Cannot create the gallery directory."
+        root = dir
+        manifest = []
+        failures = []
+        groups = [:]
+        let fm = FileManager.default
+        for sub in ["card", "menu", "badge"] {
+            do {
+                try fm.createDirectory(at: dir.appendingPathComponent(sub), withIntermediateDirectories: true)
+            } catch {
+                return "Cannot create the gallery directory."
+            }
         }
-        return nil
+        renderCards()
+        renderDogView()
+        renderMenu()
+        renderBadges()
+        let choice = writeMetrics()
+        sheetCard()
+        sheetMenu(.glyph)
+        sheetMenu(.letter)
+        sheetBadges()
+        menubarMock(choice)
+        writeJSON(["files": manifest, "glyphStyle": choice.rawValue], "manifest.json")
+        checkDistinct()
+        return failures.isEmpty ? nil : failures.joined(separator: "\n")
+    }
+
+    // MARK: Single images
+
+    private static func renderCards() {
+        for pose in cardPoses {
+            for size in cardSizes {
+                for dark in [false, true] {
+                    for scale in [1, 2] {
+                        let name = "card/\(pose.name)-\(Int(size.width))-\(dark ? "dark" : "light")@\(scale)x.png"
+                        let image = draw(size, scale: scale, background: cardBackground[dark]) { ctx in
+                            DogRenderer.drawStatic(pose.input, gait: pose.gait, dark: dark,
+                                                   in: CGRect(origin: .zero, size: size), ctx: ctx)
+                        }
+                        save(image, name, group: "card-\(Int(size.width))-\(dark)-\(scale)")
+                    }
+                }
+            }
+        }
+    }
+
+    /// The real SwiftUI path (DogView in ImageRenderer), to check that Canvas draws the same dog. Not hash-checked.
+    private static func renderDogView() {
+        for dark in [false, true] {
+            let size = cardSizes[0]
+            let back = Color(cgColor: rgb(cardBackground[dark] ?? 0))
+            let view = DogView(input: cardPoses[3].input, size: size)
+                .background(back)
+                .environment(\.colorScheme, dark ? .dark : .light)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            let name = "card/dogview-trot-104-\(dark ? "dark" : "light")@2x.png"
+            if let image = renderer.cgImage {
+                save(image, name, group: nil)
+            } else {
+                manifest.append(["file": name, "hash": "none", "note": "ImageRenderer returned no image"])
+            }
+        }
+    }
+
+    private static func renderMenu() {
+        let size = MenuIconRenderer.size
+        for entry in menuStates {
+            for dark in [false, true] {
+                for scale in [1, 2] {
+                    let name = "menu/\(entry.name)-\(dark ? "dark" : "light")@\(scale)x.png"
+                    let image = draw(size, scale: scale, background: barBackground[dark]) { ctx in
+                        MenuIconRenderer.draw(entry.state, style: entry.style, ink: barInk(dark), in: ctx)
+                    }
+                    save(image, name, group: "menu-\(dark)-\(scale)")
+                }
+            }
+        }
+    }
+
+    private static func renderBadges() {
+        let size = CGSize(width: DogArt.badgeSize, height: DogArt.badgeSize)
+        for style in GlyphStyle.allCases {
+            for item in HealthItem.allCases {
+                for scale in [1, 2] {
+                    let image = draw(size, scale: scale, background: barBackground[false]) { ctx in
+                        ctx.setFillColor(barInk(false))
+                        ctx.addPath(GlyphPaths.badgeYDown(item, style: style))
+                        ctx.fillPath()
+                    }
+                    save(image, "badge/\(style.rawValue)-\(item.rawValue)@\(scale)x.png", group: "badge-\(scale)")
+                }
+            }
+        }
+    }
+
+    // MARK: Metrics (1x, Core Graphics raster)
+
+    /// Alpha grid of a 1x render on a transparent background, y down, row 0 at the top.
+    static func alphaGrid(_ size: CGSize, _ body: (CGContext) -> Void) -> [[Double]] {
+        let w = Int(size.width), h = Int(size.height)
+        guard let image = draw(size, scale: 1, background: nil, body),
+              let data = image.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else {
+            return Array(repeating: Array(repeating: 0, count: w), count: h)
+        }
+        let row = image.bytesPerRow
+        var grid = [[Double]]()
+        for y in 0..<h {
+            var line = [Double]()
+            for x in 0..<w {
+                line.append(Double(bytes[y * row + x * 4 + 3]) / 255)
+            }
+            grid.append(line)
+        }
+        return grid
+    }
+
+    static func menuGrid(_ state: MenuIconState, style: GlyphStyle = .glyph) -> [[Double]] {
+        alphaGrid(MenuIconRenderer.size) { ctx in
+            MenuIconRenderer.draw(state, style: style, ink: CGColor(gray: 0, alpha: 1), in: ctx)
+        }
+    }
+
+    static func badgeGrid(_ item: HealthItem, style: GlyphStyle) -> [[Double]] {
+        alphaGrid(CGSize(width: DogArt.badgeSize, height: DogArt.badgeSize)) { ctx in
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            ctx.addPath(GlyphPaths.badgeYDown(item, style: style))
+            ctx.fillPath()
+        }
+    }
+
+    static func solidCount(_ g: [[Double]]) -> Int {
+        var n = 0
+        for row in g {
+            for v in row where v >= IconMetrics.solidThreshold { n += 1 }
+        }
+        return n
+    }
+
+    static func rounded(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+
+    /// Writes badge-matrix.json and menu-metrics.json. Returns the badge style that passes (glyph first).
+    private static func writeMetrics() -> GlyphStyle {
+        var badgeJSON = [String: Any]()
+        var passing = [GlyphStyle]()
+        for style in GlyphStyle.allCases {
+            let grids = HealthItem.allCases.map { ($0.rawValue, badgeGrid($0, style: style)) }
+            let m = IconMetrics.matrix(grids)
+            let pass = m.minimum >= IconMetrics.badgePass
+            if pass { passing.append(style) }
+            var solid = [String: Int]()
+            for (name, grid) in grids { solid[name] = solidCount(grid) }
+            var entry = [String: Any]()
+            entry["pairs"] = m.pairs.mapValues(rounded)
+            entry["minimum"] = rounded(m.minimum)
+            entry["pass"] = pass
+            entry["solidPixels"] = solid
+            badgeJSON[style.rawValue] = entry
+        }
+        let choice: GlyphStyle = passing.first ?? .glyph
+        badgeJSON["threshold"] = IconMetrics.badgePass
+        badgeJSON["choice"] = choice.rawValue
+        badgeJSON["codeChoice"] = GlyphPaths.chosen.rawValue
+        writeJSON(badgeJSON, "badge-matrix.json")
+        if passing.isEmpty { failures.append("Badge gate: neither glyphs nor letters reach \(IconMetrics.badgePass) at 1x.") }
+        if !passing.contains(GlyphPaths.chosen) {
+            failures.append("Badge gate: GlyphPaths.chosen = \(GlyphPaths.chosen.rawValue) does not pass at 1x.")
+        }
+
+        // Postures: outer silhouette must change (G1-4); face cutouts must be clear; hollow must be light.
+        let postures: [MenuPosture] = [.relaxed, .raised, .pant]
+        let grids = postures.map { ($0.rawValue, menuGrid(MenuIconState(posture: $0, badge: nil))) }
+        let m = IconMetrics.matrix(grids)
+        if m.minimum < IconMetrics.posturePass {
+            failures.append("Posture gate: minimum XOR \(rounded(m.minimum)) < \(IconMetrics.posturePass).")
+        }
+        let relaxed = grids[0].1
+        let face: [(String, Int, Int)] = [("eyeLeft", 6, 8), ("eyeRight", 12, 8), ("nose", 9, 11)]
+        var faceJSON = [String: Double]()
+        for (name, x, y) in face {
+            faceJSON[name] = rounded(relaxed[y][x])
+            if relaxed[y][x] >= 0.02 { failures.append("Face cutout \(name) is not clear at 1x (alpha \(relaxed[y][x])).") }
+        }
+        let hollow = menuGrid(MenuIconState(posture: .hollow, badge: nil))
+        if solidCount(hollow) * 2 >= solidCount(relaxed) {
+            failures.append("Hollow icon is not lighter than half of the filled icon.")
+        }
+        var coverage = [String: Int]()
+        for entry in menuStates where entry.style == choice {
+            coverage[entry.name] = solidCount(menuGrid(entry.state, style: entry.style))
+        }
+        var menuJSON = [String: Any]()
+        menuJSON["postureXOR"] = m.pairs.mapValues(rounded)
+        menuJSON["postureMinimum"] = rounded(m.minimum)
+        menuJSON["postureThreshold"] = IconMetrics.posturePass
+        menuJSON["faceCutoutAlpha"] = faceJSON
+        menuJSON["solidPixels"] = coverage
+        menuJSON["hollowSolid"] = solidCount(hollow)
+        menuJSON["relaxedSolid"] = solidCount(relaxed)
+        menuJSON["pathCacheEntries"] = DogPathCache.count
+        writeJSON(menuJSON, "menu-metrics.json")
+        return choice
+    }
+
+    // MARK: Contact sheets
+
+    private static func sheetCard() {
+        let poses = cardPoses
+        let cellW: CGFloat = 116, cellH: CGFloat = 100, top: CGFloat = 30
+        let size = CGSize(width: cellW * 4 + 8, height: top + cellH * CGFloat(poses.count) + 8)
+        let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
+            label("比熊状态卡图册：104 × 78 与 72 × 54，浅色与深色", at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
+            for (r, pose) in poses.enumerated() {
+                for c in 0..<4 {
+                    let dark = (c % 2 == 1)
+                    let cardSize = cardSizes[c / 2]
+                    let cell = CGRect(x: 4 + CGFloat(c) * cellW, y: top + CGFloat(r) * cellH, width: cellW - 4, height: cellH - 4)
+                    fill(cell, cardBackground[dark] ?? 0, in: ctx)
+                    let dog = CGRect(x: cell.minX + (cell.width - cardSize.width) / 2, y: cell.minY + 4,
+                                     width: cardSize.width, height: cardSize.height)
+                    DogRenderer.drawStatic(pose.input, gait: pose.gait, dark: dark, in: dog, ctx: ctx)
+                    let text = "\(pose.name) \(Int(cardSize.width))"
+                    label(text, at: CGPoint(x: cell.minX + 4, y: cell.maxY - 5), size: 9, dark: dark, in: ctx)
+                }
+            }
+        }
+        save(image, "sheet-card.png", group: nil)
+    }
+
+    private static func sheetMenu(_ style: GlyphStyle) {
+        let postures = MenuPosture.allCases
+        let badges: [HealthItem?] = [nil] + HealthItem.allCases.map { Optional($0) }
+        let cellW: CGFloat = 112, cellH: CGFloat = 64, top: CGFloat = 30, left: CGFloat = 64
+        let size = CGSize(width: left + cellW * CGFloat(badges.count) + 8, height: top + cellH * CGFloat(postures.count * 2) + 8)
+        let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
+            let title = "菜单栏图标（角标：\(style == .glyph ? "字形" : "字母")）每格左为 2 倍矢量，右为 1x 像素放大 2 倍"
+            label(title, at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
+            for (c, badge) in badges.enumerated() {
+                let name = badge.map { $0.label } ?? "无角标"
+                label(name, at: CGPoint(x: left + CGFloat(c) * cellW + 4, y: top - 2), size: 9, in: ctx)
+            }
+            for dark in [false, true] {
+                for (p, posture) in postures.enumerated() {
+                    let r = (dark ? postures.count : 0) + p
+                    let y = top + 4 + CGFloat(r) * cellH
+                    label(posture.rawValue + (dark ? " 深" : " 浅"), at: CGPoint(x: 6, y: y + 30), size: 9, in: ctx)
+                    for (c, badge) in badges.enumerated() {
+                        let cell = CGRect(x: left + CGFloat(c) * cellW, y: y, width: cellW - 4, height: cellH - 6)
+                        fill(cell, barBackground[dark] ?? 0, in: ctx)
+                        let state = MenuIconState(posture: posture, badge: badge.map { MenuBadge(item: $0) })
+                        ctx.saveGState()
+                        ctx.translateBy(x: cell.minX + 4, y: cell.minY + 11)
+                        ctx.scaleBy(x: 2, y: 2)
+                        MenuIconRenderer.draw(state, style: style, ink: barInk(dark), in: ctx)
+                        ctx.restoreGState()
+                        let one = draw(MenuIconRenderer.size, scale: 1, background: barBackground[dark]) { c1 in
+                            MenuIconRenderer.draw(state, style: style, ink: barInk(dark), in: c1)
+                        }
+                        pixels(one, in: CGRect(x: cell.minX + 56, y: cell.minY + 11, width: 48, height: 36), ctx: ctx)
+                    }
+                }
+            }
+        }
+        save(image, "sheet-menu-\(style.rawValue).png", group: nil)
+    }
+
+    private static func sheetBadges() {
+        let cell: CGFloat = 96
+        let top: CGFloat = 30
+        let size = CGSize(width: 70 + cell * 5 + 8, height: top + (cell + 24) * 4 + 8)
+        let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
+            label("角标对照：每种 2 行，上为 8 倍矢量，下为 1x（10 × 10 像素）放大 8 倍", at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
+            for (s, style) in GlyphStyle.allCases.enumerated() {
+                for (i, item) in HealthItem.allCases.enumerated() {
+                    let x = 70 + CGFloat(i) * cell
+                    let yVector = top + CGFloat(s * 2) * (cell + 24)
+                    let yPixel = yVector + cell + 24
+                    label(item.label, at: CGPoint(x: x, y: yVector + 14), size: 10, in: ctx)
+                    let box = CGRect(x: x, y: yVector + 20, width: 80, height: 80)
+                    fill(box, barBackground[false] ?? 0, in: ctx)
+                    ctx.saveGState()
+                    ctx.translateBy(x: box.minX, y: box.minY)
+                    ctx.scaleBy(x: 8, y: 8)
+                    ctx.setFillColor(barInk(false))
+                    ctx.addPath(GlyphPaths.badgeYDown(item, style: style))
+                    ctx.fillPath()
+                    ctx.restoreGState()
+                    let one = draw(CGSize(width: 10, height: 10), scale: 1, background: barBackground[false]) { c1 in
+                        c1.setFillColor(barInk(false))
+                        c1.addPath(GlyphPaths.badgeYDown(item, style: style))
+                        c1.fillPath()
+                    }
+                    pixels(one, in: CGRect(x: x, y: yPixel + 4, width: 80, height: 80), ctx: ctx)
+                }
+                let name = (style == .glyph) ? "字形" : "字母"
+                let yy = top + CGFloat(s * 2) * (cell + 24)
+                label(name, at: CGPoint(x: 8, y: yy + 64), size: 11, in: ctx)
+                label(name + " 1x", at: CGPoint(x: 8, y: yy + cell + 24 + 50), size: 11, in: ctx)
+            }
+        }
+        save(image, "sheet-badges.png", group: nil)
+    }
+
+    // MARK: Menu bar mock-up
+
+    private static func menubarMock(_ style: GlyphStyle) {
+        let states: [(String, MenuIconState)] = [
+            ("正常", MenuIconState(posture: .relaxed, badge: nil)),
+            ("关注 CPU", MenuIconState(posture: .raised, badge: MenuBadge(item: .cpu))),
+            ("警告 磁盘", MenuIconState(posture: .pant, badge: MenuBadge(item: .disk))),
+            ("警告 温度", MenuIconState(posture: .pant, badge: MenuBadge(item: .thermal))),
+            ("关注 内存", MenuIconState(posture: .raised, badge: MenuBadge(item: .memory))),
+            ("关注 耗电", MenuIconState(posture: .raised, badge: MenuBadge(item: .power))),
+            ("统计中", MenuIconState(posture: .hollow, badge: nil)),
+        ]
+        let bars: [(String, UInt32, Bool)] = [("浅色菜单栏", 0xF2F2F2, false), ("深色菜单栏", 0x252527, true),
+                                               ("彩色壁纸（浅字）", 0x5B7DB1, true), ("彩色壁纸（深字）", 0xD9C7A6, false)]
+        let barW: CGFloat = 640, barH: CGFloat = 24, gap: CGFloat = 26, zoomH: CGFloat = 144 + 20
+        let size = CGSize(width: barW + 16, height: 30 + CGFloat(bars.count) * (barH + gap) + 2 * zoomH + 16)
+        let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
+            label("菜单栏实景模拟：24 pt 高菜单栏，图标 24 × 18 pt，两侧为系统图标示意", at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
+            for (b, bar) in bars.enumerated() {
+                let y = 30 + CGFloat(b) * (barH + gap)
+                label(bar.0, at: CGPoint(x: 8, y: y + 12), size: 9, in: ctx)
+                let rect = CGRect(x: 8, y: y + 16, width: barW, height: barH)
+                fill(rect, bar.1, in: ctx)
+                let ink = barInk(bar.2)
+                var x = rect.minX + 12
+                fakeSystemIcon(at: CGPoint(x: x, y: rect.minY + 4), ink: ink, in: ctx)
+                x += 30
+                for (_, state) in states {
+                    MenuIconRenderer.draw(state, style: style, ink: ink, at: CGPoint(x: x, y: rect.minY + 3), in: ctx)
+                    x += 24 + 14
+                }
+                fakeSystemIcon(at: CGPoint(x: x + 4, y: rect.minY + 4), ink: ink, in: ctx)
+                label("周日 10:42", at: CGPoint(x: rect.maxX - 70, y: rect.minY + 16), size: 13, color: ink, in: ctx)
+            }
+            // 1x pixels, 8x zoom: each 1x pixel is an 8 x 8 pt block.
+            let zoomTop = 30 + CGFloat(bars.count) * (barH + gap)
+            for (r, dark) in [false, true].enumerated() {
+                let y = zoomTop + CGFloat(r) * zoomH
+                label(dark ? "1x 像素放大 8 倍（深色）" : "1x 像素放大 8 倍（浅色）", at: CGPoint(x: 8, y: y + 12), size: 9, in: ctx)
+                for (i, entry) in states.prefix(4).enumerated() {
+                    let one = draw(MenuIconRenderer.size, scale: 1, background: barBackground[dark]) { c1 in
+                        MenuIconRenderer.draw(entry.1, style: style, ink: barInk(dark), in: c1)
+                    }
+                    let box = CGRect(x: 8 + CGFloat(i) * 160, y: y + 18, width: 24 * 6, height: 18 * 6)
+                    pixels(one, in: box, ctx: ctx)
+                    label(entry.0, at: CGPoint(x: box.minX, y: box.maxY + 12), size: 9, in: ctx)
+                }
+            }
+        }
+        save(image, "menubar-mock.png", group: nil)
+    }
+
+    /// A neutral stand-in for the neighbor status items (a battery shape), so the icon's weight can be compared.
+    private static func fakeSystemIcon(at p: CGPoint, ink: CGColor, in ctx: CGContext) {
+        ctx.saveGState()
+        ctx.setStrokeColor(ink)
+        ctx.setFillColor(ink)
+        ctx.setLineWidth(1)
+        let body = CGRect(x: p.x + 0.5, y: p.y + 4.5, width: 21, height: 10)
+        ctx.addPath(CGPath(roundedRect: body, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil))
+        ctx.strokePath()
+        ctx.fill(CGRect(x: p.x + 2.5, y: p.y + 6.5, width: 13, height: 6))
+        ctx.fill(CGRect(x: p.x + 22.5, y: p.y + 7.5, width: 1.5, height: 4))
+        ctx.restoreGState()
+    }
+
+    // MARK: Drawing helpers
+
+    static func rgb(_ hex: UInt32) -> CGColor {
+        let r = CGFloat((hex >> 16) & 0xFF) / 255
+        let g = CGFloat((hex >> 8) & 0xFF) / 255
+        let b = CGFloat(hex & 0xFF) / 255
+        return CGColor(srgbRed: r, green: g, blue: b, alpha: 1)
+    }
+
+    private static func fill(_ rect: CGRect, _ hex: UInt32, in ctx: CGContext) {
+        ctx.setFillColor(rgb(hex))
+        ctx.fill(rect)
+    }
+
+    /// An sRGB bitmap of `size` pt at `scale`, y down, 1 unit = 1 pt. `background` nil keeps it transparent.
+    static func draw(_ size: CGSize, scale: Int, background: UInt32?, _ body: (CGContext) -> Void) -> CGImage? {
+        let w = Int((size.width * CGFloat(scale)).rounded())
+        let h = Int((size.height * CGFloat(scale)).rounded())
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: CGFloat(scale), y: -CGFloat(scale))
+        if let background {
+            ctx.setFillColor(rgb(background))
+            ctx.fill(CGRect(origin: .zero, size: size))
+        }
+        body(ctx)
+        return ctx.makeImage()
+    }
+
+    /// Draws a bitmap with nearest-neighbor scaling into `rect` of a y-down context.
+    private static func pixels(_ image: CGImage?, in rect: CGRect, ctx: CGContext) {
+        guard let image else { return }
+        ctx.saveGState()
+        ctx.interpolationQuality = .none
+        ctx.translateBy(x: rect.minX, y: rect.maxY)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.draw(image, in: CGRect(origin: .zero, size: rect.size))
+        ctx.restoreGState()
+    }
+
+    /// Text label with its baseline at `p` in a y-down context.
+    private static func label(_ text: String, at p: CGPoint, size: CGFloat, dark: Bool = false,
+                              color: CGColor? = nil, in ctx: CGContext) {
+        let ink = color ?? (dark ? CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.75)
+                                 : CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.75))
+        let font = NSFont.systemFont(ofSize: size, weight: .medium)
+        var attributes = [NSAttributedString.Key: Any]()
+        attributes[.font] = font
+        attributes[NSAttributedString.Key(kCTForegroundColorAttributeName as String)] = ink
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
+        ctx.saveGState()
+        ctx.translateBy(x: p.x, y: p.y)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.textPosition = .zero
+        CTLineDraw(line, ctx)
+        ctx.restoreGState()
+    }
+
+    // MARK: Files
+
+    private static var groups = [String: [String: String]]()   // group -> hash -> first file
+
+    private static func save(_ image: CGImage?, _ name: String, group: String?) {
+        guard let image else {
+            failures.append("Cannot render \(name).")
+            return
+        }
+        let hash = pixelHash(image)
+        if let group {
+            var seen = groups[group] ?? [:]
+            if let other = seen[hash] {
+                failures.append("Same pixels: \(name) and \(other).")
+            } else {
+                seen[hash] = name
+            }
+            groups[group] = seen
+        }
+        let url = root.appendingPathComponent(name)
+        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            failures.append("Cannot write \(name).")
+            return
+        }
+        CGImageDestinationAddImage(dest, image, nil)
+        if !CGImageDestinationFinalize(dest) { failures.append("Cannot write \(name).") }
+        manifest.append(["file": name, "hash": hash, "width": image.width, "height": image.height])
+    }
+
+    /// FNV-1a 64-bit over the raw pixel bytes.
+    static func pixelHash(_ image: CGImage) -> String {
+        guard let data = image.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else { return "none" }
+        var h: UInt64 = 0xcbf29ce484222325
+        let n = CFDataGetLength(data)
+        for i in 0..<n {
+            h ^= UInt64(bytes[i])
+            h = h &* 0x100000001b3
+        }
+        return String(format: "%016llx", h)
+    }
+
+    /// The hash check runs inside `save`; this only records that the expected groups exist.
+    private static func checkDistinct() {
+        let expected = cardPoses.count
+        for (group, seen) in groups where group.hasPrefix("card-") && seen.count != expected {
+            failures.append("Group \(group) has \(seen.count) distinct images, expected \(expected).")
+        }
+    }
+
+    private static func writeJSON(_ object: [String: Any], _ name: String) {
+        let options: JSONSerialization.WritingOptions = [.prettyPrinted, .sortedKeys]
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: options) else {
+            failures.append("Cannot encode \(name).")
+            return
+        }
+        do {
+            try data.write(to: root.appendingPathComponent(name))
+        } catch {
+            failures.append("Cannot write \(name).")
+        }
     }
 
     /// Entry for `--dog-gallery <directory>`. Never returns: exit 0 on success, 1 on failure, 2 for a missing path.

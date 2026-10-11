@@ -320,6 +320,7 @@ enum DogRig {
     }
 
     /// All layers of one frame in drawing order. `glyph` is the bubble glyph art (DogArt.badge), or nil.
+    /// `pose.opacity` is not in the layer alphas: the renderer applies it to the whole dog as one group.
     static func layers(gait: DogGait, pose: DogPose, glyph: [DogPart]? = nil) -> [DogLayer] {
         let bodyArt = body(for: gait)
         let headArt = head(for: gait, pose: pose)
@@ -331,7 +332,7 @@ enum DogRig {
         var out = [DogLayer]()
 
         func add(_ part: DogPart, _ t: DogAffine, _ alpha: Double = 1) {
-            out.append(DogLayer(part: part, transform: t, alpha: alpha * pose.opacity))
+            out.append(DogLayer(part: part, transform: t, alpha: alpha))
         }
         for part in DogArt.parts(body: bodyArt, head: headArt) {
             let n = part.name
