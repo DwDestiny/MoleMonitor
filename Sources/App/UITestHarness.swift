@@ -827,7 +827,8 @@ final class UITestRunner {
             if at >= sampleUntil { break }
             await sleepMs(6)
         }
-        let windowCapture = !windowCaptureUnavailable && shots.count == offsets.count
+        // A frame can be missing when the window is not composited yet. Five frames are enough to judge.
+        let windowCapture = !windowCaptureUnavailable && shots.count >= 5
         if live == nil {
             let spent = (now() - ref) * 1000
             if let waited = await waitFor(timeoutMs: Swift.max(0, 1500 - spent), { engine.isLiveSampling }) { live = spent + waited }
@@ -975,10 +976,10 @@ final class UITestRunner {
             fractions.append(UITestPixels.compare(shots[i].shot, shots[i + 1].shot).fraction)
         }
         // The last frame is 200 ms after the one before it, so a finished animation gives no change between them.
-        let enough = open.windowCapture && shots.count >= 7
-        let moving = enough ? fractions.prefix(5).filter { $0 > 0.005 }.count : 0
-        let settledPixels = enough && fractions[5] < 0.001
-        let total = enough ? UITestPixels.compare(shots[0].shot, shots[6].shot).fraction : 0
+        let enough = open.windowCapture && shots.count >= 5
+        let moving = enough ? fractions.dropLast().filter { $0 > 0.005 }.count : 0
+        let settledPixels = enough && (fractions.last ?? 1) < 0.001
+        let total = enough ? UITestPixels.compare(shots[0].shot, shots[shots.count - 1].shot).fraction : 0
         let pixelOk = enough && moving >= 2 && settledPixels && total > 0.01
 
         let layer = layerMotion(open)
@@ -995,7 +996,7 @@ final class UITestRunner {
         info["entranceFrameOffsetsMs"] = offsets.map(String.init).joined(separator: ",")
         info["layerSignatures"] = open.signatures.enumerated().filter { $0.offset % 3 == 0 }
             .map { String(format: "%.0f:%.2f/%d", $0.element.offset, $0.element.value, $0.element.count) }.joined(separator: " ")
-        let detail = "layer samples \(open.signatures.count), steps with a changing value at a constant layer count \(layer.steps), last change at \(Int(layer.settledMs)) ms, settled at the end=\(layer.settled), values \(String(format: "%.2f", layer.minValue))...\(String(format: "%.2f", layer.maxValue)), layers with a Core Animation animation (max) \(animatedMax); window-server frames \(shots.count) (capture works=\(open.windowCapture)) at \(offsets) ms, changed-pixel share per step \(fractions.map { String(format: "%.3f", $0) }), steps that moved \(moving) of 5, settled at the end=\(settledPixels); open call \(String(format: "%.0f", open.clickMs)) ms; longest main-thread gap after the show call \(String(format: "%.1f", gap)) ms; motion shown by \(how)"
+        let detail = "layer samples \(open.signatures.count), steps with a changing value at a constant layer count \(layer.steps), last change at \(Int(layer.settledMs)) ms, settled at the end=\(layer.settled), values \(String(format: "%.2f", layer.minValue))...\(String(format: "%.2f", layer.maxValue)), layers with a Core Animation animation (max) \(animatedMax); window-server frames \(shots.count) (capture works=\(open.windowCapture)) at \(offsets) ms, changed-pixel share per step \(fractions.map { String(format: "%.3f", $0) }), steps that moved \(moving) of \(Swift.max(0, fractions.count - 1)), settled at the end=\(settledPixels); open call \(String(format: "%.0f", open.clickMs)) ms; longest main-thread gap after the show call \(String(format: "%.1f", gap)) ms; motion shown by \(how)"
         if pixelOk || layerOk {
             record("C", "入场动画在推进", true, since: t0, detail, values)
         } else if !open.windowCapture && layer.steps < 3 {
