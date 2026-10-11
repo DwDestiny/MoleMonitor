@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (c) 2026 DwDestiny
 # Input: dist/MoleMonitor.app built by scripts/build.py on arm64 macOS.
-# Output: Headless acceptance checks (self-test, signature, real sampling, CLI read-back, static preview); exit code 0 means all passed.
-# Pos: Runs in GitHub Actions and on a Mac. It starts no visible UI, installs nothing and changes no login item.
+# Output: Headless acceptance checks (self-test, signature, real sampling, CLI read-back, static preview) and the UI regression gate
+#         (dist-uitest/MoleMonitor.app --ui-test: status item, popover, motion, hover, close, quit); exit code 0 means all passed.
+# Pos: Runs in GitHub Actions and on a Mac. It installs nothing and changes no login item. The UI gate shows a popover on the
+#      runner for about 30 seconds, with temporary data; the gate needs `python3 scripts/build.py --ui-test` first.
 from pathlib import Path
 import json
 import os
@@ -173,6 +175,80 @@ for name in preview_names:
         check(size[1] <= 960, f"preview {name} is at most 480 pt high", str(size[1]))
 if report:
     check(not report.get("staticPreviewError"), "no preview error", str(report.get("staticPreviewError")))
+
+# 7. Release binary has no test code; the UI regression variant has it (positive control)
+release_bytes = main_bin.read_bytes()
+for marker in (b"UITestHarness", b"--ui-test"):
+    check(marker not in release_bytes, f"release binary does not contain {marker.decode()}")
+ui_app = root / "dist-uitest/MoleMonitor.app"
+ui_bin = ui_app / "Contents/MacOS/MoleMonitor"
+skipped_ui = []
+if not ui_bin.exists():
+    check(False, "dist-uitest/MoleMonitor.app exists (run scripts/build.py --ui-test)")
+else:
+    ui_bytes = ui_bin.read_bytes()
+    check(b"UITestHarness" in ui_bytes and b"--ui-test" in ui_bytes, "UI test variant contains the harness (positive control)")
+    check(run(["/usr/bin/codesign", "--verify", "--deep", "--strict", ui_app]).returncode == 0, "UI test variant codesign verify (ad-hoc)")
+
+    # 8. UI regression gate: real AppDelegate, NSStatusItem, NSPopover and MonitorEngine on a seeded red history
+    base = Path(os.environ.get("MOLEMONITOR_CI_OUT") or tempfile.gettempdir())
+    ui_out = base / "molemonitor-ui"
+    ui_data = base / "molemonitor-ui-data"
+    for folder in (ui_out, ui_data):
+        shutil.rmtree(folder, ignore_errors=True)
+    ui_out.mkdir(parents=True)
+    ui_data.mkdir(mode=0o700)
+    os.chmod(ui_data, 0o700)
+    t0 = time.time()
+    ui_stdout, ui_stderr, ui_code = "", "", None
+    try:
+        ui = run([ui_bin, "--ui-test", "--ui-test-out", ui_out], env={"MOLEMONITOR_DATA_DIR": str(ui_data)}, timeout=120)
+        ui_stdout, ui_stderr, ui_code = ui.stdout, ui.stderr, ui.returncode
+    except subprocess.TimeoutExpired as e:
+        def text(x):
+            return x.decode("utf-8", "replace") if isinstance(x, bytes) else (x or "")
+        ui_stdout, ui_stderr = text(e.stdout), text(e.stderr)
+    print(f"ui-test wall time {time.time() - t0:.1f} s, exit code {ui_code}", flush=True)
+    print("---- ui-test stdout ----\n" + ui_stdout[-6000:], flush=True)
+    print("---- ui-test stderr (tail) ----\n" + ui_stderr[-1500:], flush=True)
+    check(ui_code is not None, "UI test finished within 120 s")
+    report_path = ui_out / "ui-report.json"
+    ui_report = json.loads(report_path.read_text()) if report_path.exists() else None
+    check(ui_report is not None, "UI test wrote ui-report.json")
+    if ui_report:
+        by_id = {item["id"]: item for item in ui_report["items"]}
+        for letter in "ABCDEFGHIJKL":
+            check(letter in by_id, f"UI item {letter} reported")
+        for item in ui_report["items"]:
+            label = f"UI {item['id']} {item['name']}"
+            if item["status"] == "skipped":
+                skipped_ui.append(item)
+                print(f"SKIP  {label}  [{item['note']}]", flush=True)
+            elif item["status"] == "pending":
+                pass
+            else:
+                ok = item["status"] == "pass"
+                print(f"{'PASS' if ok else 'FAIL'}  {label}  {item['note']}", flush=True)
+                if not ok:
+                    failures.append(label)
+        # K: the process must have quit through the button with exit code 0 and written status.json at exit
+        quit_item = by_id.get("K")
+        if quit_item and quit_item["status"] == "pending":
+            check(ui_code == 0, "UI K quit button ends the process with exit code 0", str(ui_code))
+            status_file = ui_data / "status.json"
+            before = ui_report.get("statusMtimeBeforeQuit")
+            written = status_file.exists() and before is not None and status_file.stat().st_mtime > before
+            check(written, "UI K status.json is written at exit", f"mtime before quit {before}")
+        elif quit_item is None or quit_item["status"] != "pass":
+            check(False, "UI K quit button", str((quit_item or {}).get("note")))
+        print("ui frames:", ", ".join(ui_report.get("frames", [])), flush=True)
+        print("ui info:", json.dumps(ui_report.get("info", {}), ensure_ascii=False), flush=True)
+        for key in ("mainThreadIntervalsMs", "renderMs"):
+            print(key, json.dumps(ui_report.get(key)), flush=True)
+    if skipped_ui:
+        print("\n!!!! UI REGRESSION SKIPPED ITEMS (not failures, not passes) !!!!", flush=True)
+        for item in skipped_ui:
+            print(f"  {item['id']} {item['name']}: {item['note']}", flush=True)
 
 print()
 if failures:

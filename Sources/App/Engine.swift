@@ -115,6 +115,18 @@ final class MonitorEngine: ObservableObject {
     /// True while the 2 second live timer exists. Must not be called on the live queue.
     var isLiveSampling: Bool { liveQueue.sync { liveTimer != nil } }
 
+#if UITEST
+    /// Test only: rewrites each disk sample, so the UI regression has a fixed red scenario on any machine.
+    static var sampleTransform: ((DiskSample) -> DiskSample)?
+
+    /// Test only: number of live dispatch timers (the 5 minute tick and the 2 second live timer).
+    var activeTimerCount: Int {
+        let live = liveQueue.sync { liveTimer != nil ? 1 : 0 }
+        let tick = queue.sync { timer != nil ? 1 : 0 }
+        return live + tick
+    }
+#endif
+
     /// Starts live sampling and takes one extra disk sample (src=panel). The 15 minute rhythm does not change.
     func panelOpened() {
         liveQueue.async { [weak self] in self?.startLiveOnQueue() }
@@ -282,7 +294,12 @@ final class MonitorEngine: ObservableObject {
 
     private func takeSample(src: DiskSource) {
         let now = Date()
-        let s = Sampler.sample(src: src, now: now, previousBoot: lastBoot)
+        let sampled = Sampler.sample(src: src, now: now, previousBoot: lastBoot)
+#if UITEST
+        let s = MonitorEngine.sampleTransform.map { $0(sampled) } ?? sampled
+#else
+        let s = sampled
+#endif
         if let b = s.boot { lastBoot = b }
         // A failed history write must not stop monitoring; the sample stays in memory.
         try? DiskHistory.append(s, dir: dataDir)

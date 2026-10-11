@@ -69,7 +69,7 @@ struct Panel: View {
                 DiskCard(status: status, series: diskSeries, trigger: diskTrigger, entrance: entrance)
                     .equatable()
             }
-            staged(2) { LiveCard(live: live) }
+            staged(2) { LiveCard(live: live).uiTestFrame("card.live") }
             staged(3) {
                 VStack(alignment: .leading, spacing: 6) {
                     trafficBlock
@@ -197,6 +197,7 @@ struct Panel: View {
                 Spacer(minLength: 0)
                 Button(action: onEnableNotifications) { Text("开启通知") }
                     .buttonStyle(PillButtonStyle(prominent: true))
+                    .uiTestFrame("btn.enableNotifications")
                     .accessibilityIdentifier("btn.enableNotifications")
                     .accessibilityLabel("开启通知")
             }
@@ -216,6 +217,7 @@ struct Panel: View {
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 2)
+            .uiTestFrame("label.authorization")
             .accessibilityIdentifier("label.authorization")
     }
 
@@ -230,6 +232,7 @@ struct Panel: View {
             Spacer()
             Button(action: onQuit) { Text("退出") }
                 .buttonStyle(PillButtonStyle())
+                .uiTestFrame("btn.quit")
                 .accessibilityIdentifier("btn.quit")
                 .accessibilityLabel("退出 MoleMonitor")
         }
@@ -263,6 +266,27 @@ private struct StageModifier: ViewModifier {
         }
     }
 }
+
+// MARK: - UI regression hook
+
+#if UITEST
+extension View {
+    /// Test only: reports the frame (hosting view space, y down) to UITestFrameStore, as a fallback for the accessibility tree.
+    func uiTestFrame(_ id: String) -> some View {
+        background(GeometryReader { proxy in
+            Color.clear
+                .onAppear { UITestFrameStore.shared.set(id, proxy.frame(in: .global)) }
+                .onChange(of: proxy.frame(in: .global)) { _, frame in UITestFrameStore.shared.set(id, frame) }
+        })
+    }
+}
+#else
+extension View {
+    /// Release build: no effect.
+    @inline(__always)
+    func uiTestFrame(_ id: String) -> some View { self }
+}
+#endif
 
 // MARK: - Shared look
 
@@ -335,6 +359,7 @@ private struct DiskCard: View, Equatable {
         VStack(alignment: .leading, spacing: 6) {
             topRow
             DiskTrendChart(series: series, trigger: trigger, level: level, totalBytes: disk?.total.value, entrance: entrance)
+                .uiTestFrame("chart.disk")
             HStack(spacing: 0) {
                 ForEach(PanelFormat.windows) { window in
                     growthColumn(window)
@@ -656,6 +681,7 @@ private struct LiveCard: View {
         .chartLegend(.hidden)
         .chartPlotStyle { plot in plotLook(plot) }
         .frame(height: 34)
+        .uiTestFrame("chart.net")
         .overlay { if live.net.count < 2 { waiting } }
         .animation(scroll, value: live.net.last?.t)
         .accessibilityIdentifier("chart.net")
@@ -703,6 +729,7 @@ private struct LiveCard: View {
         .chartLegend(.hidden)
         .chartPlotStyle { plot in plotLook(plot) }
         .frame(height: 34)
+        .uiTestFrame("chart.cpu")
         .overlay { if live.cpu.count < 2 { waiting } }
         .animation(scroll, value: live.cpu.last?.t)
         .accessibilityIdentifier("chart.cpu")

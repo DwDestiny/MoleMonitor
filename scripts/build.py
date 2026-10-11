@@ -3,6 +3,7 @@
 # Copyright (c) 2026 DwDestiny
 # Input: Swift sources under Sources/ and the license files.
 # Output: dist/MoleMonitor.app with the app, the molemonitor-cli helper and ad-hoc signatures; no download, no installation, no UI launch.
+#         With --ui-test: dist-uitest/MoleMonitor.app, built with -D UITEST (adds the UI regression harness; never shipped).
 # Pos: Reproducible local build; needs arm64 macOS 14+ and the Xcode command line tools.
 from pathlib import Path
 import plistlib
@@ -15,7 +16,10 @@ root = Path(__file__).resolve().parent.parent
 swiftc = "/usr/bin/swiftc"
 codesign = "/usr/bin/codesign"
 target = "arm64-apple-macos14.0"
-app = root / "dist/MoleMonitor.app"
+ui_test = "--ui-test" in sys.argv[1:]
+unknown = [a for a in sys.argv[1:] if a != "--ui-test"]
+# The test variant has its own folder, so the release build in dist/ is never touched.
+app = root / ("dist-uitest/MoleMonitor.app" if ui_test else "dist/MoleMonitor.app")
 
 
 def fail(message):
@@ -41,6 +45,8 @@ def swift_files(folder):
     return sorted((root / folder).glob("*.swift"))
 
 
+if unknown:
+    fail("unknown argument: " + " ".join(unknown) + " (only --ui-test is accepted)")
 if sys.platform != "darwin":
     fail("this script builds the macOS app and must run on macOS 14 or later")
 
@@ -73,6 +79,7 @@ for folder in (macos, helpers, resources):
 # Charts (Swift Charts, system framework since macOS 13) draws the disk trend and the live lines in Sources/App/Panel.swift.
 run([
     swiftc, "-swift-version", "5", "-O", "-parse-as-library", "-target", target,
+    *(["-D", "UITEST"] if ui_test else []),
     *core, *app_files, entry, sensors,
     "-framework", "AppKit", "-framework", "SwiftUI", "-framework", "IOKit",
     "-framework", "UserNotifications", "-framework", "Combine", "-framework", "Charts",

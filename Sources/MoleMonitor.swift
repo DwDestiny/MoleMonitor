@@ -14,10 +14,15 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private static let firstPanelShownKey = "MoleMonitor.firstPanelShown"
 
-    private let engine = MonitorEngine()
+    // Internal (not private) so the UI regression harness can drive the real objects; no behavior change.
+    let engine = MonitorEngine()
     private let iconCache = StatusIconCache()
-    private let popover = NSPopover()
-    private var statusItem: NSStatusItem?
+    let popover = NSPopover()
+    private(set) var statusItem: NSStatusItem?
+#if UITEST
+    /// Test only: anchor for the popover when the environment gives the status item no button.
+    var testAnchor: NSView?
+#endif
     private var cancellables = Set<AnyCancellable>()
     private var lastIconState: IconState?
 
@@ -87,8 +92,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func showPanel() {
-        guard !popover.isShown, let button = statusItem?.button else { return }
+    func showPanel() {
+#if UITEST
+        let anchor = statusItem?.button ?? testAnchor
+#else
+        let anchor = statusItem?.button
+#endif
+        guard !popover.isShown, let button = anchor else { return }
         let host = NSHostingController(rootView: PanelContainer(engine: engine, onQuit: {
             NSApplication.shared.terminate(nil)
         }))
@@ -117,6 +127,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 enum MoleMonitorMain {
     static func main() {
         let args = CommandLine.arguments
+#if UITEST
+        if args.contains("--ui-test") { UITestHarness.run(args) }
+#endif
         if args.contains("--self-test") {
             exit(SelfTest.run() ? 0 : 1)
         }
