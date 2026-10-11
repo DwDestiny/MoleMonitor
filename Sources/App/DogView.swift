@@ -159,7 +159,7 @@ struct DogView: View {
                 let frame = driver.frame(at: timeline.date, input: input)
                 let date = timeline.date
                 let box = DogView.fit(size)
-                // A steady frame is a cached bitmap shown as an Image: no drawing in this frame at all.
+                // The Image view path for a steady frame (off by default, see stripAsImage).
                 let strip = DogView.stripAsImage
                     ? driver.timedStrip(frame, input: input, dark: dark, size: box.size, scale: scale) : nil
                 if let strip {
@@ -194,12 +194,14 @@ struct DogView: View {
         .accessibilityLabel(Text(DogView.label(input)))
     }
 
-    /// Steady frames as an Image view (true), or drawn into the Canvas (the dog checks compare the two).
+    /// Steady frames as an Image view (true), or drawn into the Canvas (false, the default). CI run 38147805217
+    /// measured 2.2 ms process CPU per frame for the Canvas and 2.9 ms for the Image view, so the Canvas stays.
+    /// The dog checks compare the two.
     static var stripAsImage: Bool {
 #if UITEST
-        return !DogFrameProbe.stripInCanvas
+        return DogFrameProbe.stripAsImageView
 #else
-        return true
+        return false
 #endif
     }
 

@@ -38,8 +38,8 @@ enum DogFrameProbe {
         default: return nil
         }
     }()
-    /// True draws the steady strip frames into the Canvas instead of an Image view (the CPU comparison of DA).
-    static var stripInCanvas = false
+    /// True shows the steady strip frames as an Image view instead of drawing them into the Canvas (the CPU comparison).
+    static var stripAsImageView = false
     /// Frames are recorded only while this is true (the dog checks), so the UI regression run does not grow the list.
     static var recording = false
     private(set) static var entries = [Entry]()
@@ -227,7 +227,7 @@ final class UITestDogChecks {
                 "frameUsMean": mean(totals), "frameUsP50": p(totals, 0.5), "frameUsP95": p(totals, 0.95),
                 "stepUsMean": mean(steps), "drawUsMean": mean(draws), "drawUsP95": p(draws, 0.95),
                 "processCpuPercentOpen": openCPU / openWall * 100])
-        // Steady state: the strip cache is warm and the bubble has settled. Image view, then the same in the Canvas.
+        // Steady state: the strip cache is warm and the bubble has settled. Canvas (the default), then an Image view.
         func steadyCPU() async -> (cpu: Double, frames: Int, hits: Int) {
             DogFrameProbe.reset()
             let c0 = processCPU(), w0 = CACurrentMediaTime()
@@ -235,10 +235,15 @@ final class UITestDogChecks {
             let e = DogFrameProbe.entries
             return ((processCPU() - c0) / (CACurrentMediaTime() - w0) * 100, e.count, e.filter { $0.cached }.count)
         }
-        let steadyImage = await steadyCPU()
-        DogFrameProbe.stripInCanvas = true
         let steadyCanvas = await steadyCPU()
-        DogFrameProbe.stripInCanvas = false
+        DogFrameProbe.stripAsImageView = true
+        let steadyImage = await steadyCPU()
+        DogFrameProbe.stripAsImageView = false
+        func msPerFrame(_ r: (cpu: Double, frames: Int, hits: Int)) -> String {
+            String(format: "%.2f", r.frames == 0 ? 0 : r.cpu / 100 * 3000 / Double(r.frames))
+        }
+        info["steadyCpuMsPerFrameCanvas"] = msPerFrame(steadyCanvas)
+        info["steadyCpuMsPerFrameImage"] = msPerFrame(steadyImage)
         info["steadyCpuPercentImage"] = String(format: "%.2f", steadyImage.cpu)
         info["steadyFramesImage"] = "\(steadyImage.frames) (\(steadyImage.hits) cached)"
         info["steadyCpuPercentCanvas"] = String(format: "%.2f", steadyCanvas.cpu)
