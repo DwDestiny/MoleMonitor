@@ -54,7 +54,7 @@ jobs:
         with:
           name: molemonitor-ci
           path: |
-            ${{ runner.temp }}/molemonitor-ci/preview.png
+            ${{ runner.temp }}/molemonitor-ci/preview-*.png
             ${{ runner.temp }}/molemonitor-ci/status.json
           if-no-files-found: ignore
           retention-days: 3

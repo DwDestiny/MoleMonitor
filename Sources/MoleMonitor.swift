@@ -193,23 +193,38 @@ enum SelfTest {
 
 @MainActor
 enum PreviewRenderer {
-    /// Renders the status card with hand-built sample data. Returns an error text, or nil on success.
+    /// Renders the status card with invented sample data for green, yellow and red, each in light and dark.
+    /// `output` is the base path: `preview.png` gives `preview-red-light.png`, `preview-red-dark.png`, and so on.
+    /// Returns an error text, or nil on success.
     static func render(to output: URL) -> String? {
-        let renderer = ImageRenderer(content: PanelSample.panel()
-            .preferredColorScheme(.light)
-            .background(Color(nsColor: .windowBackgroundColor)))
-        renderer.scale = 2
-        guard let image = renderer.nsImage, let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let png = bitmap.representation(using: .png, properties: [:]) else {
-            return "Preview rendering is not available."
+        let base = output.deletingPathExtension()
+        let ext = output.pathExtension.isEmpty ? "png" : output.pathExtension
+        let now = Date()
+        for level in PreviewLevel.allCases {
+            for dark in [false, true] {
+                // Explicit colors: windowBackgroundColor would follow the process appearance, not the rendered scheme.
+                let background = dark ? Color(white: 0.17) : Color(white: 0.95)
+                let scheme: ColorScheme = dark ? .dark : .light
+                let content = PanelSample.panel(level: level, now: now)
+                    .background(background)
+                    .environment(\.colorScheme, scheme)
+                let renderer = ImageRenderer(content: content)
+                renderer.scale = 2
+                guard let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+                      let bitmap = NSBitmapImageRep(data: tiff),
+                      let png = bitmap.representation(using: .png, properties: [:]) else {
+                    return "Preview rendering is not available."
+                }
+                let name = base.lastPathComponent + "-\(level.rawValue)-\(dark ? "dark" : "light")"
+                let target = base.deletingLastPathComponent().appendingPathComponent(name).appendingPathExtension(ext)
+                do {
+                    try png.write(to: target, options: .atomic)
+                } catch {
+                    return "Cannot write the preview file."
+                }
+            }
         }
-        do {
-            try png.write(to: output, options: .atomic)
-            return nil
-        } catch {
-            return "Cannot write the preview file."
-        }
+        return nil
     }
 }
 
@@ -229,6 +244,19 @@ enum Diagnose {
         var status: StatusFile?
         var staticPreview: String?
         var staticPreviewError: String?
+        var liveProbe: LiveProbe?
+    }
+
+    /// Opens and closes the panel logic once to check that live sampling runs while open and stops completely after close.
+    struct LiveProbe: Encodable {
+        var samplingWhileOpen: Bool
+        var netPointsWhileOpen: Int
+        var cpuPointsWhileOpen: Int
+        var lastCpuPercent: Double?
+        var lastRxBytesPerSecond: Double?
+        var samplingAfterClose: Bool
+        var netPointsAfterClose: Int
+        var cpuPointsAfterClose: Int
     }
 
     static func run(_ args: [String]) {
@@ -259,13 +287,27 @@ enum Diagnose {
         // A far-future timer keeps the main run loop alive when the engine adds no run loop source.
         let keepAlive = Timer(timeInterval: 86400, repeats: false) { _ in }
         RunLoop.main.add(keepAlive, forMode: .default)
-        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        // Live probe: 3 s idle, 7 s with the panel logic open, 2 s after close; the rest of the time is idle.
+        func wait(_ s: Double) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+        wait(3)
+        engine.panelOpened()
+        wait(7)
+        let openSampling = engine.isLiveSampling
+        let during = engine.live
+        engine.panelClosed()
+        wait(2)
+        let probe = LiveProbe(samplingWhileOpen: openSampling, netPointsWhileOpen: during.net.count,
+                              cpuPointsWhileOpen: during.cpu.count, lastCpuPercent: during.cpuPercent,
+                              lastRxBytesPerSecond: during.rx, samplingAfterClose: engine.isLiveSampling,
+                              netPointsAfterClose: engine.live.net.count, cpuPointsAfterClose: engine.live.cpu.count)
+        wait(max(0, seconds - 12))
         keepAlive.invalidate()
         engine.stop()
 
         var report = Report(seconds: seconds, dataDir: dataDir.path, dataDirIsTemporary: temporary,
                             authorization: engine.authorization, diskLevel: engine.diskLevel,
                             alerts: engine.alerts, status: engine.status)
+        report.liveProbe = probe
         if args.contains("--preview") {
             if let path = MoleMonitorMain.argumentValue("--preview", in: args) {
                 if let error = PreviewRenderer.render(to: URL(fileURLWithPath: path)) {

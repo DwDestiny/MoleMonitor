@@ -62,6 +62,7 @@ data_dir.mkdir(mode=0o700, parents=True)
 os.chmod(data_dir, 0o700)
 env = {"MOLEMONITOR_DATA_DIR": str(data_dir)}
 preview = data_dir / "preview.png"
+preview_names = [f"preview-{level}-{scheme}.png" for level in ("green", "yellow", "red") for scheme in ("light", "dark")]
 t0 = time.time()
 dg = run([main_bin, "--diagnose", "--seconds", "22", "--preview", preview], env=env, timeout=180)
 print(f"diagnose wall time {time.time() - t0:.1f} s, exit code {dg.returncode}", flush=True)
@@ -91,6 +92,15 @@ if report:
           str(status.get("overall")))
     check(status.get("writer_pid", 0) > 0, "status.writer_pid is set")
     print("authorization in this environment:", report.get("authorization"), flush=True)
+    probe = report.get("liveProbe") or {}
+    print("live probe:", json.dumps(probe), flush=True)
+    check(probe.get("samplingWhileOpen") is True, "live sampling runs while the panel is open")
+    check(probe.get("cpuPointsWhileOpen", 0) >= 2, "live CPU series has points while open", str(probe.get("cpuPointsWhileOpen")))
+    cpu_now = probe.get("lastCpuPercent")
+    check(isinstance(cpu_now, (int, float)) and 0 <= cpu_now <= 100, "live CPU percent is in 0..100", str(cpu_now))
+    print("live net points while open:", probe.get("netPointsWhileOpen"), "(informational: depends on runner interfaces)", flush=True)
+    check(probe.get("samplingAfterClose") is False, "no live timer after the panel closes")
+    check(probe.get("netPointsAfterClose") == 0 and probe.get("cpuPointsAfterClose") == 0, "live buffers are empty after close")
 
 # 4. Files on disk
 files = sorted(p.name for p in data_dir.iterdir())
@@ -143,9 +153,24 @@ p50, p95 = timings[len(timings) // 2], timings[int(len(timings) * 0.95) - 1]
 print(f"CLI --status --brief on this runner: p50={p50:.1f} ms p95={p95:.1f} ms (30 runs, includes process spawn)", flush=True)
 check(p50 <= 50, "CLI p50 under 50 ms (runner VM, informational limit)", f"{p50:.1f}")
 
-# 6. Static preview
-png = preview.read_bytes() if preview.exists() else b""
-check(png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 4000, "static preview PNG is written", f"{len(png)} bytes")
+# 6. Static previews: 3 levels x light and dark, width 340 pt at scale 2, height at most 480 pt
+def png_size(data):
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+sizes = {}
+for name in preview_names:
+    path = data_dir / name
+    data = path.read_bytes() if path.exists() else b""
+    size = png_size(data)
+    check(size is not None and len(data) > 8000, f"preview {name} is a PNG", f"{len(data)} bytes")
+    if size:
+        sizes[name] = size
+        print(f"  {name}: {size[0]}x{size[1]} px, {len(data)} bytes", flush=True)
+        check(size[0] == 680, f"preview {name} is 340 pt wide", str(size[0]))
+        check(size[1] <= 960, f"preview {name} is at most 480 pt high", str(size[1]))
 if report:
     check(not report.get("staticPreviewError"), "no preview error", str(report.get("staticPreviewError")))
 

@@ -70,11 +70,12 @@ for folder in (macos, helpers, resources):
     folder.mkdir(parents=True, exist_ok=True)
 
 # App: -parse-as-library because MoleMonitor.swift uses @main.
+# Charts (Swift Charts, system framework since macOS 13) draws the disk trend and the live lines in Sources/App/Panel.swift.
 run([
     swiftc, "-swift-version", "5", "-O", "-parse-as-library", "-target", target,
     *core, *app_files, entry, sensors,
     "-framework", "AppKit", "-framework", "SwiftUI", "-framework", "IOKit",
-    "-framework", "UserNotifications", "-framework", "Combine",
+    "-framework", "UserNotifications", "-framework", "Combine", "-framework", "Charts",
     "-o", macos / "MoleMonitor",
 ])
 

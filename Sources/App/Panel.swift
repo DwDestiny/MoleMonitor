@@ -1,21 +1,43 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: StatusFile, alerts and the notification authorization string from MonitorEngine.
-// Output: SwiftUI status card (320 pt wide): summary, disk, traffic, alerts, authorization row, CLI hint, quit.
-// Pos: Stage 1 status card (docs/PROJECT.md 4.2); no timers inside, missing values show as a dash or "统计中".
+// Input: StatusFile, alerts, authorization, the 30 day disk series and the 60 second live snapshot from MonitorEngine.
+// Output: SwiftUI status card (340 pt wide, no scrolling): header, disk trend card, live network and CPU card, traffic, alerts, authorization row, CLI hint, quit.
+// Pos: Stage 1 status card (docs/PROJECT.md 4.2). No timers and no TimelineView: the only continuous motion is the live chart scroll, driven by new samples.
 
 import AppKit
+import Charts
 import SwiftUI
+
+/// How the card appears. `full` plays once per app start, `fade` is every later open, `none` is for static renders.
+enum PanelEntrance {
+    case full, fade, none
+}
+
+/// Remembers whether the full entrance has played since the app started.
+enum PanelEntranceGate {
+    private static var played = false
+
+    static func next() -> PanelEntrance {
+        if played { return .fade }
+        played = true
+        return .full
+    }
+}
 
 /// Binds the engine to the pure `Panel`. Created on each popover open and released on close.
 struct PanelContainer: View {
     @ObservedObject var engine: MonitorEngine
     var onQuit: () -> Void
+    @State private var entrance = PanelEntranceGate.next()
 
     var body: some View {
         Panel(status: engine.status,
               alerts: engine.alerts,
               authorization: engine.authorization,
+              diskSeries: engine.diskSeries,
+              diskTrigger: engine.diskTrigger,
+              live: engine.live,
+              entrance: entrance,
               onEnableNotifications: { engine.requestNotificationAuthorization() },
               onQuit: onQuit)
     }
@@ -26,128 +48,84 @@ struct Panel: View {
     var status: StatusFile?
     var alerts: [AlertItem]
     var authorization: String
+    var diskSeries: [DiskPoint] = []
+    var diskTrigger: DiskTrigger?
+    var live: LiveSnapshot = .empty
+    var entrance: PanelEntrance = .none
     var onEnableNotifications: () -> Void
     var onQuit: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shown = false
+
+    private var revealed: Bool { shown || entrance == .none }
+    private var level: HealthLevel { status?.overall.level ?? .unknown }
+    private var smooth: Animation? { reduceMotion ? nil : .smooth(duration: 0.35) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
-            Divider()
-            diskCard
-            trafficBlock
-            Divider()
-            alertsBlock
-            authorizationBlock
-            Divider()
-            footer
+        VStack(alignment: .leading, spacing: 8) {
+            staged(0) { header }
+            staged(1) {
+                DiskCard(status: status, series: diskSeries, trigger: diskTrigger, entrance: entrance)
+                    .equatable()
+            }
+            staged(2) { LiveCard(live: live) }
+            staged(3) {
+                VStack(alignment: .leading, spacing: 8) {
+                    trafficBlock
+                    alertsBlock
+                    authorizationBlock
+                    Divider().opacity(0.6)
+                    footer
+                }
+            }
         }
-        .padding(16)
-        .frame(width: 320, alignment: .leading)
+        .padding(12)
+        .frame(width: 340, alignment: .leading)
+        .onAppear { shown = true }
+    }
+
+    /// Fades one block in. The index staggers the full entrance: the last block starts 90 ms in and ends by 290 ms.
+    private func staged<Content: View>(_ index: Int, @ViewBuilder _ content: () -> Content) -> some View {
+        content().modifier(StageModifier(index: index, revealed: revealed, entrance: entrance, reduceMotion: reduceMotion))
     }
 
     // MARK: Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
                 Text("MoleMonitor").font(.headline)
                 Spacer()
-                Text(PanelFormat.dataTime(status)).font(.caption).foregroundStyle(.secondary)
+                Text(PanelFormat.dataTime(status))
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
             }
             HStack(spacing: 6) {
-                Circle().fill(PanelFormat.color(status?.overall.level ?? .unknown)).frame(width: 8, height: 8)
+                Circle()
+                    .fill(PanelFormat.color(level))
+                    .frame(width: 8, height: 8)
+                    .animation(smooth, value: level)
                 Text(status?.overall.summary ?? "正在统计")
                     .font(.subheadline)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("label.summary")
             }
+            .accessibilityElement(children: .combine)
         }
-    }
-
-    // MARK: Disk
-
-    private var diskCard: some View {
-        let disk = status?.items.disk
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("磁盘").font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(PanelFormat.levelText(disk?.level ?? .unknown))
-                    .font(.caption)
-                    .foregroundStyle(PanelFormat.color(disk?.level ?? .unknown))
-            }
-            Text("\(PanelFormat.bytes(disk?.used)) / \(PanelFormat.bytes(disk?.total))")
-                .font(.system(.title3, design: .rounded))
-                .monospacedDigit()
-            usageBar(used: disk?.used.value, total: disk?.total.value, level: disk?.level ?? .unknown)
-            detailRow("重要用途可用", PanelFormat.bytes(disk?.availableImportant))
-            ForEach(PanelFormat.windows) { window in
-                growthRow(label: window.label, growth: disk?.growth[window.key])
-            }
-            if let purgeable = disk?.purgeableEstimate.value, purgeable > 0 {
-                Text("另有约 \(ByteText.gb(purgeable)) 可清除空间（快照、缓存），系统需要时会自动释放")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func usageBar(used: Int64?, total: Int64?, level: HealthLevel) -> some View {
-        let known = (used != nil && total != nil)
-        let fraction: Double
-        if let used, let total, total > 0 {
-            fraction = min(1, max(0, Double(used) / Double(total)))
-        } else {
-            fraction = 0
-        }
-        return GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.10))
-                if known {
-                    Capsule()
-                        .fill(PanelFormat.color(level))
-                        .frame(width: max(4, geo.size.width * CGFloat(fraction)))
-                }
-            }
-        }
-        .frame(height: 6)
-    }
-
-    private func growthRow(label: String, growth: DiskGrowth?) -> some View {
-        let shown = PanelFormat.growth(growth)
-        return HStack {
-            Text("\(label)增长").foregroundStyle(.secondary)
-            Spacer()
-            if let note = shown.note {
-                Text(note).font(.caption2).foregroundStyle(.secondary)
-            }
-            Text(shown.text).monospacedDigit()
-        }
-        .font(.caption)
-    }
-
-    private func detailRow(_ label: String, _ value: String) -> some View {
-        HStack {
-            Text(label).foregroundStyle(.secondary)
-            Spacer()
-            Text(value).monospacedDigit()
-        }
-        .font(.caption)
     }
 
     // MARK: Traffic
 
     private var trafficBlock: some View {
         let traffic = status?.items.network.traffic
-        return VStack(alignment: .leading, spacing: 3) {
-            Text("流量").font(.caption.weight(.semibold))
-            trafficRow("今天", traffic?["today"])
-            trafficRow("近 5 天", traffic?["5d"])
+        return VStack(alignment: .leading, spacing: 2) {
+            trafficRow("今天流量", traffic?["today"])
+            trafficRow("近 5 天流量", traffic?["5d"])
         }
+        .padding(.horizontal, 2)
+        .accessibilityIdentifier("block.traffic")
     }
 
     private func trafficRow(_ label: String, _ totals: TrafficTotals?) -> some View {
@@ -157,35 +135,50 @@ struct Panel: View {
             Text(PanelFormat.traffic(totals)).monospacedDigit()
         }
         .font(.caption)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Alerts
 
+    @ViewBuilder
     private var alertsBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("提醒").font(.subheadline.weight(.semibold))
-            if alerts.isEmpty {
+        if alerts.isEmpty {
+            HStack(spacing: 6) {
+                Image(systemName: "bell").font(.caption).foregroundStyle(.tertiary)
                 Text("当前没有提醒").font(.caption).foregroundStyle(.secondary)
-            } else {
-                ForEach(alerts.indices, id: \.self) { index in
+            }
+            .padding(.horizontal, 2)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("block.alerts")
+        } else {
+            let tint = PanelFormat.color(alerts.map { $0.level }.max { $0.severity < $1.severity } ?? .unknown)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("提醒").font(.caption.weight(.semibold))
+                ForEach(0..<min(alerts.count, 2), id: \.self) { index in
                     alertRow(alerts[index])
                 }
             }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(tint.opacity(0.10)))
+            .animation(smooth, value: alerts.count)
+            .accessibilityIdentifier("block.alerts")
         }
     }
 
     private func alertRow(_ alert: AlertItem) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            Circle().fill(PanelFormat.color(alert.level)).frame(width: 8, height: 8).padding(.top, 4)
-            VStack(alignment: .leading, spacing: 2) {
+            Circle().fill(PanelFormat.color(alert.level)).frame(width: 7, height: 7).padding(.top, 4)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(alert.message)
                     .font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("自 \(PanelFormat.dateTime(alert.since)) 起")
+                Text("开始于 \(PanelFormat.dateTime(alert.since))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Notification authorization
@@ -194,59 +187,526 @@ struct Panel: View {
     private var authorizationBlock: some View {
         switch authorization {
         case "not_determined":
-            VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 10) {
                 Text("MoleMonitor 在磁盘异常增长等情况下发送系统通知")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
                 Button(action: onEnableNotifications) { Text("开启通知") }
-                    .buttonStyle(PillButtonStyle())
+                    .buttonStyle(PillButtonStyle(prominent: true))
+                    .accessibilityIdentifier("btn.enableNotifications")
+                    .accessibilityLabel("开启通知")
             }
+            .padding(.horizontal, 2)
         case "denied":
-            Text("通知已关闭，可在系统设置 > 通知中打开")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            authorizationNote("通知已关闭，可在系统设置 > 通知中打开")
         case "unavailable":
-            Text("此环境无法发送通知，提醒只显示在这里")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            authorizationNote("此环境无法发送通知，提醒只显示在这里")
         default:
             EmptyView()
         }
+    }
+
+    private func authorizationNote(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 2)
+            .accessibilityIdentifier("label.authorization")
     }
 
     // MARK: Footer
 
     private var footer: some View {
         HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text("命令行读取状态").font(.caption2).foregroundStyle(.secondary)
                 Text(verbatim: "molemonitor-cli --status --brief")
                     .font(.system(.caption, design: .monospaced))
             }
+            .accessibilityElement(children: .combine)
             Spacer()
             Button(action: onQuit) { Text("退出") }
                 .buttonStyle(PillButtonStyle())
+                .accessibilityIdentifier("btn.quit")
+                .accessibilityLabel("退出 MoleMonitor")
+        }
+        .padding(.horizontal, 2)
+    }
+}
+
+// MARK: - Entrance
+
+/// Opacity and a 6 pt rise. Reduce Motion removes the rise. A static render shows the end state at once.
+private struct StageModifier: ViewModifier {
+    var index: Int
+    var revealed: Bool
+    var entrance: PanelEntrance
+    var reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(revealed ? 1 : 0)
+            .offset(y: (revealed || entrance != .full || reduceMotion) ? 0 : 6)
+            .animation(animation, value: revealed)
+    }
+
+    private var animation: Animation? {
+        switch entrance {
+        case .none: return nil
+        case .fade: return .easeOut(duration: 0.15)
+        case .full:
+            if reduceMotion { return .easeOut(duration: 0.15) }
+            return .easeOut(duration: 0.20).delay(0.03 * Double(index))
         }
     }
 }
 
-/// Pure SwiftUI button look, so the same view also renders in ImageRenderer.
-struct PillButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.caption)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Color.primary.opacity(configuration.isPressed ? 0.18 : 0.08))
-            .clipShape(Capsule())
+// MARK: - Shared look
+
+private extension View {
+    /// Rounded card on a system semantic fill. The popover supplies the blur behind it.
+    func cardBackground() -> some View {
+        background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.quaternary))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
     }
 }
 
-/// Text and color helpers. Missing values give a dash or "统计中", never 0.
-private enum PanelFormat {
+/// Pure SwiftUI button look (hover and pressed states), so the same view also renders in ImageRenderer.
+struct PillButtonStyle: ButtonStyle {
+    var prominent = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        PillButtonBody(configuration: configuration, prominent: prominent)
+    }
+}
+
+private struct PillButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let prominent: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        configuration.label
+            .font(.caption.weight(.medium))
+            .foregroundStyle(prominent ? Color.white : Color.primary)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(fill))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .contentShape(Capsule())
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            .onHover { hovering = $0 }
+    }
+
+    private var fill: Color {
+        if prominent {
+            return Color.accentColor.opacity(configuration.isPressed ? 0.75 : (hovering ? 0.92 : 1))
+        }
+        return Color.primary.opacity(configuration.isPressed ? 0.20 : (hovering ? 0.13 : 0.08))
+    }
+}
+
+// MARK: - Disk card
+
+/// Disk card. Compared by data only, so a live tick every 2 seconds does not rebuild the chart.
+private struct DiskCard: View, Equatable {
+    var status: StatusFile?
+    var series: [DiskPoint]
+    var trigger: DiskTrigger?
+    var entrance: PanelEntrance
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static func == (a: DiskCard, b: DiskCard) -> Bool {
+        a.status?.writtenAt == b.status?.writtenAt && a.series == b.series && a.trigger == b.trigger
+            && a.entrance == b.entrance
+    }
+
+    private var disk: DiskItem? { status?.items.disk }
+    private var level: HealthLevel { disk?.level ?? .unknown }
+    private var smooth: Animation? { reduceMotion ? nil : .smooth(duration: 0.35) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            topRow
+            DiskTrendChart(series: series, trigger: trigger, level: level, entrance: entrance)
+            HStack(spacing: 0) {
+                ForEach(PanelFormat.windows) { window in
+                    growthColumn(window)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("card.disk")
+        .accessibilityLabel("磁盘")
+    }
+
+    private var topRow: some View {
+        let parts = PanelFormat.gbParts(disk?.used)
+        return HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("已用").font(.subheadline).foregroundStyle(.secondary)
+                Text(parts.value)
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(smooth, value: parts.value)
+                Text(parts.unit).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("已用 \(parts.value) \(parts.unit)")
+            Spacer(minLength: 4)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text("共 \(PanelFormat.bytes(disk?.total))")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Text(PanelFormat.levelText(level))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(PanelFormat.color(level))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(PanelFormat.color(level).opacity(0.15)))
+                    .animation(smooth, value: level)
+                    .accessibilityLabel("磁盘状态 \(PanelFormat.levelText(level))")
+            }
+        }
+    }
+
+    private func growthColumn(_ window: PanelFormat.Window) -> some View {
+        let shown = PanelFormat.growth(disk?.growth[window.key])
+        let highlighted = trigger?.windowKey == window.key
+        let spoken = shown.note.map { shown.text + "，" + $0 } ?? shown.text
+        return VStack(alignment: .leading, spacing: 1) {
+            Text("\(window.label)增长").font(.caption2).foregroundStyle(.secondary)
+            Text(shown.text)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .foregroundStyle(highlighted ? PanelFormat.color(trigger?.level ?? .unknown) : Color.primary)
+                .contentTransition(.numericText())
+                .animation(smooth, value: shown.text)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(window.label)增长 \(spoken)")
+        .help(shown.note ?? "")
+    }
+}
+
+/// 30 day area chart with catmullRom smoothing, the trigger segment in the level color, a line for today and a hover tip.
+private struct DiskTrendChart: View {
+    var series: [DiskPoint]
+    var trigger: DiskTrigger?
+    var level: HealthLevel
+    var entrance: PanelEntrance
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovered: DiskPoint?
+    @State private var drawn = false
+
+    private var now: Date { series.last?.t ?? Date() }
+    private var segment: [DiskPoint] {
+        guard let trigger else { return [] }
+        return DiskSeries.triggerPoints(series: series, trigger: trigger)
+    }
+    /// The reveal runs only in the first open after the app start, and never with Reduce Motion.
+    private var isDrawn: Bool { drawn || entrance != .full || reduceMotion }
+    private var domainX: ClosedRange<Date> {
+        let first = series.first?.t ?? now
+        let start = min(first, now.addingTimeInterval(-86400))
+        let span = now.timeIntervalSince(start)
+        return start...now.addingTimeInterval(span * 0.04)
+    }
+    private var domainY: ClosedRange<Double> {
+        var values = series.map { $0.gb }
+        if let trigger { values.append(Double(trigger.fromUsed) / 1e9) }
+        guard let lo = values.min(), let hi = values.max() else { return 0...1 }
+        let pad = max((hi - lo) * 0.18, 0.5)
+        return (lo - pad)...(hi + pad)
+    }
+
+    var body: some View {
+        let yRange = domainY
+        let tint = PanelFormat.color(trigger?.level ?? level)
+        Chart {
+            ForEach(series) { p in
+                AreaMark(x: .value("时间", p.t), yStart: .value("基线", yRange.lowerBound), yEnd: .value("已用", p.gb))
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.32), Color.accentColor.opacity(0.02)],
+                                                    startPoint: .top, endPoint: .bottom))
+            }
+            ForEach(series) { p in
+                LineMark(x: .value("时间", p.t), y: .value("已用", p.gb), series: .value("线", "base"))
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(Color.accentColor)
+                    .lineStyle(StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+            }
+            ForEach(segment) { p in
+                AreaMark(x: .value("时间", p.t), yStart: .value("基线", yRange.lowerBound), yEnd: .value("已用", p.gb),
+                         series: .value("区", "trigger"))
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(LinearGradient(colors: [tint.opacity(0.30), tint.opacity(0.02)],
+                                                    startPoint: .top, endPoint: .bottom))
+            }
+            ForEach(segment) { p in
+                LineMark(x: .value("时间", p.t), y: .value("已用", p.gb), series: .value("线", "trigger"))
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(tint)
+                    .lineStyle(StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
+            }
+            RuleMark(x: .value("今天", now))
+                .foregroundStyle(Color.secondary.opacity(0.55))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
+            if let last = series.last {
+                PointMark(x: .value("时间", last.t), y: .value("已用", last.gb))
+                    .symbolSize(34)
+                    .foregroundStyle(PanelFormat.color(level))
+            }
+            if let h = hovered {
+                RuleMark(x: .value("时间", h.t))
+                    .foregroundStyle(Color.primary.opacity(0.45))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                    .annotation(position: .top, spacing: 2,
+                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                        tooltip(h)
+                    }
+                PointMark(x: .value("时间", h.t), y: .value("已用", h.gb))
+                    .symbolSize(40)
+                    .foregroundStyle(Color.primary)
+            }
+        }
+        .chartXScale(domain: domainX)
+        .chartYScale(domain: yRange)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartLegend(.hidden)
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(Color.clear)
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            guard let frame = proxy.plotFrame else { hovered = nil; return }
+                            let x = location.x - geo[frame].origin.x
+                            if let date: Date = proxy.value(atX: x) { hovered = nearest(to: date) }
+                        case .ended:
+                            hovered = nil
+                        }
+                    }
+            }
+        }
+        .frame(height: 62)
+        .mask(alignment: .leading) {
+            Rectangle().scaleEffect(x: isDrawn ? 1 : 0.001, anchor: .leading)
+        }
+        .overlay {
+            if series.count < 2 {
+                Text("历史数据积累中").font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .onAppear {
+            guard entrance == .full, !reduceMotion else { return }
+            withAnimation(.easeOut(duration: 0.25).delay(0.05)) { drawn = true }
+        }
+        .accessibilityIdentifier("chart.disk")
+        .accessibilityLabel("磁盘近 30 天已用空间趋势图")
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var accessibilityValue: String {
+        guard let first = series.first, let last = series.last else { return "暂无数据" }
+        return "从 \(Int(first.gb.rounded())) GB 到 \(Int(last.gb.rounded())) GB"
+    }
+
+    private func nearest(to date: Date) -> DiskPoint? {
+        series.min { abs($0.t.timeIntervalSince(date)) < abs($1.t.timeIntervalSince(date)) }
+    }
+
+    private func tooltip(_ p: DiskPoint) -> some View {
+        VStack(spacing: 0) {
+            Text(PanelFormat.dateTime(p.t)).font(.caption2).foregroundStyle(.secondary)
+            Text(ByteText.gb(p.used)).font(.caption.weight(.semibold)).monospacedDigit()
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.regularMaterial))
+    }
+}
+
+// MARK: - Live card
+
+/// Network and CPU lines over the last 60 seconds. Data exists only while the panel is open.
+private struct LiveCard: View {
+    var live: LiveSnapshot
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let downColor = Color.blue
+    private static let upColor = Color.purple
+    private static let cpuColor = Color.teal
+
+    private var smooth: Animation? { reduceMotion ? nil : .smooth(duration: 0.35) }
+    /// Chart animation: about as long as one sample interval, so the scroll looks continuous.
+    private var scroll: Animation? { reduceMotion ? nil : .smooth(duration: 1.0) }
+    private var windowEnd: Date { live.latest ?? Date() }
+    private var domainX: ClosedRange<Date> { windowEnd.addingTimeInterval(-LiveSnapshot.windowSeconds)...windowEnd }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            netRow
+            cpuRow
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("card.live")
+        .accessibilityLabel("实时")
+    }
+
+    // MARK: Network
+
+    private var netRow: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("网速").font(.caption2).foregroundStyle(.secondary)
+                rateLine(symbol: "arrow.down", color: Self.downColor, value: live.rx, name: "下行")
+                rateLine(symbol: "arrow.up", color: Self.upColor, value: live.tx, name: "上行")
+            }
+            .frame(width: 112, alignment: .leading)
+            netChart
+        }
+    }
+
+    private func rateLine(symbol: String, color: Color, value: Double?, name: String) -> some View {
+        let parts = value.map { RateText.parts($0) }
+        return HStack(spacing: 3) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(color)
+                .frame(width: 10)
+            Text(parts?.value ?? "—")
+                .font(.system(.callout, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .animation(smooth, value: parts?.value)
+            Text(parts?.unit ?? "").font(.caption2).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(name) \(RateText.text(value))")
+    }
+
+    private var netChart: some View {
+        let peak = live.net.map { max($0.rx, $0.tx) }.max() ?? 0
+        let yMax = max(peak * 1.25, 20_000)
+        return Chart {
+            ForEach(live.net) { p in
+                AreaMark(x: .value("时间", p.t), yStart: .value("零", 0), yEnd: .value("下行", p.rx), series: .value("区", "down"))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(LinearGradient(colors: [Self.downColor.opacity(0.28), Self.downColor.opacity(0.02)],
+                                                    startPoint: .top, endPoint: .bottom))
+            }
+            ForEach(live.net) { p in
+                LineMark(x: .value("时间", p.t), y: .value("下行", p.rx), series: .value("线", "down"))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(Self.downColor)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
+            ForEach(live.net) { p in
+                LineMark(x: .value("时间", p.t), y: .value("上行", p.tx), series: .value("线", "up"))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(Self.upColor)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
+        }
+        .chartXScale(domain: domainX)
+        .chartYScale(domain: 0...yMax)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartLegend(.hidden)
+        .chartPlotStyle { plot in plotLook(plot) }
+        .frame(height: 40)
+        .overlay { if live.net.count < 2 { waiting } }
+        .animation(scroll, value: live.net.last?.t)
+        .accessibilityIdentifier("chart.net")
+        .accessibilityLabel("网速折线图，最近 60 秒")
+        .accessibilityValue("下行 \(RateText.text(live.rx))，上行 \(RateText.text(live.tx))")
+    }
+
+    // MARK: CPU
+
+    private var cpuRow: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("CPU").font(.caption2).foregroundStyle(.secondary)
+                Text(RateText.percent(live.cpuPercent))
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(smooth, value: RateText.percent(live.cpuPercent))
+                    .accessibilityLabel("CPU 使用率 \(RateText.percent(live.cpuPercent))")
+            }
+            .frame(width: 112, alignment: .leading)
+            cpuChart
+        }
+    }
+
+    private var cpuChart: some View {
+        Chart {
+            ForEach(live.cpu) { p in
+                AreaMark(x: .value("时间", p.t), yStart: .value("零", 0), yEnd: .value("CPU", p.percent))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(LinearGradient(colors: [Self.cpuColor.opacity(0.28), Self.cpuColor.opacity(0.02)],
+                                                    startPoint: .top, endPoint: .bottom))
+            }
+            ForEach(live.cpu) { p in
+                LineMark(x: .value("时间", p.t), y: .value("CPU", p.percent))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(Self.cpuColor)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
+        }
+        .chartXScale(domain: domainX)
+        .chartYScale(domain: 0.0...100.0)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartLegend(.hidden)
+        .chartPlotStyle { plot in plotLook(plot) }
+        .frame(height: 40)
+        .overlay { if live.cpu.count < 2 { waiting } }
+        .animation(scroll, value: live.cpu.last?.t)
+        .accessibilityIdentifier("chart.cpu")
+        .accessibilityLabel("CPU 使用率折线图，最近 60 秒")
+        .accessibilityValue(RateText.percent(live.cpuPercent))
+    }
+
+    private func plotLook(_ plot: ChartPlotContent) -> some View {
+        plot
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private var waiting: some View {
+        Text("采样中").font(.caption2).foregroundStyle(.tertiary)
+    }
+}
+
+// MARK: - Text and color helpers
+
+/// Missing values give a dash or "统计中", never 0.
+enum PanelFormat {
     struct Window: Identifiable {
         var key: String
         var label: String
@@ -304,6 +764,13 @@ private enum PanelFormat {
         return ByteText.gb(v)
     }
 
+    /// "583" and "GB" for the large number. A missing value gives a dash and no unit.
+    static func gbParts(_ m: Measured<Int64>?) -> (value: String, unit: String) {
+        guard let m, m.status == .ok, let v = m.value else { return ("—", "") }
+        let pieces = ByteText.gb(v).split(separator: " ", maxSplits: 1).map(String.init)
+        return pieces.count == 2 ? (pieces[0], pieces[1]) : (pieces.first ?? "—", "")
+    }
+
     /// "已记录 N 小时" under one day, otherwise "已记录 N.N 天".
     static func recorded(hours: Double) -> String {
         if hours < 1 { return "已记录不足 1 小时" }
@@ -339,54 +806,27 @@ private enum PanelFormat {
     }
 }
 
-/// Hand-built data for `--preview`. It does not touch the engine or the data directory.
-/// Main actor: it builds a SwiftUI view, and its only caller (PreviewRenderer) is on the main actor.
+// MARK: - Preview data
+
+/// Invented data for `--preview`, built by Core's PreviewScenario. It does not touch the engine or the data directory.
 @MainActor
 enum PanelSample {
-    static func status(now: Date = Date()) -> StatusFile {
-        let gb: Int64 = 1_000_000_000
-        let total = 995 * gb
-        let availImportant = 412 * gb
-        func growth(_ key: String, _ bytes: Int64, _ net: Int64, hours: Double) -> DiskGrowth {
-            DiskGrowth(window: key, bytes: bytes, netBytes: net,
-                       fromMinAt: now.addingTimeInterval(-hours * 3600), coveredHours: hours, status: .ok)
+    static func panel(level: PreviewLevel, now: Date = Date()) -> Panel {
+        let (result, samples) = PreviewScenario.result(level, now: now)
+        let authorization: String
+        switch level {
+        case .red: authorization = "not_determined"
+        case .yellow: authorization = "denied"
+        case .green: authorization = "authorized"
         }
-        let disk = DiskItem(
-            level: .red, reasonCode: "growth_5d", reason: "5 天内真实已用增长 291 GiB",
-            since: now.addingTimeInterval(-3 * 3600), levelChangedAt: now.addingTimeInterval(-3 * 3600),
-            volume: "/System/Volumes/Data",
-            total: .ok(total, unit: "bytes", at: now),
-            used: .ok(total - availImportant, unit: "bytes", at: now),
-            availableImportant: .ok(availImportant, unit: "bytes", at: now),
-            availableNow: .ok(398 * gb, unit: "bytes", at: now),
-            purgeableEstimate: .ok(14 * gb, unit: "bytes", at: now),
-            growth: [
-                "1d": growth("1d", 24 * gb, 20 * gb, hours: 24),
-                "5d": growth("5d", 312 * gb, 250 * gb, hours: 119),
-                "30d": DiskGrowth(window: "30d", bytes: 330 * gb, netBytes: 280 * gb,
-                                  fromMinAt: now.addingTimeInterval(-9 * 86400), coveredHours: 9 * 24,
-                                  status: .insufficientWindow),
-            ],
-            historyDays: 9, lastSampleAt: now)
-        let network = NetworkItem(traffic: [
-            "today": TrafficTotals(rx: 3_200_000_000, tx: 410_000_000, coveredHours: 9, status: .ok),
-            "5d": TrafficTotals(rx: 41_000_000_000, tx: 5_600_000_000, coveredHours: 119, status: .ok),
-        ], note: NetworkItem.defaultNote)
-        let alert = AlertItem(
-            type: "disk_growth", subject: "/System/Volumes/Data", level: .red,
-            since: now.addingTimeInterval(-3 * 3600),
-            message: "磁盘 5 天多占用了 312 GB。已排除可清除空间（快照、缓存）。",
-            agentHint: "")
-        return StatusFile(appVersion: AppInfo.version, writtenAt: now, writerPid: 0,
-                          overall: .init(level: .red, summary: "磁盘 5 天多占用了 312 GB"),
-                          items: .init(disk: disk, network: network),
-                          activeAlerts: [alert],
-                          notifications: .init(authorization: "not_determined"))
-    }
-
-    static func panel(now: Date = Date()) -> Panel {
-        let s = status(now: now)
-        return Panel(status: s, alerts: s.activeAlerts, authorization: s.notifications.authorization,
+        let status = StatusFile(appVersion: AppInfo.version, writtenAt: now, writerPid: 0,
+                                overall: result.overall, items: result.items, activeAlerts: result.activeAlerts,
+                                notifications: .init(authorization: authorization))
+        return Panel(status: status, alerts: result.activeAlerts, authorization: authorization,
+                     diskSeries: DiskSeries.downsample(samples: samples, now: now),
+                     diskTrigger: DiskSeries.trigger(verdict: result.verdict, samples: samples),
+                     live: PreviewScenario.live(now: now),
+                     entrance: .none,
                      onEnableNotifications: {}, onQuit: {})
     }
 }

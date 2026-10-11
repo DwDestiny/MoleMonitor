@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Disk and NIC samples from Sampler; sleep and wake events; panel open and close; the data directory.
-// Output: Published status for the UI, status.json (every 5 minutes and on change), disk-YYYY-MM.ndjson, alert-state.json, notifications.
-// Pos: Phase 1 engine (docs/PROJECT.md 6, 9, 10); one timer, no 1 Hz loop; all work on one background queue.
+// Output: Published status and 30 day disk series for the UI, status.json (every 5 minutes and on change), disk-YYYY-MM.ndjson, alert-state.json, notifications; a 60 second live snapshot while the panel is open.
+// Pos: Phase 1 engine (docs/PROJECT.md 6, 9, 10); one 5 minute timer. The 2 second live timer exists only while the panel is open (own queue). No other periodic work.
 
 import Foundation
 import Combine
@@ -16,6 +16,12 @@ final class MonitorEngine: ObservableObject {
     @Published private(set) var alerts: [AlertItem]
     /// "authorized" | "denied" | "not_determined" | "unavailable"
     @Published private(set) var authorization: String
+    /// Down-sampled used space of the last 30 days (at most 120 points), oldest first. Read-only copy of the history.
+    @Published private(set) var diskSeries: [DiskPoint] = []
+    /// The growth segment behind a growth alert. Nil when growth does not trigger.
+    @Published private(set) var diskTrigger: DiskTrigger?
+    /// 60 second window of network rates and CPU use. Filled only while the panel is open; empty otherwise. Memory only.
+    @Published private(set) var live: LiveSnapshot = .empty
 
     /// True when the data directory had no history and no alert-state.json at init time.
     let isFirstLaunch: Bool
@@ -52,6 +58,20 @@ final class MonitorEngine: ObservableObject {
     /// Reserved for the status card (phase 2): bytes per second between the last two samples. Not shown.
     private var latestNetworkRate: NetworkRate?
     private var lastNet: (rx: Int64, tx: Int64, at: Date)?
+    private var cachedSeries = [DiskPoint]()
+    private var cachedTrigger: DiskTrigger?
+
+    // Live sampling. Everything below except `liveSession` is confined to `liveQueue`.
+    static let liveInterval: TimeInterval = LiveSnapshot.interval
+    /// The first timer fire comes sooner than the period, so the charts show data after 1 second instead of 2.
+    static let liveFirstFire: TimeInterval = 1
+    private let liveQueue = DispatchQueue(label: "molemonitor.live", qos: .utility)
+    private var liveTimer: DispatchSourceTimer?
+    private var liveSampler: LiveSampler?
+    private var liveBuffer = LiveBuffer()
+    /// Changes at every start and stop of live sampling. Results of an older session are dropped on the main thread.
+    private let sessionLock = NSLock()
+    private var liveSession = 0
 
     init(dataDir: URL = MoleMonitorPaths.dataDir(environment: ProcessInfo.processInfo.environment)) {
         let notifier = Notifier()
@@ -88,11 +108,16 @@ final class MonitorEngine: ObservableObject {
         let center = NSWorkspace.shared.notificationCenter
         for o in observers { center.removeObserver(o) }
         observers.removeAll()
+        liveQueue.sync { stopLiveOnQueue() }
         queue.sync { stopOnQueue() }
     }
 
-    /// Takes one extra sample (src=panel). The 15 minute rhythm does not change.
+    /// True while the 2 second live timer exists. Must not be called on the live queue.
+    var isLiveSampling: Bool { liveQueue.sync { liveTimer != nil } }
+
+    /// Starts live sampling and takes one extra disk sample (src=panel). The 15 minute rhythm does not change.
     func panelOpened() {
+        liveQueue.async { [weak self] in self?.startLiveOnQueue() }
         queue.async { [weak self] in
             guard let self, self.started, !self.sleeping else { return }
             self.panelOpen = true
@@ -102,7 +127,9 @@ final class MonitorEngine: ObservableObject {
         }
     }
 
+    /// Cancels the live timer, drops the live buffers and publishes an empty snapshot.
     func panelClosed() {
+        liveQueue.async { [weak self] in self?.stopLiveOnQueue() }
         queue.async { [weak self] in self?.panelOpen = false }
     }
 
@@ -110,6 +137,60 @@ final class MonitorEngine: ObservableObject {
         notifier.requestAuthorization { [weak self] value in
             guard let self else { return }
             self.queue.async { self.setAuthorization(value) }
+        }
+    }
+
+    // MARK: Live sampling (liveQueue)
+
+    private func nextSession() -> Int {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        liveSession += 1
+        return liveSession
+    }
+
+    private func isCurrent(session: Int) -> Bool {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        return liveSession == session
+    }
+
+    private func startLiveOnQueue() {
+        guard liveTimer == nil else { return }
+        let session = nextSession()
+        liveBuffer.removeAll()
+        liveSampler = LiveSampler()
+        sampleLive(session: session)  // baseline: stores counters, adds no point
+        let source = DispatchSource.makeTimerSource(queue: liveQueue)
+        source.schedule(deadline: .now() + MonitorEngine.liveFirstFire,
+                        repeating: .milliseconds(Int(MonitorEngine.liveInterval * 1000)), leeway: .milliseconds(200))
+        source.setEventHandler { [weak self] in self?.sampleLive(session: session) }
+        source.resume()
+        liveTimer = source
+    }
+
+    private func stopLiveOnQueue() {
+        liveTimer?.cancel()
+        liveTimer = nil
+        liveSampler = nil
+        liveBuffer.removeAll()
+        _ = nextSession()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.live != .empty else { return }
+            self.live = .empty
+        }
+    }
+
+    private func sampleLive(session: Int) {
+        guard let sampler = liveSampler else { return }
+        let now = Date()
+        let reading = sampler.read(at: now)
+        liveBuffer.add(at: now, rate: reading.rate, cpuPercent: reading.cpuPercent)
+        let snapshot = liveBuffer.snapshot
+        if snapshot.net.isEmpty && snapshot.cpu.isEmpty { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isCurrent(session: session) else { return }
+            self.live = snapshot
         }
     }
 
@@ -209,6 +290,7 @@ final class MonitorEngine: ObservableObject {
         let cutoff = now.addingTimeInterval(-Double(MonitorEngine.historyDays) * 86400)
         if let first = samples.first, first.t < cutoff { samples.removeAll { $0.t < cutoff } }
         lastSampleAt = now
+        cachedSeries = DiskSeries.downsample(samples: samples, now: now)
 
         if let rx = s.netRx, let tx = s.netTx {
             if let prev = lastNet {
@@ -235,6 +317,7 @@ final class MonitorEngine: ObservableObject {
         }
         logicState = committed
         lastResult = result
+        cachedTrigger = DiskSeries.trigger(verdict: result.verdict, samples: samples)
         saveAlertStateIfChanged()
         for p in result.notifications {
             notifier.post(type: p.alert.type, subject: p.alert.subject, title: p.title, body: p.alert.message, now: now)
@@ -282,10 +365,15 @@ final class MonitorEngine: ObservableObject {
         guard let file else { return }
         let level = result.items.disk.level
         let active = result.activeAlerts
+        let series = cachedSeries
+        let trigger = cachedTrigger
         DispatchQueue.main.async { [weak self] in
-            self?.status = file
-            self?.diskLevel = level
-            self?.alerts = active
+            guard let self else { return }
+            self.status = file
+            self.diskLevel = level
+            self.alerts = active
+            if self.diskSeries != series { self.diskSeries = series }
+            if self.diskTrigger != trigger { self.diskTrigger = trigger }
         }
     }
 

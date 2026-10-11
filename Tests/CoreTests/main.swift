@@ -564,6 +564,10 @@ do {
 
 runNetworkTests()
 
+// MARK: - Live series (LiveTests.swift)
+
+runLiveTests()
+
 // MARK: - Summary
 
 try? FileManager.default.removeItem(at: tmpRoot)
