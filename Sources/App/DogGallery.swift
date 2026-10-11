@@ -4,6 +4,9 @@
 // Output: PNG gallery of all static dog poses, menu bar icons and badges (1x and 2x, light and dark), contact sheets,
 //         a menu bar mock-up with 8x pixel zoom, manifest.json (file names and pixel hashes), badge-matrix.json,
 //         menu-metrics.json and card-metrics.json (measured on the real Core Graphics raster, DESIGN.md 3.3, 4.8, 9.4 G1).
+//         Stage 2: stride sequences (sheet-seq.png), the motor timeline of a switch (sheet-timeline.png), the menu bar
+//         switch frames (sheet-menu-switch.png) and menu-switch.json (every switch has 8 frames, the last one = the still).
+//         In the UITEST build, `--dog-checks` runs the dog animation gates instead (UITestDogChecks).
 // Pos: Review and CI tool; the app never calls it at run time. Offline, no network. Owner I2.
 //
 // Self-check: returns an error when two different poses give the same pixels, or when a 1x metric fails its gate.
@@ -108,6 +111,12 @@ enum DogGallery {
         sheetMenu(.letter)
         sheetBadges()
         menubarMock(choice)
+        // Stage 2 (animation): stride sequences, the motor timeline of a switch, the menu bar switch frames.
+        renderSequences()
+        sheetSequences()
+        sheetTimeline()
+        sheetMenuSwitch(choice)
+        checkMenuSwitchFrames(choice)
         writeJSON(["files": manifest, "glyphStyle": choice.rawValue], "manifest.json")
         checkDistinct()
         return failures.isEmpty ? nil : failures.joined(separator: "\n")
@@ -559,6 +568,196 @@ enum DogGallery {
         save(image, "sheet-badges.png", group: nil)
     }
 
+    // MARK: Stage 2: motion
+
+    static let strideGaits: [(DogGait, Double)] = [(.walk, 25), (.trot, 60), (.sprint, 95)]
+
+    /// One stride of each moving gait, 8 frames, phi = i x 45 deg (DESIGN.md 4.8 "步态序列"), 104 pt, light and dark.
+    private static func renderSequences() {
+        for (gait, cpu) in strideGaits {
+            for i in 0..<8 {
+                for dark in [false, true] {
+                    let size = cardSizes[0]
+                    let name = "card/seq-\(gait.rawValue)-\(i)-104-\(dark ? "dark" : "light")@2x.png"
+                    let image = draw(size, scale: 2, background: cardBackground[dark]) { ctx in
+                        DogRenderer.drawStatic(input(cpu: cpu), gait: gait, phase: Double(i) * Double.pi / 4, dark: dark,
+                                               in: CGRect(origin: .zero, size: size), ctx: ctx)
+                    }
+                    save(image, name, group: "seq-\(gait.rawValue)-\(dark)")
+                }
+            }
+        }
+    }
+
+    /// Contact sheet: rows walk, trot, sprint at 104 pt (light, dark) and 72 pt (light); 8 frames per row.
+    private static func sheetSequences() {
+        var rows = [(DogGait, Double, Int, Bool)]()
+        for (sizeIndex, dark) in [(0, false), (0, true), (1, false)] {
+            for g in strideGaits { rows.append((g.0, g.1, sizeIndex, dark)) }
+        }
+        let cellW: CGFloat = 112, cellH: CGFloat = 96, top: CGFloat = 30, left: CGFloat = 70
+        let size = CGSize(width: left + cellW * 8 + 8, height: top + cellH * CGFloat(rows.count) + 8)
+        let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
+            label("步态序列：每行 1 个步幅 8 帧（φ 每 45°），左起 φ = 0。104 pt 浅色、深色，72 pt 浅色", at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
+            for (r, row) in rows.enumerated() {
+                let cardSize = cardSizes[row.2]
+                let y = top + CGFloat(r) * cellH
+                label("\(row.0.rawValue) \(Int(cardSize.width))\(row.3 ? " 深" : "")", at: CGPoint(x: 6, y: y + 44), size: 10, in: ctx)
+                for i in 0..<8 {
+                    let cell = CGRect(x: left + CGFloat(i) * cellW, y: y, width: cellW - 4, height: cellH - 6)
+                    fill(cell, cardBackground[row.3] ?? 0, in: ctx)
+                    let dog = CGRect(x: cell.minX + (cell.width - cardSize.width) / 2, y: cell.minY + 4,
+                                     width: cardSize.width, height: cardSize.height)
+                    DogRenderer.drawStatic(input(cpu: row.1), gait: row.0, phase: Double(i) * Double.pi / 4, dark: row.3,
+                                           in: dog, ctx: ctx)
+                    label("\(i * 45)°", at: CGPoint(x: cell.minX + 4, y: cell.maxY - 4), size: 8, dark: row.3, in: ctx)
+                }
+            }
+        }
+        save(image, "sheet-seq.png", group: nil)
+    }
+
+    /// The motor itself at 24 fps: CPU jumps 5 % -> 95 % at t = 0 (lie -> walk at 0.46 s with the 0.6 s crossfade,
+    /// walk -> trot at 4.46 s with the 0.35 s crossfade), and the bubble pop of a new problem. Frames as DogView draws them.
+    private static func sheetTimeline() {
+        var motor = DogMotor(initialCPU: 5)
+        let hot = input(cpu: 95)
+        var frames = [(t: Double, frame: DogFrame, input: DogInput)]()
+        for n in 1...(24 * 6) {
+            let f = motor.frame(dt: 1.0 / 24, input: hot)
+            frames.append((t: Double(n) / 24, frame: f, input: hot))
+        }
+        let rise = frames.filter { $0.t >= 0.4 && $0.t < 1.15 }
+        let trot = frames.filter { $0.t >= 4.4 && $0.t < 4.9 }
+        var popMotor = DogMotor(initialCPU: 25)
+        let problem = input(cpu: 25, problem: .disk, level: .yellow)
+        var pop = [(t: Double, frame: DogFrame, input: DogInput)]()
+        for n in 1...16 { pop.append((t: Double(n) / 24, frame: popMotor.frame(dt: 1.0 / 24, input: problem), input: problem)) }
+        let groups: [(String, [(t: Double, frame: DogFrame, input: DogInput)])] = [
+            ("趴 → 走（0.6 秒交叉淡变）", rise), ("走 → 小跑（0.35 秒交叉淡变）", trot), ("气泡弹出（0.6 → 1）", pop)]
+        let cols = 9
+        let cellW: CGFloat = 112, cellH: CGFloat = 96, top: CGFloat = 30
+        var rowCount = 0
+        for g in groups { rowCount += (g.1.count + cols - 1) / cols }
+        let size = CGSize(width: cellW * CGFloat(cols) + 8, height: top + CGFloat(rowCount) * cellH + CGFloat(groups.count) * 18 + 8)
+        let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
+            label("马达时间线（24 fps，每格 1 帧，DogView 的真实帧）", at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
+            var y = top
+            for g in groups {
+                label(g.0, at: CGPoint(x: 6, y: y + 12), size: 10, in: ctx)
+                y += 18
+                for (i, item) in g.1.enumerated() {
+                    let x = 4 + CGFloat(i % cols) * cellW
+                    let yy = y + CGFloat(i / cols) * cellH
+                    let cell = CGRect(x: x, y: yy, width: cellW - 4, height: cellH - 6)
+                    fill(cell, cardBackground[false] ?? 0, in: ctx)
+                    let dog = CGRect(x: cell.minX + 4, y: cell.minY + 4, width: 104, height: 78)
+                    DogRenderer.drawFrame(item.frame, input: item.input, dark: false, in: dog, ctx: ctx)
+                    let fade = item.frame.fadeFrom.map { " \($0.rawValue)>\(item.frame.gait.rawValue) \(Int(item.frame.fade * 100))%" } ?? " \(item.frame.gait.rawValue)"
+                    label(String(format: "%.2fs", item.t) + fade, at: CGPoint(x: cell.minX + 3, y: cell.maxY - 3), size: 7, in: ctx)
+                }
+                y += CGFloat((g.1.count + cols - 1) / cols) * cellH
+            }
+        }
+        save(image, "sheet-timeline.png", group: nil)
+    }
+
+    static let menuSwitches: [(String, MenuIconState, MenuIconState)] = [
+        ("正常 → 关注 CPU", MenuIconState(posture: .relaxed, badge: nil), MenuIconState(posture: .raised, badge: MenuBadge(item: .cpu))),
+        ("关注 CPU → 警告 CPU", MenuIconState(posture: .raised, badge: MenuBadge(item: .cpu)), MenuIconState(posture: .pant, badge: MenuBadge(item: .cpu))),
+        ("正常 → 警告 内存", MenuIconState(posture: .relaxed, badge: nil), MenuIconState(posture: .pant, badge: MenuBadge(item: .memory))),
+        ("关注 磁盘 → 关注 耗电", MenuIconState(posture: .raised, badge: MenuBadge(item: .disk)), MenuIconState(posture: .raised, badge: MenuBadge(item: .power))),
+        ("警告 温度 → 正常", MenuIconState(posture: .pant, badge: MenuBadge(item: .thermal)), MenuIconState(posture: .relaxed, badge: nil)),
+        ("关注 内存 → 正常", MenuIconState(posture: .raised, badge: MenuBadge(item: .memory)), MenuIconState(posture: .relaxed, badge: nil)),
+    ]
+
+    /// Contact sheet of the menu bar switch: the start state, then the 8 frames (75 ms apart). Each frame as a 2x
+    /// vector and as 1x pixels zoomed 2x on the light menu bar; the dark bar repeats the vector row.
+    private static func sheetMenuSwitch(_ style: GlyphStyle) {
+        let cellW: CGFloat = 80, rowH: CGFloat = 132, top: CGFloat = 30, left: CGFloat = 8
+        let size = CGSize(width: left + cellW * 9 + 8, height: top + rowH * CGFloat(menuSwitches.count) + 8)
+        let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
+            label("菜单栏切换动画：每行起始态 + 8 帧（每帧 75 ms）。上：浅色 2 倍矢量。中：1x 像素放大 2 倍。下：深色 2 倍矢量",
+                  at: CGPoint(x: 8, y: 18), size: 11, in: ctx)
+            for (r, sw) in menuSwitches.enumerated() {
+                let y = top + CGFloat(r) * rowH
+                label(sw.0, at: CGPoint(x: left, y: y + 10), size: 10, in: ctx)
+                let frames = [MenuMotion.still(sw.1)] + MenuMotion.frames(from: sw.1, to: sw.2)
+                for (i, f) in frames.enumerated() {
+                    let x = left + CGFloat(i) * cellW
+                    for (k, dark) in [(0, false), (2, true)] {
+                        let cell = CGRect(x: x, y: y + 14 + CGFloat(k) * 38, width: cellW - 6, height: 36)
+                        fill(cell, barBackground[dark] ?? 0, in: ctx)
+                        ctx.saveGState()
+                        ctx.translateBy(x: cell.minX + 13, y: cell.minY)
+                        ctx.scaleBy(x: 2, y: 2)
+                        MenuIconRenderer.draw(f, style: style, ink: barInk(dark), cached: false, in: ctx)
+                        ctx.restoreGState()
+                    }
+                    let one = draw(MenuIconRenderer.size, scale: 1, background: barBackground[false]) { c1 in
+                        MenuIconRenderer.draw(f, style: style, ink: barInk(false), cached: false, in: c1)
+                    }
+                    pixels(one, in: CGRect(x: x + 13, y: y + 14 + 38, width: 48, height: 36), ctx: ctx)
+                    label(i == 0 ? "起始" : "\(i)", at: CGPoint(x: x + 2, y: y + rowH - 2), size: 8, in: ctx)
+                }
+            }
+        }
+        save(image, "sheet-menu-switch.png", group: nil)
+    }
+
+    /// Every switch between two non-hollow states has 8 frames, and its last frame has the pixels of the still target
+    /// (1x and 2x). Hollow switches have no frames. Results go to menu-switch.json.
+    private static func checkMenuSwitchFrames(_ style: GlyphStyle) {
+        var states = [MenuIconState(posture: .relaxed, badge: nil)]
+        for posture in [MenuPosture.raised, .pant] {
+            for item in HealthItem.allCases { states.append(MenuIconState(posture: posture, badge: MenuBadge(item: item))) }
+        }
+        var pairs = 0, bad = [String]()
+        var maxScale = 0.0
+        for a in states {
+            for b in states where a != b {
+                pairs += 1
+                let frames = MenuMotion.frames(from: a, to: b)
+                maxScale = max(maxScale, frames.map { $0.badgeScale }.max() ?? 0)
+                let name = "\(a.posture.rawValue)-\(a.badge?.item.rawValue ?? "none")>\(b.posture.rawValue)-\(b.badge?.item.rawValue ?? "none")"
+                guard frames.count == MenuMotion.frameCount, let last = frames.last else {
+                    bad.append(name + " frames \(frames.count)")
+                    continue
+                }
+                for scale in [1, 2] {
+                    let x = draw(MenuIconRenderer.size, scale: scale, background: nil) { c in
+                        MenuIconRenderer.draw(last, style: style, ink: CGColor(gray: 0, alpha: 1), cached: false, in: c)
+                    }
+                    let y = draw(MenuIconRenderer.size, scale: scale, background: nil) { c in
+                        MenuIconRenderer.draw(b, style: style, ink: CGColor(gray: 0, alpha: 1), in: c)
+                    }
+                    if let x, let y, maxAlphaDifference(x, y) > 8 { bad.append(name + " last frame @\(scale)x") }
+                }
+            }
+        }
+        let hollow = MenuMotion.frames(from: MenuIconState(posture: .hollow, badge: nil), to: states[1]).count
+        if hollow != 0 { bad.append("hollow switch has \(hollow) frames") }
+        writeJSON(["pairs": pairs, "framesPerSwitch": MenuMotion.frameCount, "frameIntervalMs": MenuMotion.frameInterval * 1000,
+                   "playMs": Double(MenuMotion.frameCount - 1) * MenuMotion.frameInterval * 1000, "badgePeak": maxScale,
+                   "failures": bad], "menu-switch.json")
+        if !bad.isEmpty { failures.append("Menu switch frames: " + bad.prefix(5).joined(separator: "; ")) }
+    }
+
+    /// Largest difference of the alpha bytes of two images of the same size (255 when the sizes differ).
+    static func maxAlphaDifference(_ a: CGImage, _ b: CGImage) -> Int {
+        guard a.width == b.width, a.height == b.height,
+              let da = a.dataProvider?.data, let db = b.dataProvider?.data,
+              let pa = CFDataGetBytePtr(da), let pb = CFDataGetBytePtr(db) else { return 255 }
+        let n = min(CFDataGetLength(da), CFDataGetLength(db))
+        var worst = 0
+        var i = 3
+        while i < n {
+            worst = max(worst, abs(Int(pa[i]) - Int(pb[i])))
+            i += 4
+        }
+        return worst
+    }
+
     // MARK: Menu bar mock-up
 
     private static func menubarMock(_ style: GlyphStyle) {
@@ -753,6 +952,10 @@ enum DogGallery {
             FileHandle.standardError.write(Data("--dog-gallery needs an output directory.\n".utf8))
             exit(2)
         }
+#if UITEST
+        // The dog animation gates (scripts/ci_acceptance.py, I2 block) run only in the UITEST build.
+        if args.contains("--dog-checks") { UITestDogChecks.run(outDir: URL(fileURLWithPath: path, isDirectory: true)) }
+#endif
         if let error = render(to: URL(fileURLWithPath: path, isDirectory: true)) {
             FileHandle.standardError.write(Data((error + "\n").utf8))
             exit(1)

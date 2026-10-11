@@ -855,6 +855,18 @@ I2 修订（第 3 轮）：警告角标（红级）为 9 × 9 pt 实心圆盘，
 | 节流 | 同一个健康项 5 分钟内最多播放 1 次。屏幕锁定或显示器睡眠时不播放，直接切换 |
 | Reduce Motion | 不播放，直接切换到目标帧 |
 
+I2 修订（第二阶段）：实现细节如下。
+
+| 项 | 值 |
+|---|---|
+| 帧数与时长 | 8 帧，间隔 75 ms。第 1 帧在状态变化时立即显示，第 8 帧在 525 ms 时显示，之后定时器作废 |
+| 定时器 | 每次播放创建 1 个 `Timer`（加入主运行循环的 `.common` 模式），最后一帧后 `invalidate`。播放之间没有定时器。播放中又有变化时，先作废旧定时器，再从旧目标态开始新的切换 |
+| 头像插值 | `MenuMotion.morph`：轮廓与五官逐点插值（耳角与头部倾斜），插值系数为 smoothstep。正常头像的轮廓有 20 段曲线，关注与警告有 22 段，所以先把正常头像下巴的 2 段（第 8 段与镜像第 11 段）在 t = 0.5 处等分，形状不变。喘气的嘴与舌头从上沿按系数伸长（舌长） |
+| 角标 | 新角标：缩放 0 → 1.2（62.5% 时，缓出）→ 1，以角标框中心为原点。消失的角标反向播放。同一项从黄变红时，警告圆盘弹出 |
+| 帧来源 | 同一个 `MenuIconRenderer`。前 7 帧是 1x 与 2x 位图，切换首次出现时生成，最多缓存 8 种切换。第 8 帧是目标态的静态缓存图 |
+| 节流键 | 新角标的健康项。降级时取消失角标的健康项。5 分钟内同一项不再播放 |
+| 直接切换 | 无前一状态、任一侧为空心（统计中或过期）、Reduce Motion、屏幕锁定（`CGSSessionScreenIsLocked`）、主显示器睡眠（`CGDisplayIsAsleep`）、图标窗口不可见（`occlusionState` 不含 `.visible`）、节流中 |
+
 ### 3.6 无障碍文字与提示文字
 
 `button.toolTip` 与无障碍标签使用同一段文字。文字按问题排序列出问题项，正常项放在最后，正常项按固定优先级。台式机没有电池，不列耗电。
@@ -1035,6 +1047,8 @@ f = f_lo + (f_hi − f_lo) × clamp((s − 进入值) / (上一档进入值 − 
 
 - 走、小跑、冲刺之间切换时，所有骨架参数在 0.35 秒内用 smoothstep 插值。腿的相位偏移在圆周上插值。
 - 趴与走之间切换时，播放 0.6 秒的起身或趴下过渡。
+- I2 修订（第二阶段）：趴与站的身体部件不同，走与小跑的身体和头部部件也不同，姿态插值无法改变部件。因此这两类切换在插值期间做部件交叉淡变：两套部件用同一个插值后的姿态绘制，旧部件在前半段保持不透明、后半段淡出，新部件在前半段淡入并画在上面，比熊不会变透明。小跑与冲刺之间、站与走之间部件相同，不淡变。`DogMotor.frame(dt:input:)` 返回 `DogFrame`（步态、姿态、淡变来源与系数）。
+- I2 修订（第二阶段）：腿的自然速度上限 `DogGaitRules.maxLegRate` = 1100°/秒，约为稳态冲刺峰值（40° × 2π × 3.6 Hz = 905°/秒）的 1.2 倍。任何帧、任何切换中，腿角变化除以帧间隔都不得超过该值。Core 测试用 5 种 CPU 波形与不均匀帧间隔（1/60 至 0.1 秒）检查，实测最大 897°/秒。
 
 ### 4.6 帧时序与成本预算
 
@@ -1048,6 +1062,13 @@ f = f_lo + (f_hi − f_lo) × clamp((s − 进入值) / (上一档进入值 − 
 | 内存 | 部件路径缓存 < 50 KB |
 
 如果真机测得单帧超过 0.4 ms，按备选方案处理：预渲染每个步态 12 帧的位图条，以 12 fps 播放（见 [10.3](#103-风险与备选)）。
+
+I2 修订（第二阶段）：
+
+- `DogView` 把马达放在 `@State` 持有的引用对象 `DogDriver` 里。输入变化不重建马达，步态、相位与平滑值连续。
+- 每帧的 dt 是本帧与上一帧时间线日期之差，限制在 0 至 0.1 秒（`DogGaitRules.maxFrameStep`）。同一日期重复绘制时不推进马达。
+- 状态卡关闭时，`NSPopover` 释放内容视图，`DogView` 与 `DogDriver` 一起释放，没有帧回调。
+- 帧成本的 CI 测量见 [9.2](#92-ci-回归门禁新增项) 的 DA 项（CI 虚拟机只作回归参照，0.4 ms 是真机目标）。
 
 ### 4.7 Reduce Motion 降级
 
@@ -1071,7 +1092,9 @@ f = f_lo + (f_hi − f_lo) × clamp((s − 进入值) / (上一档进入值 − 
 | 步态 A、B 帧（I2 修订（第 2 轮）） | 走 A（φ = π）、走 B（φ = 3π/2）、小跑 A（φ = 0）、小跑 B（φ = 3π/2）。与 φ = π/2 的关键帧一起，展示一个步幅内的外轮廓变化 | 104 × 78 pt 与 72 × 54 pt |
 | 叠加姿态 | ~~驮包~~、关注、灰化各 1 帧。I2 修订（第 3 轮）：驮包改为“内存红”（走姿加红色内存字形气泡，`memory-red`） | 104 × 78 pt |
 | 状态卡度量（I2 修订（第 3 轮）） | `card-metrics.json`：72 × 54 下站、走、小跑腿部区域（第 38 至 49 行像素）的两两异或比例（门槛 0.30），抬腿高度（门槛 6 px），身体起伏（门槛 2 px），气泡直径（门槛 14 px），气泡与尾圆到毛的最小空隙（门槛 2 px）。任一项不达标时图册返回错误 | 72 × 54 pt |
-| 步态序列 | 走、小跑、冲刺各 8 帧（φ 每 45° 一帧）。G1 通过后才生成 | 104 × 78 pt |
+| 步态序列 | 走、小跑、冲刺各 8 帧（φ 每 45° 一帧）。G1 通过后才生成。I2 修订（第二阶段）：已生成，单图为 `card/seq-<步态>-<帧>-104-<浅深>@2x.png`，联系表 `sheet-seq.png`（104 pt 浅色与深色、72 pt 浅色） | 104 × 78 pt |
+| 马达时间线（I2 修订（第二阶段）） | `sheet-timeline.png`：马达以 24 fps 运行，CPU 从 5% 跳到 95%，逐帧画出趴到走（0.6 秒淡变）与走到小跑（0.35 秒淡变），以及新问题的气泡弹出 | 104 × 78 pt |
+| 菜单栏切换（I2 修订（第二阶段）） | `sheet-menu-switch.png`：6 种切换各 1 个起始态加 8 帧，浅色 2 倍矢量、1x 像素与深色 2 倍矢量。`menu-switch.json`：全部 110 种非空心切换各 8 帧，末帧与目标静态图的 1x、2x 像素一致 | 24 × 18 pt |
 
 图册同时输出 `manifest.json`，列出每张图的文件名与内容哈希。CI 用它检查“不同姿态的图像哈希不同”。
 
@@ -1117,7 +1140,7 @@ f = f_lo + (f_hi − f_lo) × clamp((s − 进入值) / (上一档进入值 − 
 | 曲线新点 | 每 2 秒或 30 秒 | 横轴域平移，新线段滑入 | 0.25 秒 `easeOut` | 直接出现 |
 | 最新点光圈 | 新点到达 | 光圈 1.6 倍缩到 1 倍并淡出，1 次 | 0.4 秒 | 不画 |
 | 灯 | 等级变化 | 颜色过渡加 1 次缩放 1→1.25→1 | 颜色 0.3 秒，缩放 `spring(0.3, 0.6)` | 只换颜色 |
-| 关注气泡 | 问题出现或状态卡打开 | 弹出 1 次 | 缩放 0.6→1，`spring(0.40, 0.78)` | 直接出现 |
+| 关注气泡 | 问题出现或状态卡打开 | 弹出 1 次 | 缩放 0.6→1，`spring(0.40, 0.78)`。I2 修订（第二阶段）：由 `DogMotor.pop(_:)` 按该弹簧的解析解计算，过冲约 1%，1.2 秒后固定为 1。气泡消失后再出现时重新弹出 | 直接出现 |
 | 比熊 | 状态卡打开期间 | 连续动画 | 见 [4](#4-比熊规格) | 静态姿态 |
 | 主按钮 | 按下 | 缩放 0.97 | 0.1 秒 | 不缩放 |
 | 主按钮 | 复制成功 | 文字淡变为“✓ 已复制”，勾号描线 | 淡变 0.15 秒，描线 0.25 秒，1.5 秒后淡回 | 文字直接替换，1.5 秒后替换回 |
@@ -2222,6 +2245,26 @@ struct DogMotor {
     static func staticPose(gait: DogGait, input: DogInput, phase: Double = .pi / 2) -> DogPose
     /// I2 修订：固定输入下的静态步态（图册与首帧）。
     static func staticGait(for input: DogInput) -> DogGait
+    /// I2 修订（第二阶段）：推进一帧，返回步态、姿态与部件交叉淡变（见 4.5 第 5 步）。step 等于 frame(...).pose。
+    mutating func frame(dt: Double, input: DogInput) -> DogFrame
+    /// I2 修订（第二阶段）：气泡弹出曲线，t 为出现后的秒数。
+    static func pop(_ t: Double) -> Double
+}
+
+// I2 修订（第二阶段）：动画帧。fadeFrom 非空时，渲染器先画旧步态的部件，再画新步态的部件。
+struct DogFrame: Equatable { var gait: DogGait; var pose: DogPose; var fadeFrom: DogGait?; var fade: Double }
+// DogGaitRules 增加 maxLegRate = 1100（°/秒）与 maxFrameStep = 0.1（秒）。DogRig 增加 artChanges(_:_:)。
+
+// I2 修订（第二阶段）：菜单栏切换帧（3.5）。
+struct MenuIconFrame: Equatable { var head: [DogPart]; var hollow: Bool; var badge: MenuBadge?; var alarm: Bool; var badgeScale: Double }
+struct MenuMotionConditions: Equatable { var reduceMotion, screenLocked, displayAsleep, iconVisible: Bool }
+enum MenuMotion {
+    static let frameCount = 8, frameInterval = 0.075, throttle: TimeInterval = 300, badgePeak = 1.2
+    static func still(_ s: MenuIconState) -> MenuIconFrame
+    static func frames(from: MenuIconState, to: MenuIconState) -> [MenuIconFrame]   // 空数组表示不播放
+    /// 返回要播放并记录节流的健康项；nil 表示直接切换。
+    static func play(from: MenuIconState?, to: MenuIconState, lastPlayed: [HealthItem: Date], now: Date,
+                     conditions: MenuMotionConditions) -> HealthItem?
 }
 
 // I2 修订：DogRig 输出一帧的部件变换列表，App 只按顺序填充。
@@ -2391,7 +2434,7 @@ PanelHost（MoleMonitor.swift，I3）：唯一设置 NSPopover.contentSize 的�
 | 工程师 | 范围 | 独占文件 |
 |---|---|---|
 | I1 数据层与提示词 | Core、引擎、CLI、电池读取 | `Sources/Core/HealthItems.swift`、`HealthRules.swift`、`TrendBuffer.swift`、`TrendStore.swift`、`AppUsage.swift`、`ProblemOrder.swift`、`PanelLayout.swift`、`Prompt.swift`、`CurrentReadings.swift`、`PreviewScenario.swift`、`StatusFile.swift`（新增字段）、`Sources/App/Engine.swift`、`SystemSampler.swift`、`ProcessSampler.swift`、`Clipboard.swift`、`Notifier.swift`、`Sources/Sensors.swift`（电池与电源读取）、`Sources/cli/main.swift`、`Tests/CoreTests/main.swift`、`PromptTests.swift`、`TrendTests.swift`、`HealthRuleTests.swift`、`PowerTests.swift`、`LayoutTests.swift`、`Tests/CoreTests/Golden/*.txt`、`scripts/test_cli.py`、`scripts/test_core.py` |
-| I2 比熊与菜单栏图标 | 比熊与图标的几何、美术资产、动画、图册 | `Sources/Core/DogRig.swift`、`DogArt.swift`、`MenuIconModel.swift`、`Sources/App/DogView.swift`、`DogShapes.swift`、`GlyphPaths.swift`、`DogGallery.swift`、`StatusIcon.swift`、`Sources/App/UITestIconChecks.swift`、`Tests/CoreTests/DogTests.swift` |
+| I2 比熊与菜单栏图标 | 比熊与图标的几何、美术资产、动画、图册 | `Sources/Core/DogRig.swift`、`DogArt.swift`、`MenuIconModel.swift`、`Sources/App/DogView.swift`、`DogShapes.swift`、`GlyphPaths.swift`、`DogGallery.swift`、`StatusIcon.swift`、`Sources/App/UITestIconChecks.swift`、`Tests/CoreTests/DogTests.swift`。I2 修订（第二阶段）：增加 `Sources/App/UITestDogChecks.swift` 与 `scripts/ci_acceptance.py` 末尾的独立块 |
 | I3 状态卡 | 视图、App 入口、界面门禁 | `Sources/App/PanelRoot.swift`、`PanelHero.swift`、`PanelProblem.swift`、`PanelCharts.swift`、`PanelApps.swift`、`PanelMore.swift`、`PanelFooter.swift`、`PanelTokens.swift`、`Sources/MoleMonitor.swift`、`Sources/App/UITestHarness.swift`、`scripts/ci_acceptance.py`、`scripts/build.py`。删除 `Sources/App/Panel.swift` |
 | 所有人 | 契约文档 | `docs/DESIGN.md`。修改契约先改本文件，再改代码 |
 
@@ -2501,6 +2544,17 @@ CI 运行在 GitHub Actions 的 macOS 15 虚拟机上。下表的检查加入 `s
 | M16 | 关闭零成本 | 沿用检查 L，并把“只剩 5 分钟 tick”改为“只剩 30 秒 tick”。细段为空 | Q10 |
 | M17 | 发布包无测试代码 | 沿用现有检查。`DogGallery` 属于发布功能，不算测试代码 | — |
 | M18 | 评审包 | CI 把图册、截图矩阵与提示词黄金文件作为构建产物上传，供 [9.4](#94-内部评审门) 的评审门使用 | — |
+
+I2 修订（第二阶段）：比熊动画门禁在 `scripts/ci_acceptance.py` 末尾的独立块（以 `# --- dog animation checks (I2)` 开头）中运行。它调用 UITEST 变体的 `--dog-gallery <目录> --dog-checks`（`Sources/App/UITestDogChecks.swift`），读取 `dog-report.json`。该块在原有汇总之后运行，失败时自行以退出码 1 结束。它替代 M7 中比熊部分、M9 与 M15 的比熊相关判据。
+
+| 编号 | 名称 | 检查内容 |
+|---|---|---|
+| DA | 打开时帧数 | 气泡中的小跑比熊在弹出窗口中显示，3 秒内的动画帧数在 60 至 80 之间。同时记录每帧马达与绘制的线程 CPU 时间、进程 CPU |
+| DB | 关闭后零帧 | 关闭弹出窗口并释放内容后，3 秒内帧回调数为 0 |
+| DC | 步态切换 | CPU 从 5% 跳到 95%，6 秒内至少经过趴、走、小跑。每帧腿角变化除以帧间隔 ≤ `maxLegRate`（1100°/秒） |
+| DD | 菜单栏切换 | 正常到关注、关注到警告各播放 1 次：帧数 ≤ 8，首帧到末帧 ≤ 600 ms，结束后控制器的定时器数回到播放前的值。5 分钟内同一项再变化时直接切换 |
+| DE | Reduce Motion | 强制开启后，状态卡 3 秒内动画帧为 0，菜单栏切换只直接换图，定时器为 0 |
+| DF | 发布包无比熊测试代码 | 发布二进制不含 `DogFrameProbe`、`UITestDogChecks`、`--dog-checks`。UITEST 变体含 `DogFrameProbe`（正对照） |
 
 ### 9.3 最终验收清单（真机，用户逐项确认）
 

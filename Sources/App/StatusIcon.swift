@@ -173,19 +173,47 @@ enum IconText {
 }
 
 /// The redesigned menu bar icon (docs/DESIGN.md 3, 8.3). I3 owns the status item and calls `apply` on each change.
-/// Stage 1: one static template NSImage per state (Bichon head from `DogArt.menuHead`, badge from `GlyphPaths`),
-/// cached, assigned only when the state or the text changes. No timer. Stage 2 adds the one-shot switch animation.
-/// The stage 1 `StatusIcon` and `StatusIconCache` above stay until I3 moves the status item to this controller.
+/// Still states: one template NSImage per state (Bichon head from `DogArt.menuHead`, badge from `GlyphPaths`), cached,
+/// assigned only when the state changes. Stage 2 (I2): a change of posture or badge plays one switch animation
+/// (DESIGN.md 3.5): at most 8 frames, 75 ms apart (525 ms), from one Timer made for this play and invalidated after
+/// the last frame. The frames come from MenuMotion (DogRig) and the same MenuIconRenderer, made once per switch and
+/// cached. Reduce Motion, a locked screen, a sleeping display, a hidden icon or the 5 minute throttle switch directly.
+/// No timer exists between plays; the icon never moves on its own.
 @MainActor
 final class StatusIconController {
     private weak var statusItem: NSStatusItem?
+    /// A button to draw into when there is no status item (the dog checks). The status item button wins.
+    weak var fallbackButton: NSButton?
     private var images = [MenuIconState: NSImage]()
+    private var transitions = [Transition: [NSImage]]()
+    private var transitionOrder = [Transition]()
     private var current: (state: MenuIconState, text: String)?
+    private var lastPlayed = [HealthItem: Date]()
+    private var timer: Timer?
+    private var playing = [NSImage]()
+    private var playIndex = 0
+
+    /// Replaces the motion conditions read at the moment of a switch (the dog checks). Nil reads the system.
+    var conditionsOverride: (() -> MenuMotionConditions)?
+    var clock: () -> Date = { Date() }
+    /// Called after each image the controller puts on the button: frame number (1 to 8) or 0 for a direct switch.
+    var onImage: ((Int) -> Void)?
+
+    private struct Transition: Hashable {
+        var from: MenuIconState
+        var to: MenuIconState
+    }
 
     /// `statusItem` is nil in a headless run. Not listed in DESIGN.md 8.3 at skeleton time.
     init(statusItem: NSStatusItem?) {
         self.statusItem = statusItem
     }
+
+    /// Timers the controller owns now: 1 while a switch plays, else 0.
+    var timerCount: Int { timer == nil ? 0 : 1 }
+    var isPlaying: Bool { timer != nil }
+
+    private var button: NSButton? { statusItem?.button ?? fallbackButton }
 
     /// At most 16 states exist (3 postures x 5 badges + hollow), so the cache stays small.
     func image(for state: MenuIconState) -> NSImage {
@@ -197,11 +225,88 @@ final class StatusIconController {
 
     func apply(_ state: MenuIconState, text: String) {
         if let current, current.state == state, current.text == text { return }
+        let previous = current?.state
         current = (state, text)
-        guard let button = statusItem?.button else { return }
-        button.image = image(for: state)
+        guard let button = self.button else { return }
         button.imagePosition = .imageOnly
         button.toolTip = text
         button.setAccessibilityLabel(text)
+        if previous == state, button.image != nil { return }
+        show(from: previous, to: state, on: button)
+    }
+
+    private func show(from previous: MenuIconState?, to state: MenuIconState, on button: NSButton) {
+        // A switch during a play starts from the state the old play was heading to.
+        stopPlay()
+        let now = clock()
+        guard let item = MenuMotion.play(from: previous, to: state, lastPlayed: lastPlayed, now: now,
+                                         conditions: conditionsOverride?() ?? currentConditions()),
+              let previous else {
+            button.image = image(for: state)
+            onImage?(0)
+            return
+        }
+        lastPlayed[item] = now
+        playing = frames(from: previous, to: state)
+        playIndex = 0
+        button.image = playing[0]
+        onImage?(1)
+        let t = Timer(timeInterval: MenuMotion.frameInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    private func tick() {
+        playIndex += 1
+        guard playIndex < playing.count, let button = self.button else {
+            stopPlay()
+            return
+        }
+        button.image = playing[playIndex]
+        onImage?(playIndex + 1)
+        if playIndex == playing.count - 1 { stopPlay() }
+    }
+
+    private func stopPlay() {
+        timer?.invalidate()
+        timer = nil
+        playing = []
+    }
+
+    /// The images of one switch. The last one is the cached still image of the target. At most 8 switches are kept.
+    private func frames(from a: MenuIconState, to b: MenuIconState) -> [NSImage] {
+        let key = Transition(from: a, to: b)
+        if let hit = transitions[key] { return hit }
+        var made = MenuMotion.frames(from: a, to: b).dropLast().map { MenuIconRenderer.image($0, cached: false) }
+        made.append(image(for: b))
+        transitions[key] = made
+        transitionOrder.append(key)
+        if transitionOrder.count > 8 { transitions[transitionOrder.removeFirst()] = nil }
+        return made
+    }
+
+    /// The system state that forbids motion: Reduce Motion, a locked screen, a sleeping main display, an icon that
+    /// is not on screen.
+    static func systemConditions() -> MenuMotionConditions {
+        var c = MenuMotionConditions()
+        c.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if let session = CGSessionCopyCurrentDictionary() as? [String: Any] {
+            c.screenLocked = (session["CGSSessionScreenIsLocked"] as? Bool) ?? false
+        }
+        c.displayAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        return c
+    }
+
+    /// The conditions of this controller's button (adds the visibility of the icon).
+    func currentConditions() -> MenuMotionConditions {
+        var c = StatusIconController.systemConditions()
+        if let window = button?.window {
+            c.iconVisible = window.isVisible && window.occlusionState.contains(.visible)
+        } else {
+            c.iconVisible = false
+        }
+        return c
     }
 }

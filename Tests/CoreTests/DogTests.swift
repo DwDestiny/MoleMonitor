@@ -520,6 +520,146 @@ func runDogTests() {
     expect(worstDot >= IconMetrics.bubbleGapPx, "the bubble tail dot keeps >= 2 px off the fur at 72 pt (\(String(format: "%.2f", worstDot)))")
     expect(worstGap >= IconMetrics.bubbleGapPx, "the bubble keeps >= 2 px off the fur at 72 pt (\(String(format: "%.2f", worstGap)))")
 
+    section("Dog motion (stage 2)")
+    // Art crossfade only where the body or the head art changes.
+    expect(DogRig.artChanges(.lie, .walk) && DogRig.artChanges(.walk, .trot) && DogRig.artChanges(.stand, .sprint),
+           "lie <-> walk and walk <-> trot change the art")
+    expect(!DogRig.artChanges(.trot, .sprint) && !DogRig.artChanges(.stand, .walk), "trot <-> sprint and stand <-> walk keep the art")
+    var mf = DogMotor(initialCPU: 5)
+    var fades = [(Double, DogGait, DogGait, Double)]()
+    var tf = 0.0
+    while tf < 6 {
+        tf += 1.0 / 24
+        let f = mf.frame(dt: 1.0 / 24, input: dogInput(cpu: 95))
+        if let from = f.fadeFrom { fades.append((tf, from, f.gait, f.fade)) }
+    }
+    let riseFades = fades.filter { $0.1 == .lie && $0.2 == .walk }
+    let trotFades = fades.filter { $0.1 == .walk && $0.2 == .trot }
+    expect(riseFades.count >= 13 && riseFades.count <= 15, "lie -> walk crossfades for 0.6 s (\(riseFades.count) frames at 24 fps)")
+    expect(trotFades.count >= 7 && trotFades.count <= 9, "walk -> trot crossfades for 0.35 s (\(trotFades.count) frames)")
+    expect(zip(riseFades, riseFades.dropFirst()).allSatisfy { $1.3 >= $0.3 }, "the crossfade only moves forward")
+    if let first = riseFades.first { expect(abs(first.0 - 0.5) < 0.1, "the rise starts at 0.46 s (\(String(format: "%.2f", first.0)) s)") }
+
+    // Leg speed across switches stays under the natural limit, for steady 24 fps and for uneven frames up to 0.1 s.
+    var worstRate = 0.0
+    let patterns: [(String, (Double) -> Double)] = [
+        ("step up", { _ in 95 }), ("step down", { $0 < 0.05 ? 95 : 3 }),
+        ("square 1.5 s", { Int($0 / 1.5) % 2 == 0 ? 100 : 0 }), ("ramp", { min(100, $0 * 4) }),
+        ("square 7 s", { Int($0 / 7) % 2 == 0 ? 90 : 12 })]
+    for (_, cpuAt) in patterns {
+        for uneven in [false, true] {
+            var m = DogMotor(initialCPU: cpuAt(0))
+            var legs = m.frame(dt: 0, input: dogInput(cpu: cpuAt(0))).pose.legAngle
+            var t = 0.0, n = 0
+            while t < 40 {
+                n += 1
+                let dt = uneven ? [1.0 / 24, 1.0 / 60, 0.1, 0.05, 1.0 / 30][n % 5] : 1.0 / 24
+                t += dt
+                let pose = m.frame(dt: dt, input: dogInput(cpu: cpuAt(t))).pose
+                for i in 0..<4 { worstRate = max(worstRate, abs(pose.legAngle[i] - legs[i]) / dt) }
+                legs = pose.legAngle
+            }
+        }
+    }
+    print("  worst leg speed over 5 CPU patterns: \(Int(worstRate)) deg/s (limit \(Int(DogGaitRules.maxLegRate)))")
+    expect(worstRate <= DogGaitRules.maxLegRate, "no leg moves faster than \(Int(DogGaitRules.maxLegRate)) deg/s (worst \(Int(worstRate)))")
+    let sprintPeak = 40 * 2 * Double.pi * 3.6
+    expect(DogGaitRules.maxLegRate >= 1.2 * sprintPeak && DogGaitRules.maxLegRate <= 1.25 * sprintPeak, "the limit is about 1.2 x the steady sprint peak (905 deg/s)")
+
+    // Bubble pop: 0.6 -> 1 with the spring of DESIGN.md 5.3, about 1 % overshoot, then still.
+    expect(abs(DogMotor.pop(0) - 0.6) < 1e-9 && DogMotor.pop(1.2) == 1 && DogMotor.pop(5) == 1, "pop starts at 0.6 and ends at 1")
+    let popPeak = stride(from: 0.0, to: 1.2, by: 0.005).map { DogMotor.pop($0) }.max() ?? 0
+    expect(popPeak > 1 && popPeak < 1.02, "pop overshoots by less than 2 % (peak \(String(format: "%.4f", popPeak)))")
+    expect(abs(DogMotor.pop(1.19) - 1) < 0.002, "pop has settled before it snaps to 1")
+    var mb = DogMotor(initialCPU: 25)
+    let attention = DogInput(cpuPercent: 25, thermal: .nominal, memoryLevel: .green, worstProblem: .disk, worstLevel: .yellow, isStatic: false)
+    let b0 = mb.frame(dt: 1.0 / 24, input: attention).pose.bubble
+    var b1 = 0.0
+    for _ in 0..<40 { b1 = mb.frame(dt: 1.0 / 24, input: attention).pose.bubble }
+    let gone = mb.frame(dt: 1.0 / 24, input: dogInput(cpu: 25)).pose.bubble
+    let again = mb.frame(dt: 1.0 / 24, input: attention).pose.bubble
+    expect(abs(b0 - 0.6) < 1e-9 && b1 == 1, "the bubble pops once when it appears (\(b0) -> \(b1))")
+    expect(gone == 0 && abs(again - 0.6) < 1e-9, "the bubble leaves at once and pops again when it comes back")
+    let calm = DogMotor.staticPose(gait: .walk, input: attention)
+    expect(calm.bubble == 1, "the static frame (Reduce Motion) shows the bubble at once, no pop")
+    var ms = DogMotor(initialCPU: 25)
+    let staticIn = DogInput(cpuPercent: 25, thermal: .nominal, memoryLevel: .green, worstProblem: nil, worstLevel: .green, isStatic: true)
+    let sf = ms.frame(dt: 0.04, input: staticIn)
+    expect(sf.gait == .stand && sf.pose.opacity == 0.45 && sf.fadeFrom == nil, "collecting or stale: the gray standing frame")
+
+    section("Menu bar switch frames (stage 2)")
+    let relaxed = MenuIconState(posture: .relaxed, badge: nil)
+    let raisedCpu = MenuIconState(posture: .raised, badge: MenuBadge(item: .cpu))
+    let pantCpu = MenuIconState(posture: .pant, badge: MenuBadge(item: .cpu))
+    let pantMem = MenuIconState(posture: .pant, badge: MenuBadge(item: .memory))
+    let hollowState = MenuIconState(posture: .hollow, badge: nil)
+    expect(MenuMotion.frameCount <= 8 && Double(MenuMotion.frameCount - 1) * MenuMotion.frameInterval <= 0.6 + 1e-9,
+           "at most 8 frames in at most 600 ms")
+    let normRelaxed = MenuMotion.normalized(DogArt.menuRelaxed)
+    let cubicCount: ([DogPathOp]) -> Int = { $0.filter { if case .cubic = $0 { return true }; return false }.count }
+    expect(cubicCount(normRelaxed[0].ops) == 22 && cubicCount(DogArt.menuRaised[0].ops) == 22 && cubicCount(DogArt.menuPant[0].ops) == 22,
+           "the three head silhouettes line up at 22 edges")
+    let before = dogCoverage(dogPolygons(DogArt.menuRelaxed[0].ops), w: 24, h: 18)
+    let after = dogCoverage(dogPolygons(normRelaxed[0].ops), w: 24, h: 18)
+    var splitDiff = 0.0
+    for y in 0..<18 { for x in 0..<24 { splitDiff = max(splitDiff, abs(before[y][x] - after[y][x])) } }
+    expect(splitDiff < 0.02, "splitting the relaxed edges keeps the shape (max alpha change \(String(format: "%.3f", splitDiff)))")
+    var allEight = true, lastMatches = true, pairs = 0
+    let menuStates = [relaxed] + [MenuPosture.raised, .pant].flatMap { p in HealthItem.allCases.map { MenuIconState(posture: p, badge: MenuBadge(item: $0)) } }
+    for a in menuStates {
+        for b in menuStates where a != b {
+            pairs += 1
+            let frames = MenuMotion.frames(from: a, to: b)
+            if frames.count != 8 { allEight = false; continue }
+            let last = frames[7], still = MenuMotion.still(b)
+            let sameHead = last.head.count == still.head.count
+                && zip(last.head, MenuMotion.normalized(still.head)).allSatisfy { p, q in
+                    p.name == q.name && p.ops.count == q.ops.count && zip(p.ops, q.ops).allSatisfy { dogOpNear($0, $1) }
+                }
+            if !(sameHead && last.badge == still.badge && last.alarm == still.alarm && last.badgeScale == 1) { lastMatches = false }
+        }
+    }
+    expect(allEight, "every switch between \(pairs) state pairs has 8 frames")
+    expect(lastMatches, "the last frame of every switch is the still target")
+    expect(MenuMotion.frames(from: hollowState, to: relaxed).isEmpty && MenuMotion.frames(from: raisedCpu, to: hollowState).isEmpty
+           && MenuMotion.frames(from: relaxed, to: relaxed).isEmpty, "hollow and unchanged states have no frames")
+    let up = MenuMotion.frames(from: relaxed, to: raisedCpu).map { $0.badgeScale }
+    expect(abs((up.max() ?? 0) - 1.2) < 1e-9 && up.last == 1 && up[0] < 0.5, "a new badge pops 0 -> 1.2 -> 1 (\(up.map { String(format: "%.2f", $0) }))")
+    let down = MenuMotion.frames(from: pantMem, to: relaxed)
+    expect(down.last?.badge == nil && down[0].badge == MenuBadge(item: .memory) && down[0].alarm && abs((down.map { $0.badgeScale }.max() ?? 0) - 1.2) < 1e-9,
+           "a badge that goes away plays the pop backward")
+    let redSame = MenuMotion.frames(from: raisedCpu, to: pantCpu)
+    expect(redSame.allSatisfy { $0.alarm } && redSame[0].badgeScale < 0.5, "yellow -> red of the same item pops the alarm disc")
+    let toPant = MenuMotion.frames(from: relaxed, to: pantMem)
+    let tongueHeights = toPant.map { f -> Double in
+        guard let t = f.head.first(where: { $0.name == "tongue" }) else { return 0 }
+        let ys = dogPolygons(t.ops).flatMap { $0.map { $0.1 } }
+        return (ys.max() ?? 0) - (ys.min() ?? 0)
+    }
+    expect(zip(tongueHeights, tongueHeights.dropFirst()).allSatisfy { $1 >= $0 - 1e-9 } && (tongueHeights.last ?? 0) > 2,
+           "the tongue grows frame by frame (\(tongueHeights.map { String(format: "%.1f", $0) }))")
+    let earX = MenuMotion.frames(from: relaxed, to: raisedCpu).map { f -> Double in
+        dogPolygons(f.head[0].ops).flatMap { $0.map { $0.0 } }.max() ?? 0
+    }
+    expect(zip(earX, earX.dropFirst()).allSatisfy { $1 >= $0 - 1e-6 } && (earX.last ?? 0) <= DogArt.menuRaisedWidth + 1e-9,
+           "the ear tip moves out step by step and stays inside x 16 (\(earX.map { String(format: "%.1f", $0) }))")
+    // Who plays and who switches directly.
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    let free = MenuMotionConditions()
+    expect(MenuMotion.play(from: relaxed, to: raisedCpu, lastPlayed: [:], now: t0, conditions: free) == .cpu, "a change plays for its item")
+    expect(MenuMotion.play(from: nil, to: raisedCpu, lastPlayed: [:], now: t0, conditions: free) == nil, "the first image switches directly")
+    expect(MenuMotion.play(from: raisedCpu, to: relaxed, lastPlayed: [:], now: t0, conditions: free) == .cpu, "a downgrade plays for the item that goes away")
+    expect(MenuMotion.play(from: relaxed, to: raisedCpu, lastPlayed: [.cpu: t0.addingTimeInterval(-299)], now: t0, conditions: free) == nil,
+           "the same item plays at most once in 5 minutes")
+    expect(MenuMotion.play(from: relaxed, to: raisedCpu, lastPlayed: [.cpu: t0.addingTimeInterval(-300)], now: t0, conditions: free) == .cpu,
+           "after 5 minutes it plays again")
+    expect(MenuMotion.play(from: relaxed, to: pantMem, lastPlayed: [.cpu: t0], now: t0, conditions: free) == .memory, "another item is not throttled")
+    for (name, c) in [("Reduce Motion", MenuMotionConditions(reduceMotion: true)), ("locked screen", MenuMotionConditions(screenLocked: true)),
+                      ("sleeping display", MenuMotionConditions(displayAsleep: true)), ("hidden icon", MenuMotionConditions(iconVisible: false))] {
+        expect(MenuMotion.play(from: relaxed, to: raisedCpu, lastPlayed: [:], now: t0, conditions: c) == nil, "\(name): direct switch")
+    }
+    expect(MenuMotion.play(from: hollowState, to: relaxed, lastPlayed: [:], now: t0, conditions: free) == nil, "collecting -> normal: direct switch")
+
     section("Dog affine")
     let r = DogAffine.rotate(90, about: (0, 0)).apply(1, 0)
     expect(abs(r.x) < 1e-9 && abs(r.y - 1) < 1e-9, "positive rotation turns clockwise on a y-down screen")
@@ -558,4 +698,16 @@ func runDogTests() {
     expect(MenuIconModel.text(green, dataState: .stale(now), now: now).hasPrefix("MoleMonitor：数据已过期，最后数据 "), "text: stale")
     expect(MenuIconModel.duration(30) == "不到 1 分" && MenuIconModel.duration(25 * 60) == "25 分", "duration: minutes")
     expect(MenuIconModel.duration(26 * 3600) == "1 天 2 小时" && MenuIconModel.duration(7200) == "2 小时", "duration: hours and days")
+}
+
+/// Two path ops of the same kind with coordinates within 1e-9.
+func dogOpNear(_ a: DogPathOp, _ b: DogPathOp) -> Bool {
+    func n(_ x: Double, _ y: Double) -> Bool { abs(x - y) < 1e-9 }
+    switch (a, b) {
+    case let (.move(x0, y0), .move(x1, y1)), let (.line(x0, y0), .line(x1, y1)): return n(x0, x1) && n(y0, y1)
+    case let (.cubic(a0, b0, c0, d0, e0, f0), .cubic(a1, b1, c1, d1, e1, f1)):
+        return n(a0, a1) && n(b0, b1) && n(c0, c1) && n(d0, d1) && n(e0, e1) && n(f0, f1)
+    case (.close, .close): return true
+    default: return false
+    }
 }

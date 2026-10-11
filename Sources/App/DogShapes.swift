@@ -3,6 +3,8 @@
 // Input: DogArt path data, DogRig layers, a menu icon state (docs/DESIGN.md 3, 4.2, 4.6).
 // Output: Core Graphics drawing of the card Bichon and of the menu bar template icon.
 // Pos: The one renderer for DogView, StatusIconController and DogGallery. Builds each CGPath once and caches it. Owner I2.
+// Stage 2: `drawFrame` draws an animated DogView frame (with the art crossfade of a gait switch), and the menu renderer
+// draws MenuIconFrame values, so the switch animation and the still icon share one drawing path.
 //
 // All drawing here uses y-down coordinates: the caller flips the context (or uses a flipped NSImage).
 
@@ -129,6 +131,28 @@ enum DogRenderer {
         alpha >= 1 ? c : (c.copy(alpha: c.alpha * CGFloat(max(0, alpha))) ?? c)
     }
 
+    /// Draws one animated frame of DogView into `rect` (y-down context). During a gait switch that changes the art,
+    /// the old art is drawn first and fades out in the second half, the new art fades in on top in the first half,
+    /// so the dog never turns see-through. Both use the same blended pose.
+    static func drawFrame(_ frame: DogFrame, input: DogInput, dark: Bool, in rect: CGRect, ctx: CGContext) {
+        let glyph = (frame.pose.bubble > 0) ? input.worstProblem.map { DogArt.badge($0) } : nil
+        let palette = DogPalette(dark: dark)
+        ctx.saveGState()
+        ctx.translateBy(x: rect.minX, y: rect.minY)
+        ctx.scaleBy(x: rect.width / CGFloat(DogArt.designSize.w), y: rect.height / CGFloat(DogArt.designSize.h))
+        if let old = frame.fadeFrom {
+            let k = min(max(frame.fade, 0), 1)
+            draw(DogRig.layers(gait: old, pose: frame.pose, glyph: glyph), opacity: frame.pose.opacity * min(1, 2 * (1 - k)),
+                 palette: palette, level: input.worstLevel, in: ctx)
+            draw(DogRig.layers(gait: frame.gait, pose: frame.pose, glyph: glyph), opacity: frame.pose.opacity * min(1, 2 * k),
+                 palette: palette, level: input.worstLevel, in: ctx)
+        } else {
+            draw(DogRig.layers(gait: frame.gait, pose: frame.pose, glyph: glyph), opacity: frame.pose.opacity,
+                 palette: palette, level: input.worstLevel, in: ctx)
+        }
+        ctx.restoreGState()
+    }
+
     /// Draws the static frame of an input into `rect` (y-down context).
     /// `phase` picks a stride frame; the default pi / 2 is the key frame (the gallery also draws frames A and B).
     static func drawStatic(_ input: DogInput, gait: DogGait? = nil, phase: Double = Double.pi / 2, dark: Bool,
@@ -159,57 +183,70 @@ enum MenuIconRenderer {
 
     /// Draws the icon at `origin` (top left) in a y-down context, 1 unit = 1 pt. `ink` is the template ink.
     static func draw(_ state: MenuIconState, style: GlyphStyle, ink: CGColor, at origin: CGPoint = .zero, in ctx: CGContext) {
+        draw(MenuMotion.still(state), style: style, ink: ink, at: origin, cached: true, in: ctx)
+    }
+
+    /// Draws one frame (a still state or a frame of the switch animation, DESIGN.md 3.5). `cached` false builds the
+    /// paths of morphed frames without the shared cache, so the cache keeps only the still art.
+    static func draw(_ frame: MenuIconFrame, style: GlyphStyle, ink: CGColor, at origin: CGPoint = .zero,
+                     cached: Bool, in ctx: CGContext) {
+        func path(_ part: DogPart) -> CGPath { cached ? DogPathCache.path(part.ops) : GlyphPaths.cgPath(part.ops) }
         ctx.saveGState()
         ctx.translateBy(x: origin.x, y: origin.y)
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
         ctx.setFillColor(ink)
         ctx.setStrokeColor(ink)
-        let parts = DogArt.menuHead(state.posture)
-        if state.posture == .hollow {
+        let parts = frame.head
+        if frame.hollow {
             // Inner ring of the silhouette: clip to the head, stroke twice the ring width, so the ring lies
             // fully inside the outline and the outer edge stays where the solid icon has it. Then the face, solid.
             for part in parts where part.role == .fur {
-                let path = DogPathCache.path(part.ops)
+                let p = path(part)
                 ctx.saveGState()
-                ctx.addPath(path)
+                ctx.addPath(p)
                 ctx.clip()
                 ctx.setLineWidth(hollowLine * 2)
                 ctx.setLineJoin(.round)
-                ctx.addPath(path)
+                ctx.addPath(p)
                 ctx.strokePath()
                 ctx.restoreGState()
             }
-            for part in parts where part.role == .cutout { fill(DogPathCache.path(part.ops), clear: false, in: ctx) }
+            for part in parts where part.role == .cutout { fill(path(part), clear: false, in: ctx) }
         } else {
             for part in parts {
-                let path = DogPathCache.path(part.ops)
+                let p = path(part)
                 if part.role == .tongue {
                     ctx.saveGState()
                     ctx.setBlendMode(.clear)
                     ctx.setLineWidth(knockout)
                     ctx.setLineJoin(.round)
-                    ctx.addPath(path)
+                    ctx.addPath(p)
                     ctx.strokePath()
                     ctx.restoreGState()
                     // Lighter than the face: the tongue reads as a tongue, not as a beard.
                     ctx.saveGState()
                     ctx.setAlpha(CGFloat(DogArt.menuTongueAlpha))
-                    fill(path, clear: false, in: ctx)
+                    fill(p, clear: false, in: ctx)
                     ctx.restoreGState()
                     continue
                 }
-                fill(path, clear: part.role == .cutout, in: ctx)
+                fill(p, clear: part.role == .cutout, in: ctx)
             }
         }
-        if let badge = state.badge {
-            if state.posture == .pant {
-                let o = DogArt.alarmOrigin
-                ctx.translateBy(x: o.x, y: o.y)
+        if let badge = frame.badge, frame.badgeScale > 0.001 {
+            let side = frame.alarm ? DogArt.alarmSize : DogArt.badgeSize
+            let o = frame.alarm ? DogArt.alarmOrigin : DogArt.menuBadgeOrigin
+            ctx.translateBy(x: o.x, y: o.y)
+            if frame.badgeScale != 1 {
+                let k = CGFloat(frame.badgeScale), c = CGFloat(side / 2)
+                ctx.translateBy(x: c, y: c)
+                ctx.scaleBy(x: k, y: k)
+                ctx.translateBy(x: -c, y: -c)
+            }
+            if frame.alarm {
                 for part in DogArt.alarmDisc { fill(DogPathCache.path(part.ops), clear: false, in: ctx) }
                 fill(GlyphPaths.alarmKnockout(badge.item, style: style), clear: true, in: ctx)
             } else {
-                let o = DogArt.menuBadgeOrigin
-                ctx.translateBy(x: o.x, y: o.y)
                 ctx.addPath(GlyphPaths.badgeYDown(badge.item, style: style))
                 ctx.fillPath()
             }
@@ -228,10 +265,35 @@ enum MenuIconRenderer {
 
     /// A template NSImage of the icon: 24 x 18 pt, vector, drawn again for each backing scale.
     static func image(_ state: MenuIconState, style: GlyphStyle = GlyphPaths.chosen) -> NSImage {
-        let image = NSImage(size: NSSize(width: size.width, height: size.height), flipped: true) { _ in
-            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            MenuIconRenderer.draw(state, style: style, ink: CGColor(gray: 0, alpha: 1), in: ctx)
-            return true
+        image(MenuMotion.still(state), style: style, cached: true)
+    }
+
+    /// A template NSImage of one frame. Frames of the switch animation are bitmaps (1x and 2x reps), made once per
+    /// switch and kept by StatusIconController, so playing them never draws paths again.
+    static func image(_ frame: MenuIconFrame, style: GlyphStyle = GlyphPaths.chosen, cached: Bool) -> NSImage {
+        let pt = NSSize(width: size.width, height: size.height)
+        if cached {
+            let image = NSImage(size: pt, flipped: true) { _ in
+                guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+                MenuIconRenderer.draw(frame, style: style, ink: CGColor(gray: 0, alpha: 1), cached: true, in: ctx)
+                return true
+            }
+            image.isTemplate = true
+            return image
+        }
+        let image = NSImage(size: pt)
+        for scale in [1, 2] {
+            let w = Int(size.width) * scale, h = Int(size.height) * scale
+            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
+            ctx.translateBy(x: 0, y: CGFloat(h))
+            ctx.scaleBy(x: CGFloat(scale), y: -CGFloat(scale))
+            MenuIconRenderer.draw(frame, style: style, ink: CGColor(gray: 0, alpha: 1), cached: false, in: ctx)
+            guard let cg = ctx.makeImage() else { continue }
+            let rep = NSBitmapImageRep(cgImage: cg)
+            rep.size = pt
+            image.addRepresentation(rep)
         }
         image.isTemplate = true
         return image

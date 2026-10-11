@@ -338,3 +338,63 @@ if failures:
     print(f"ACCEPTANCE FAILED: {len(failures)} check(s): " + "; ".join(failures))
     sys.exit(1)
 print("ACCEPTANCE PASSED")
+
+# --- dog animation checks (I2)
+# Independent block, owner I2 (docs/DESIGN.md 9.2, stage 2). It runs after the summary above and changes none of the checks
+# above; a failure here exits 1 on its own. It runs the UI test build with `--dog-gallery <dir> --dog-checks`
+# (Sources/App/UITestDogChecks.swift: one small window and one popover with a DogView for about 25 s, temporary output only)
+# and reads <dir>/dog-report.json: DA 60 to 80 frames in 3 s with the card open, DB 0 frame callbacks in 3 s after close,
+# DC leg speed under the natural limit across gait switches, DD menu switch <= 8 frames, <= 600 ms, no timer after it,
+# DE Reduce Motion gives no frames and no timer. DF: the release binary has none of the dog test code.
+def _dog_animation_checks():
+    dog_failures = []
+
+    def dog_check(ok, name, detail=""):
+        print(("PASS  " if ok else "FAIL  ") + name + (f"  [{detail}]" if detail else ""), flush=True)
+        if not ok:
+            dog_failures.append(name)
+
+    print("\n---- dog animation checks (I2) ----", flush=True)
+    release = main_bin.read_bytes()
+    for marker in (b"DogFrameProbe", b"UITestDogChecks", b"--dog-checks"):
+        dog_check(marker not in release, f"DF release binary does not contain {marker.decode()}")
+    dog_ui_bin = root / "dist-uitest/MoleMonitor.app/Contents/MacOS/MoleMonitor"
+    if not dog_ui_bin.exists():
+        dog_check(False, "dog: dist-uitest/MoleMonitor.app exists")
+        return dog_failures
+    dog_check(b"DogFrameProbe" in dog_ui_bin.read_bytes(), "DF UI test variant contains the dog probe (positive control)")
+    dog_out = Path(os.environ.get("MOLEMONITOR_CI_OUT") or tempfile.gettempdir()) / "molemonitor-dog"
+    dog_out.mkdir(parents=True, exist_ok=True)
+    report_path = dog_out / "dog-report.json"
+    if report_path.exists():
+        report_path.unlink()
+    t0 = time.time()
+    try:
+        dog_run = run([dog_ui_bin, "--dog-gallery", dog_out, "--dog-checks"], timeout=120)
+        print(f"dog checks wall time {time.time() - t0:.1f} s, exit code {dog_run.returncode}", flush=True)
+        print("---- dog checks stdout ----\n" + dog_run.stdout[-3000:], flush=True)
+        if dog_run.stderr.strip():
+            print("---- dog checks stderr (tail) ----\n" + dog_run.stderr[-1000:], flush=True)
+    except subprocess.TimeoutExpired:
+        dog_check(False, "dog checks finished within 120 s")
+    dog_report = json.loads(report_path.read_text()) if report_path.exists() else None
+    dog_check(dog_report is not None, "dog checks wrote dog-report.json")
+    if dog_report:
+        by_id = {item["id"]: item for item in dog_report.get("items", [])}
+        for item_id in ("DA", "DB", "DC", "DD", "DE"):
+            item = by_id.get(item_id)
+            if item is None:
+                dog_check(False, f"dog {item_id} reported")
+                continue
+            dog_check(item["status"] == "pass", f"dog {item_id} {item['name']}", item["note"])
+            print(f"      values {json.dumps(item.get('values', {}), sort_keys=True)}", flush=True)
+        print("dog info:", json.dumps(dog_report.get("info", {}), sort_keys=True), flush=True)
+    return dog_failures
+
+
+_dog_failures = _dog_animation_checks()
+print()
+if _dog_failures:
+    print(f"DOG ANIMATION CHECKS FAILED: {len(_dog_failures)} check(s): " + "; ".join(_dog_failures))
+    sys.exit(1)
+print("DOG ANIMATION CHECKS PASSED")

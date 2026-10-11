@@ -8,6 +8,9 @@
 // tailAngle < 0 lowers the plume backward. bodyPitch > 0 leans the nose down. headTilt > 0 lifts the nose (curious).
 // Round 3 (I2): legLift is a distance in u (the paw rises off the ground); planted paws stay on the ground
 // while the body bobs. The memory bundle is gone: memory red shows only through the bubble and the menu badge.
+// Stage 2 (I2): DogMotor.frame(dt:input:) also returns the art crossfade of a gait switch (lie <-> stand body,
+// stand <-> trot body) and pops the bubble once (spring 0.6 -> 1). MenuMotion builds the <= 8 frames of the menu bar
+// switch: the head silhouette morphs (ears, tilt), the mouth and the tongue grow, the badge pops 0 -> 1.2 -> 1.
 
 import Foundation
 
@@ -45,6 +48,11 @@ enum DogGaitRules {
     static let leave: [DogGait: Double] = [.walk: 7, .trot: 34, .sprint: 72]
     static let frequencyRange: [DogGait: (lo: Double, hi: Double)] = [.walk: (0.8, 1.4), .trot: (1.6, 2.4), .sprint: (2.8, 3.6)]
     static let moving: [DogGait] = [.lie, .walk, .trot, .sprint]
+    /// Natural upper limit of the leg swing speed, degrees per second (DESIGN.md 4.5 step 5, stage 2): the steady
+    /// sprint peak 40 deg x 2 pi x 3.6 Hz = 905 deg/s, times 1.2. A gait switch must never move a leg faster.
+    static let maxLegRate = 1100.0
+    /// The view never advances the motor by more than this in one frame, s (DESIGN.md 4.6, stage 2).
+    static let maxFrameStep = 0.1
 
     static func rank(_ g: DogGait) -> Int {
         switch g {
@@ -88,6 +96,15 @@ enum DogGaitRules {
 
 // MARK: - Motor
 
+/// One animated frame: the gait art, the pose and, during a gait switch that changes the art, the old gait and
+/// the crossfade amount (0 = all old art, 1 = all new art).
+struct DogFrame: Equatable {
+    var gait: DogGait
+    var pose: DogPose
+    var fadeFrom: DogGait?
+    var fade = 1.0
+}
+
 struct DogMotor {
     private(set) var gait: DogGait
     private(set) var smoothed: Double?
@@ -99,6 +116,7 @@ struct DogMotor {
     private var previousGait: DogGait?
     private var blendStart = 0.0
     private var blendDuration = 0.35
+    private var bubbleSince: Double?
 
     init(initialCPU: Double?) {
         smoothed = initialCPU
@@ -112,9 +130,14 @@ struct DogMotor {
 
     /// Advances time by `dt` seconds with the newest input and returns the pose of this frame.
     mutating func step(dt: Double, input: DogInput) -> DogPose {
+        frame(dt: dt, input: input).pose
+    }
+
+    /// Advances time by `dt` seconds and returns the whole frame: pose, art and the crossfade of a gait switch.
+    mutating func frame(dt: Double, input: DogInput) -> DogFrame {
         let dt = max(0, min(dt, 1))
         time += dt
-        if input.isStatic { return DogMotor.staticPose(gait: .stand, input: input) }
+        if input.isStatic { return DogFrame(gait: .stand, pose: DogMotor.staticPose(gait: .stand, input: input)) }
 
         if let x = input.cpuPercent {
             if let s = smoothed {
@@ -147,16 +170,41 @@ struct DogMotor {
         if phase > 2000 * Double.pi { phase -= 2000 * Double.pi }   // Keeps precision; a whole number of cycles
 
         var pose = DogMotor.gaitPose(gait, phase: phase, time: time)
+        var out = DogFrame(gait: gait, pose: pose)
         if let from = previousGait {
             let k = (time - blendStart) / blendDuration
             if k >= 1 {
                 previousGait = nil
             } else {
+                let s = smoothstep(k)
                 let old = DogMotor.gaitPose(from, phase: phase, time: time)
-                pose = DogMotor.blend(old, pose, smoothstep(k))
+                pose = DogMotor.blend(old, pose, s)
+                if DogRig.artChanges(from, gait) {
+                    out.fadeFrom = from
+                    out.fade = s
+                }
             }
         }
-        return DogMotor.applyOverlays(pose, input: input, time: time, animated: true)
+        pose = DogMotor.applyOverlays(pose, input: input, time: time, animated: true)
+        // The bubble pops once when it appears (scale 0.6 -> 1, DESIGN.md 5.3), then stays still.
+        if pose.bubble > 0 {
+            let since = bubbleSince ?? time
+            bubbleSince = since
+            pose.bubble = DogMotor.pop(time - since)
+        } else {
+            bubbleSince = nil
+        }
+        out.pose = pose
+        return out
+    }
+
+    /// The bubble pop: spring(response 0.40, dampingFraction 0.78) from 0.6 to 1 (DESIGN.md 5.3). 1 after 1.2 s.
+    static func pop(_ t: Double) -> Double {
+        if t >= 1.2 { return 1 }
+        let zeta = 0.78, w = 2 * Double.pi / 0.40
+        let root = (1 - zeta * zeta).squareRoot(), wd = w * root
+        let t = max(0, t)
+        return 1 - 0.4 * exp(-zeta * w * t) * (cos(wd * t) + zeta / root * sin(wd * t))
     }
 
     /// Static pose. The default phase pi / 2 is the key frame for Reduce Motion and the card.
@@ -318,6 +366,12 @@ enum DogRig {
         }
     }
 
+    /// True when a switch between the two gaits changes the body or the head art, so the view crossfades.
+    static func artChanges(_ a: DogGait, _ b: DogGait) -> Bool {
+        let open: (DogGait) -> Bool = { $0 == .trot || $0 == .sprint }
+        return body(for: a) != body(for: b) || open(a) != open(b)
+    }
+
     /// Which head art a pose uses.
     static func head(for gait: DogGait, pose: DogPose) -> DogHeadVariant {
         if pose.mouthOpen >= 0.5 { return .pant }
@@ -396,6 +450,211 @@ enum DogRig {
                     g.name = "glyph." + part.name
                     add(g, place)
                 }
+            }
+        }
+        return out
+    }
+}
+
+// MARK: - Menu bar switch frames (DESIGN.md 3.5)
+
+/// One frame of the menu bar icon: head parts (24 x 18 pt, y down), badge, badge kind and badge scale.
+/// A still frame of a state draws exactly like `MenuIconRenderer.draw(state)` did in stage 1.
+struct MenuIconFrame: Equatable {
+    var head: [DogPart]
+    var hollow = false
+    var badge: MenuBadge?
+    /// The 9 x 9 pt alarm disc (red level) instead of the 8 x 8 pt glyph.
+    var alarm = false
+    /// 1 is full size, about the centre of the badge box. 0 draws no badge.
+    var badgeScale = 1.0
+}
+
+/// When the conditions forbid motion, the icon switches straight to the target image.
+struct MenuMotionConditions: Equatable {
+    var reduceMotion = false
+    var screenLocked = false
+    var displayAsleep = false
+    var iconVisible = true
+}
+
+enum MenuMotion {
+    static let frameCount = 8
+    static let frameInterval = 0.075
+    /// The same health item plays at most once in this time, s.
+    static let throttle: TimeInterval = 300
+    static let badgePeak = 1.2
+    /// Share of the play time in which the badge grows from 0 to the peak; it then settles to 1.
+    static let badgeRise = 0.625
+
+    static func still(_ s: MenuIconState) -> MenuIconFrame {
+        MenuIconFrame(head: DogArt.menuHead(s.posture), hollow: s.posture == .hollow, badge: s.badge,
+                      alarm: s.posture == .pant && s.badge != nil)
+    }
+
+    /// Badge scale at play time `t` (0 to 1): ease out to 1.2 at 62.5 %, then linear back to 1.
+    static func badgeScale(_ t: Double) -> Double {
+        let t = min(max(t, 0), 1)
+        if t <= badgeRise {
+            let u = t / badgeRise
+            return badgePeak * (1 - (1 - u) * (1 - u))
+        }
+        return badgePeak - (badgePeak - 1) * (t - badgeRise) / (1 - badgeRise)
+    }
+
+    /// The health item a switch is about: the new badge, or the badge that goes away. Nil: nothing to play.
+    static func item(from a: MenuIconState, to b: MenuIconState) -> HealthItem? {
+        guard a != b, a.posture != .hollow, b.posture != .hollow else { return nil }
+        return b.badge?.item ?? a.badge?.item
+    }
+
+    /// The item to play for and record, or nil when the icon must switch directly (DESIGN.md 3.5): no previous
+    /// state, a hollow state on either side, Reduce Motion, a locked screen, a sleeping display, a hidden icon,
+    /// or the same item played less than 5 minutes ago.
+    static func play(from a: MenuIconState?, to b: MenuIconState, lastPlayed: [HealthItem: Date], now: Date,
+                     conditions c: MenuMotionConditions) -> HealthItem? {
+        guard let a, let item = item(from: a, to: b) else { return nil }
+        if c.reduceMotion || c.screenLocked || c.displayAsleep || !c.iconVisible { return nil }
+        if let last = lastPlayed[item], now.timeIntervalSince(last) < throttle { return nil }
+        return item
+    }
+
+    /// The frames of one switch, at most 8 (75 ms apart). Empty when there is nothing to play. The last frame
+    /// draws like the still target. Head: the silhouette and the face morph point by point (ear angle and head tilt),
+    /// the mouth and the tongue of the pant head grow from their top edge (tongue length). Badge: a new badge pops
+    /// 0 -> 1.2 -> 1, a badge that goes away plays the same curve backward.
+    static func frames(from a: MenuIconState, to b: MenuIconState) -> [MenuIconFrame] {
+        guard item(from: a, to: b) != nil else { return [] }
+        let from = normalized(DogArt.menuHead(a.posture)), to = normalized(DogArt.menuHead(b.posture))
+        let sameBadge = (a.badge == b.badge) && ((a.posture == .pant) == (b.posture == .pant))
+        return (1...frameCount).map { i in
+            let t = Double(i) / Double(frameCount)
+            var f = MenuIconFrame(head: morph(from, to, smoothstep(t)), badge: b.badge,
+                                  alarm: b.posture == .pant && b.badge != nil)
+            if !sameBadge {
+                if b.badge != nil {
+                    f.badgeScale = badgeScale(t)
+                } else {
+                    f.badge = a.badge
+                    f.alarm = a.posture == .pant
+                    f.badgeScale = badgeScale(1 - t)
+                }
+            }
+            if f.badgeScale <= 0.001 {
+                f.badge = nil
+                f.alarm = false
+                f.badgeScale = 1
+            }
+            return f
+        }
+    }
+
+    /// Head parts of `a` and `b` mixed by `k`. Parts with the same name and the same path layout morph point by
+    /// point. A part only in `b` grows from its top edge by `k`; a part only in `a` shrinks to its top edge.
+    static func morph(_ a: [DogPart], _ b: [DogPart], _ k: Double) -> [DogPart] {
+        var out = [DogPart]()
+        for part in b {
+            if let old = a.first(where: { $0.name == part.name }) {
+                if let mixed = lerp(old.ops, part.ops, k) {
+                    var p = part
+                    p.ops = mixed
+                    out.append(p)
+                } else {
+                    out.append(k < 0.5 ? old : part)
+                }
+            } else if k > 0.02 {
+                out.append(grown(part, k))
+            }
+        }
+        for part in a where !b.contains(where: { $0.name == part.name }) && k < 0.98 {
+            out.append(grown(part, 1 - k))
+        }
+        return out
+    }
+
+    /// The part scaled in y about its top edge.
+    static func grown(_ part: DogPart, _ k: Double) -> DogPart {
+        let ys = part.ops.flatMap { op -> [Double] in
+            switch op {
+            case let .move(_, y), let .line(_, y): return [y]
+            case let .cubic(_, y1, _, y2, _, y): return [y1, y2, y]
+            case .close: return []
+            }
+        }
+        let top = ys.min() ?? 0
+        var p = part
+        p.ops = part.ops.map { op in
+            func f(_ y: Double) -> Double { top + (y - top) * k }
+            switch op {
+            case let .move(x, y): return .move(x, f(y))
+            case let .line(x, y): return .line(x, f(y))
+            case let .cubic(a, b, c, d, e, g): return .cubic(a, f(b), c, f(d), e, f(g))
+            case .close: return .close
+            }
+        }
+        return p
+    }
+
+    /// Point-by-point mix of two op lists with the same layout, or nil.
+    static func lerp(_ a: [DogPathOp], _ b: [DogPathOp], _ k: Double) -> [DogPathOp]? {
+        guard a.count == b.count else { return nil }
+        if k >= 1 { return b }
+        if k <= 0 { return a }
+        func m(_ x: Double, _ y: Double) -> Double { x + (y - x) * k }
+        var out = [DogPathOp]()
+        out.reserveCapacity(a.count)
+        for (p, q) in zip(a, b) {
+            switch (p, q) {
+            case let (.move(x0, y0), .move(x1, y1)): out.append(.move(m(x0, x1), m(y0, y1)))
+            case let (.line(x0, y0), .line(x1, y1)): out.append(.line(m(x0, x1), m(y0, y1)))
+            case let (.cubic(a0, b0, c0, d0, e0, f0), .cubic(a1, b1, c1, d1, e1, f1)):
+                out.append(.cubic(m(a0, a1), m(b0, b1), m(c0, c1), m(d0, d1), m(e0, e1), m(f0, f1)))
+            case (.close, .close): out.append(.close)
+            default: return nil
+            }
+        }
+        return out
+    }
+
+    /// The relaxed silhouette has 20 cubic edges, raised and pant have 22 (one more cheek anchor per side). Splitting
+    /// the relaxed jaw edges (8 and its mirror 11) at t = 0.5 keeps the exact shape and lines the anchors up.
+    static func normalized(_ parts: [DogPart]) -> [DogPart] {
+        parts.map { part in
+            guard part.role == .fur, part.ops.filter({ if case .cubic = $0 { return true }; return false }).count == 20 else { return part }
+            var p = part
+            p.ops = split(split(part.ops, cubic: 11), cubic: 8)
+            return p
+        }
+    }
+
+    /// Splits cubic number `n` (0-based, counted over the cubic ops) at t = 0.5 (de Casteljau).
+    static func split(_ ops: [DogPathOp], cubic n: Int) -> [DogPathOp] {
+        var out = [DogPathOp]()
+        var pen = (x: 0.0, y: 0.0)
+        var index = 0
+        for op in ops {
+            switch op {
+            case let .move(x, y):
+                pen = (x, y)
+                out.append(op)
+            case let .line(x, y):
+                pen = (x, y)
+                out.append(op)
+            case let .cubic(x1, y1, x2, y2, x, y):
+                if index == n {
+                    func mid(_ a: (Double, Double), _ b: (Double, Double)) -> (Double, Double) { ((a.0 + b.0) / 2, (a.1 + b.1) / 2) }
+                    let p0 = (pen.x, pen.y), p1 = (x1, y1), p2 = (x2, y2), p3 = (x, y)
+                    let a = mid(p0, p1), b = mid(p1, p2), c = mid(p2, p3)
+                    let d = mid(a, b), e = mid(b, c), m = mid(d, e)
+                    out.append(.cubic(a.0, a.1, d.0, d.1, m.0, m.1))
+                    out.append(.cubic(e.0, e.1, c.0, c.1, x, y))
+                } else {
+                    out.append(op)
+                }
+                index += 1
+                pen = (x, y)
+            case .close:
+                out.append(op)
             }
         }
         return out
