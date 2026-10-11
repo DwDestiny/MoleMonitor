@@ -130,6 +130,8 @@ final class MonitorEngine: ObservableObject {
         notifier.currentAuthorization { [weak self] value in
             guard let self else { return }
             self.queue.async { self.setAuthorization(value) }
+            // Ask at launch. The system shows its prompt only while the state is not_determined, so the user sees it once.
+            if value == "not_determined" { self.requestNotificationAuthorization() }
         }
         takeSample(src: .launch)
         scheduleTimer()
