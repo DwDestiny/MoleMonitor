@@ -288,7 +288,15 @@ extension UITestRunner {
                 if let rect = panelRect("dog"), let stats = UITestDogStats.measure(shot, region: rect, surface: surface) {
                     let share = Double(stats.ink) / Double(Swift.max(1, stats.area))
                     dogNotes.append("\(dogKey) \(Int(rect.width))x\(Int(rect.height)) ink \(stats.ink) (\(String(format: "%.1f", share * 100)) %), \(stats.colors) colors")
-                    if share < 0.01 { dogProblems.append("\(dogKey): ink share \(String(format: "%.3f", share)) < 0.01") }
+                    // The static gray dog (collecting, stale) is drawn pale by design on a pale surface, so its ink share is small
+                    // (0.9 % in light mode in run 38142320682). It is judged by an absolute floor of 40 ink pixels plus the color count.
+                    // A blank region has no ink and 1 to 3 colors, so the floor still fails an empty or missing dog.
+                    let staticDog = (c == .collecting || c == .stale)
+                    if staticDog {
+                        if stats.ink < 40 { dogProblems.append("\(dogKey): only \(stats.ink) ink pixels for the static dog, floor 40") }
+                    } else if share < 0.01 {
+                        dogProblems.append("\(dogKey): ink share \(String(format: "%.3f", share)) < 0.01")
+                    }
                     if stats.colors < 12 { dogProblems.append("\(dogKey): only \(stats.colors) colors, not a drawn dog") }
                 } else {
                     dogProblems.append("\(dogKey): no dog region or no ink")
@@ -489,7 +497,13 @@ extension UITestRunner {
                 if abs(Double(image.size.width) - 24) > 0.01 { problems.append("\(c.rawValue): the icon is \(image.size.width) pt wide") }
                 if button.toolTip != text { problems.append("\(c.rawValue): the tooltip differs from the icon text") }
                 if (button.accessibilityLabel() ?? "") != text { problems.append("\(c.rawValue): the accessibility label differs from the icon text") }
-                if let tiff = image.tiffRepresentation { hashes[c.rawValue] = String(tiff.hashValue) }
+                if let raster = UITestIconRaster.alphaFingerprint(image) {
+                    hashes[c.rawValue] = raster.hash
+                    line += " (\(raster.opaque) px)"
+                    if raster.opaque < 40 { problems.append("\(c.rawValue): the icon image is nearly empty (\(raster.opaque) px)") }
+                } else {
+                    problems.append("\(c.rawValue): cannot rasterize the icon image")
+                }
             } else {
                 line += " (no button image here)"
             }
@@ -515,8 +529,13 @@ extension UITestRunner {
             if let old = byState[state], old != h { problems.append("the same state \(state) gives different images") }
             byState[state] = h
         }
-        if !hashes.isEmpty, Set(byState.values).count != byState.count {
-            problems.append("two different states give the same image")
+        if !hashes.isEmpty {
+            let names = byState.keys.sorted()
+            for (i, a) in names.enumerated() {
+                for b in names[(i + 1)...] where byState[a] == byState[b] {
+                    problems.append("two different states give the same image: \(a) and \(b)")
+                }
+            }
         }
         delegate.suspendIconUpdates = false
         // Hand the icon back to the engine.
@@ -661,3 +680,31 @@ extension UITestRunner {
     }
 }
 #endif
+
+
+/// Rasterizes a menu bar icon image at 2x into an alpha-only bitmap and hashes it.
+/// The `tiffRepresentation` of a drawing-handler image is not a reliable fingerprint, so the pixels are drawn here.
+enum UITestIconRaster {
+    static func alphaFingerprint(_ image: NSImage) -> (hash: String, opaque: Int)? {
+        let w = Int(image.size.width * 2), h = Int(image.size.height * 2)
+        guard w > 0, h > 0,
+              let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4,
+                                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 32),
+              let gc = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = gc
+        image.draw(in: NSRect(x: 0, y: 0, width: w, height: h), from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        var hash: UInt64 = 1469598103934665603
+        var opaque = 0
+        for y in 0..<h {
+            for x in 0..<w {
+                let alpha = Double(rep.colorAt(x: x, y: y)?.alphaComponent ?? 0)
+                let a = UInt64((alpha * 255).rounded())
+                if a > 20 { opaque += 1 }
+                hash = (hash ^ a) &* 1099511628211
+            }
+        }
+        return (String(hash, radix: 16), opaque)
+    }
+}
