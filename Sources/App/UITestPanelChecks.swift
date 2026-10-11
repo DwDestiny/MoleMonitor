@@ -44,11 +44,18 @@ enum UITestContrast {
             for x in box.x0..<box.x1 {
                 let i = (y * shot.w + x) * 4
                 let alpha = Double(shot.rgba[i + 3]) / 255
-                let r = Swift.min(255, Double(shot.rgba[i]) + surface.r * (1 - alpha))
-                let g = Swift.min(255, Double(shot.rgba[i + 1]) + surface.g * (1 - alpha))
-                let b = Swift.min(255, Double(shot.rgba[i + 2]) + surface.b * (1 - alpha))
+                let behind = 1 - alpha
+                let rawR = Double(shot.rgba[i]) + surface.r * behind
+                let rawG = Double(shot.rgba[i + 1]) + surface.g * behind
+                let rawB = Double(shot.rgba[i + 2]) + surface.b * behind
+                let r = Swift.min(255.0, rawR)
+                let g = Swift.min(255.0, rawG)
+                let b = Swift.min(255.0, rawB)
                 pixels.append((r, g, b))
-                let key = (Int(r) >> 4) << 8 | (Int(g) >> 4) << 4 | (Int(b) >> 4)
+                let kr: Int = Int(r) >> 4
+                let kg: Int = Int(g) >> 4
+                let kb: Int = Int(b) >> 4
+                let key: Int = (kr << 8) | (kg << 4) | kb
                 counts[key, default: 0] += 1
                 let old = sums[key] ?? (0, 0, 0)
                 sums[key] = (old.r + r, old.g + g, old.b + b)
@@ -176,7 +183,11 @@ extension UITestRunner {
                     if case .problemCard(let item, _, _) = section { shown.append(item) }
                     if case .problemRow(let item, _) = section { shown.append(item) }
                 }
-                if shown != problems { orderProblems.append("\(name): card and rows \(shown.map { $0.rawValue }) differ from ProblemOrder \(problems.map { $0.rawValue })") }
+                if shown != problems {
+                    let shownNames: [String] = shown.map { $0.rawValue }
+                    let wantedNames: [String] = problems.map { $0.rawValue }
+                    orderProblems.append(name + ": card and rows " + shownNames.joined(separator: ",") + " differ from ProblemOrder " + wantedNames.joined(separator: ","))
+                }
                 if plan.sections.count > 1, !plan.sections[1].key.hasPrefix("card.") { orderProblems.append("\(name): the card is not right after the hero") }
             }
             let lampItems = model.data.lamps.map { $0.item }
@@ -271,26 +282,43 @@ extension UITestRunner {
             await closeFixture()
         }
 
-        let heights = tierByCase.values
+        let heightCount = tierByCase.count
         let quietMax = ["allGreen", "collecting", "stale"].compactMap { tierByCase[$0] }.max() ?? 0
         let problemMin = ["cpuYellow", "diskRed", "powerYellow", "multi"].compactMap { tierByCase[$0] }.min() ?? 0
         let gapOk = quietMax > 0 && problemMin - quietMax >= 200
-        record("M2", "区块顺序（Q6）", orderProblems.isEmpty, since: t0,
-               orderProblems.isEmpty ? "all 7 scenarios: the block order in the layout registry equals the plan; quiet mode has no card; the card follows the hero; card and rows follow ProblemOrder; the lamp order equals ProblemOrder.all" : orderProblems.joined(separator: "; "),
-               ["scenarios": Double(PreviewCase.allCases.count), "problems": Double(orderProblems.count)])
-        record("M3", "版面高度三档（Q5）", heightProblems.isEmpty && gapOk && heights.count == 7, since: t0,
-               "popover content heights \(heightNotes.joined(separator: ", ")); quiet at most \(Int(quietMax)) pt, smallest problem card \(Int(problemMin)) pt, difference \(Int(problemMin - quietMax)) pt (needs at least 200)" + (heightProblems.isEmpty ? "" : "; " + heightProblems.joined(separator: "; ")),
-               ["quietMax": quietMax, "problemMin": problemMin])
-        record("M4", "尺寸稳定（Q5）", stableProblems.isEmpty && !stableNotes.isEmpty, since: t0,
-               stableNotes.joined(separator: "; ") + (stableProblems.isEmpty ? "" : "; " + stableProblems.joined(separator: "; ")),
-               ["problems": Double(stableProblems.count)])
-        let worst = contrastMin.sorted { $0.value < $1.value }.prefix(6).map { "\($0.key) \(String(format: "%.2f", $0.value))" }.joined(separator: ", ")
-        record("M5", "对比度（Q1）", contrastProblems.isEmpty && measuredCount > 100, since: t0,
-               "\(measuredCount) regions measured in 7 scenarios x light and dark (text >= 4.5, lamps and curves >= 3); lowest ratios: \(worst)" + (contrastProblems.isEmpty ? "" : "; failures: " + contrastProblems.prefix(12).joined(separator: "; ")),
-               ["regions": Double(measuredCount), "failures": Double(contrastProblems.count), "lowest": contrastMin.values.min() ?? 0])
-        record("M11", "无焦点环（Q9）", ringProblems.isEmpty && !ringNotes.isEmpty, since: t0,
-               ringNotes.joined(separator: "; ") + (ringProblems.isEmpty ? "" : "; failures: " + ringProblems.joined(separator: "; ")),
-               ["problems": Double(ringProblems.count)])
+
+        var note2 = "all 7 scenarios: the block order in the layout registry equals the plan. "
+        note2 += "Quiet mode has no card. The card follows the hero. Card and rows follow ProblemOrder. The lamp order equals ProblemOrder.all."
+        if !orderProblems.isEmpty { note2 = orderProblems.joined(separator: "; ") }
+        let values2: [String: Double] = ["scenarios": Double(PreviewCase.allCases.count), "problems": Double(orderProblems.count)]
+        record("M2", "区块顺序（Q6）", orderProblems.isEmpty, since: t0, note2, values2)
+
+        var note3 = "popover content heights " + heightNotes.joined(separator: ", ")
+        note3 += "; quiet at most \(Int(quietMax)) pt, smallest problem card \(Int(problemMin)) pt"
+        note3 += ", difference \(Int(problemMin - quietMax)) pt (needs at least 200)"
+        if !heightProblems.isEmpty { note3 += "; " + heightProblems.joined(separator: "; ") }
+        let values3: [String: Double] = ["quietMax": quietMax, "problemMin": problemMin]
+        record("M3", "版面高度三档（Q5）", heightProblems.isEmpty && gapOk && heightCount == 7, since: t0, note3, values3)
+
+        var note4 = stableNotes.joined(separator: "; ")
+        if !stableProblems.isEmpty { note4 += "; " + stableProblems.joined(separator: "; ") }
+        let values4: [String: Double] = ["problems": Double(stableProblems.count)]
+        record("M4", "尺寸稳定（Q5）", stableProblems.isEmpty && !stableNotes.isEmpty, since: t0, note4, values4)
+
+        let lowest = contrastMin.sorted { $0.value < $1.value }.prefix(6)
+        var worstParts = [String]()
+        for entry in lowest { worstParts.append(entry.key + " " + String(format: "%.2f", entry.value)) }
+        var note5 = "\(measuredCount) regions measured in 7 scenarios x light and dark (text >= 4.5, lamps and curves >= 3); "
+        note5 += "lowest ratios: " + worstParts.joined(separator: ", ")
+        if !contrastProblems.isEmpty { note5 += "; failures: " + contrastProblems.prefix(12).joined(separator: "; ") }
+        let values5: [String: Double] = ["regions": Double(measuredCount), "failures": Double(contrastProblems.count),
+                                         "lowest": contrastMin.values.min() ?? 0]
+        record("M5", "对比度（Q1）", contrastProblems.isEmpty && measuredCount > 100, since: t0, note5, values5)
+
+        var note11 = ringNotes.joined(separator: "; ")
+        if !ringProblems.isEmpty { note11 += "; failures: " + ringProblems.joined(separator: "; ") }
+        let values11: [String: Double] = ["problems": Double(ringProblems.count)]
+        record("M11", "无焦点环（Q9）", ringProblems.isEmpty && !ringNotes.isEmpty, since: t0, note11, values11)
         stepLargeType()
         await stepColdFirstFrame(copyBox: copyBox)
     }
@@ -300,7 +328,9 @@ extension UITestRunner {
         let outer = frame.insetBy(dx: -margin, dy: -margin)
         let box = UITestPixels.pixelRegion(outer, of: shot)
         let color = NSColor.keyboardFocusIndicatorColor.usingColorSpace(.sRGB) ?? NSColor.systemBlue
-        let fr = Double(color.redComponent) * 255, fg = Double(color.greenComponent) * 255, fb = Double(color.blueComponent) * 255
+        let fr: Double = Double(color.redComponent) * 255
+        let fg: Double = Double(color.greenComponent) * 255
+        let fb: Double = Double(color.blueComponent) * 255
         var count = 0
         guard box.x1 > box.x0, box.y1 > box.y0 else { return 0 }
         for y in box.y0..<box.y1 {
@@ -309,9 +339,13 @@ extension UITestRunner {
                 let a = Double(shot.rgba[i + 3])
                 guard a > 40 else { continue }
                 // Un-premultiply.
-                let r = Double(shot.rgba[i]) * 255 / a, g = Double(shot.rgba[i + 1]) * 255 / a, b = Double(shot.rgba[i + 2]) * 255 / a
-                let near = abs(r - fr) + abs(g - fg) + abs(b - fb) < 90
-                let blue = b - r > 60 && b - g > 20
+                let scale: Double = 255 / a
+                let r: Double = Double(shot.rgba[i]) * scale
+                let g: Double = Double(shot.rgba[i + 1]) * scale
+                let b: Double = Double(shot.rgba[i + 2]) * scale
+                let distance: Double = abs(r - fr) + abs(g - fg) + abs(b - fb)
+                let near = distance < 90
+                let blue = (b - r > 60) && (b - g > 20)
                 if near || blue { count += 1 }
             }
         }
@@ -341,10 +375,16 @@ extension UITestRunner {
         var back = -1.0
         if let before, let after = capture(hv), let rect { back = UITestPixels.compare(before, after, region: rect, threshold: 24).fraction }
         let timing = reverted != nil && abs(seconds - 1.5) <= 0.3
-        let ok = !text.isEmpty && text == expected && homeFree && copiedNow && changed > 0.02 && timing && back < 0.01
-        record("M13", "复制状态机", ok, since: t0,
-               "text length \(text.count) equals PromptBuilder text=\(text == expected); no home directory or user name=\(homeFree); copied state set=\(copiedNow); button pixels changed \(String(format: "%.3f", changed)) in the copied state; reverted after \(String(format: "%.2f", seconds)) s (needs 1.5 +- 0.3); button pixels after the revert differ by \(String(format: "%.3f", back)). Part check on fixtures: the click path and the pasteboard are not exercised, and the text comes from the PromptBuilder skeleton until I1 lands.",
-               ["copiedSeconds": seconds, "changedShare": changed, "textLength": Double(text.count)])
+        let equal = (text == expected)
+        let ok = !text.isEmpty && equal && homeFree && copiedNow && changed > 0.02 && timing && back < 0.01
+        var note = "text length \(text.count) equals PromptBuilder text=\(equal); no home directory or user name=\(homeFree); "
+        note += "copied state set=\(copiedNow); button pixels changed \(String(format: "%.3f", changed)) in the copied state; "
+        note += "reverted after \(String(format: "%.2f", seconds)) s (needs 1.5 +- 0.3); "
+        note += "button pixels after the revert differ by \(String(format: "%.3f", back)). "
+        note += "Part check on fixtures: the click path and the pasteboard are not exercised. "
+        note += "The text comes from the PromptBuilder skeleton until I1 lands."
+        let values: [String: Double] = ["copiedSeconds": seconds, "changedShare": changed, "textLength": Double(text.count)]
+        record("M13", "复制状态机", ok, since: t0, note, values)
     }
 
     // MARK: M6 and Q2, 1.25 times type
@@ -372,9 +412,11 @@ extension UITestRunner {
                 if lines > slot.lines { problems.append("\(slot.name): \(lines) lines > \(slot.lines)") }
             }
         }
-        record("M6", "大字号不溢出（Q2）", problems.isEmpty && !widest.isEmpty, since: t0,
-               "\(PanelSlots.all.count) slots at 1.25 times the font size: " + (problems.isEmpty ? "all fit. " : "overflow: " + problems.joined(separator: "; ") + ". ") + "measured " + widest.joined(separator: ", "),
-               ["slots": Double(PanelSlots.all.count), "overflow": Double(problems.count)])
+        var note6 = "\(PanelSlots.all.count) slots at 1.25 times the font size: "
+        note6 += problems.isEmpty ? "all fit. " : "overflow: " + problems.joined(separator: "; ") + ". "
+        note6 += "measured " + widest.joined(separator: ", ")
+        let values6: [String: Double] = ["slots": Double(PanelSlots.all.count), "overflow": Double(problems.count)]
+        record("M6", "大字号不溢出（Q2）", problems.isEmpty && !widest.isEmpty, since: t0, note6, values6)
     }
 
     // MARK: M12, the first frame has a curve
@@ -414,9 +456,13 @@ extension UITestRunner {
         await sleepMs(200)
         await closeFixture()
         let ok = found && elapsed <= 300 && ink >= 30
-        record("M12", "冷启动首帧有曲线（Q8）", ok, since: t0,
-               found ? "the first frame with line pixels in chart.cpu came \(String(format: "%.0f", elapsed)) ms after the show call (limit 300 ms), \(ink) line pixels" : "no frame with line pixels in chart.cpu within 800 ms",
-               ["firstFrameMs": elapsed, "inkPixels": Double(ink)])
+        var note = "no frame with line pixels in chart.cpu within 800 ms"
+        if found {
+            note = "the first frame with line pixels in chart.cpu came " + String(format: "%.0f", elapsed)
+            note += " ms after the show call (limit 300 ms), \(ink) line pixels"
+        }
+        let values: [String: Double] = ["firstFrameMs": elapsed, "inkPixels": Double(ink)]
+        record("M12", "冷启动首帧有曲线（Q8）", ok, since: t0, note, values)
     }
 }
 #endif
