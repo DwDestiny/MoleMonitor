@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Command line arguments and MonitorEngine state (status.json data in the data directory).
-// Output: Menu bar app, or --self-test, --diagnose (headless), --preview (static PNG) and --dog-gallery (PNG gallery) modes.
+// Output: Menu bar app, or --self-test, --diagnose (headless), --preview (28 static PNG files) and --dog-gallery (PNG gallery) modes.
 // Pos: Entry point and app lifecycle; no cleanup or privileged commands, no Go collector.
+//      The status card is hosted here: PanelModel + PanelRoot in an NSPopover. AppKit sets the popover height (three tiers).
 import AppKit
 import Combine
 import Foundation
@@ -25,6 +26,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 #endif
     private var cancellables = Set<AnyCancellable>()
     private var lastIconState: IconState?
+    private lazy var iconController = StatusIconController(statusItem: statusItem)
+    /// Model of the open status card. Created on open, released on close.
+    private(set) var panelModel: PanelModel?
+    private var planObserver: AnyCancellable?
+#if UITEST
+    /// Test only: a model with fixture data. When set, the next open shows it and does not attach the engine.
+    var testModel: PanelModel?
+#endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Read before start(): the engine may create the data directory.
@@ -80,6 +89,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         button.toolTip = state.description
         button.setAccessibilityLabel(state.description)
         lastIconState = state
+        // WIRE-LATER: I1's engine publishes real verdicts. Until then the adapter gives the disk verdict only.
+        let now = Date()
+        let data = PanelEngineAdapter.data(status: status, alerts: [], series: [], trigger: nil, live: .empty, now: now)
+        iconController.apply(MenuIconModel.state(data.verdicts, dataState: data.dataState),
+                             text: MenuIconModel.text(data.verdicts, dataState: data.dataState, now: now))
     }
 
     // MARK: Panel
@@ -99,22 +113,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let anchor = statusItem?.button
 #endif
         guard !popover.isShown, let button = anchor else { return }
-        let host = NSHostingController(rootView: PanelContainer(engine: engine, onQuit: {
-            NSApplication.shared.terminate(nil)
-        }))
-        // UNVERIFIED-ON-MAC: sizingOptions (macOS 13+) lets the popover follow the SwiftUI height.
-        // Alternative: delete this line and rely on the fittingSize assignment below.
-        host.sizingOptions = [.preferredContentSize]
+        let model = makePanelModel(for: button)
+        panelModel = model
+        let host = NSHostingController(rootView: PanelRoot(model: model, entrance: PanelEntranceGate.next()))
+        // SwiftUI never sizes the popover. AppKit sets the height from the layout plan (three tiers).
+        host.sizingOptions = []
+        popover.animates = true
         popover.contentViewController = host
-        popover.contentSize = host.view.fittingSize
+        popover.contentSize = NSSize(width: PanelMetrics.width, height: model.layoutPlan.height)
+        planObserver = model.$layoutPlan
+            .map { $0.height }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] height in
+                self?.popover.contentSize = NSSize(width: PanelMetrics.width, height: height)
+            }
         engine.panelOpened()
         // UNVERIFIED-ON-MAC: a .transient popover of an .accessory app should close on outside clicks without app activation.
         // Alternative: call NSApplication.shared.activate(ignoringOtherApps: true) before show.
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // No button takes the first-responder role, so no focus ring shows around the quit button (docs/DESIGN.md 2.10).
+        DispatchQueue.main.async { [weak self] in
+            self?.popover.contentViewController?.view.window?.makeFirstResponder(nil)
+        }
+    }
+
+    private func makePanelModel(for button: NSView) -> PanelModel {
+        var model: PanelModel?
+#if UITEST
+        model = testModel
+#endif
+        let fromEngine = (model == nil)
+        let created = model ?? PanelModel(data: PanelEngineAdapter.data(
+            status: engine.status, alerts: engine.alerts, series: engine.diskSeries, trigger: engine.diskTrigger,
+            live: engine.live, now: Date()))
+        let visible = (button.window?.screen ?? NSScreen.main)?.visibleFrame.height ?? 1200
+        created.screenVisibleHeight = Double(visible)
+        created.onEnableNotifications = { [weak self] in self?.engine.requestNotificationAuthorization() }
+        created.onOpenNotificationSettings = {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        created.onOpenDataFolder = { NSWorkspace.shared.open(PanelPaths.dataDirURL) }
+        created.onAbout = { NSApp.orderFrontStandardAboutPanel(nil) }
+        created.onQuit = { NSApplication.shared.terminate(nil) }
+        if fromEngine {
+            created.setAuthorization(engine.authorization)
+            created.attach(engine: engine)
+        }
+        return created
     }
 
     func popoverDidClose(_ notification: Notification) {
         // Release the hosting controller and the SwiftUI tree; nothing renders while the card is closed.
+        planObserver = nil
+        panelModel?.detach()
+        panelModel = nil
         popover.contentViewController = nil
         engine.panelClosed()
     }
@@ -143,7 +198,7 @@ enum MoleMonitorMain {
                 FileHandle.standardError.write(Data("--preview needs an absolute output path.\n".utf8))
                 exit(2)
             }
-            if let error = PreviewRenderer.render(to: URL(fileURLWithPath: path)) {
+            if let error = PanelPreview.render(to: URL(fileURLWithPath: path)) {
                 FileHandle.standardError.write(Data((error + "\n").utf8))
                 exit(1)
             }
@@ -202,45 +257,6 @@ enum SelfTest {
     }
 }
 // SELFTEST-END
-
-// MARK: - --preview
-
-@MainActor
-enum PreviewRenderer {
-    /// Renders the status card with invented sample data for green, yellow and red, each in light and dark.
-    /// `output` is the base path: `preview.png` gives `preview-red-light.png`, `preview-red-dark.png`, and so on.
-    /// Returns an error text, or nil on success.
-    static func render(to output: URL) -> String? {
-        let base = output.deletingPathExtension()
-        let ext = output.pathExtension.isEmpty ? "png" : output.pathExtension
-        let now = Date()
-        for level in PreviewLevel.allCases {
-            for dark in [false, true] {
-                // Explicit colors: windowBackgroundColor would follow the process appearance, not the rendered scheme.
-                let background = dark ? Color(white: 0.17) : Color(white: 0.95)
-                let scheme: ColorScheme = dark ? .dark : .light
-                let content = PanelSample.panel(level: level, now: now)
-                    .background(background)
-                    .environment(\.colorScheme, scheme)
-                let renderer = ImageRenderer(content: content)
-                renderer.scale = 2
-                guard let image = renderer.nsImage, let tiff = image.tiffRepresentation,
-                      let bitmap = NSBitmapImageRep(data: tiff),
-                      let png = bitmap.representation(using: .png, properties: [:]) else {
-                    return "Preview rendering is not available."
-                }
-                let name = base.lastPathComponent + "-\(level.rawValue)-\(dark ? "dark" : "light")"
-                let target = base.deletingLastPathComponent().appendingPathComponent(name).appendingPathExtension(ext)
-                do {
-                    try png.write(to: target, options: .atomic)
-                } catch {
-                    return "Cannot write the preview file."
-                }
-            }
-        }
-        return nil
-    }
-}
 
 // MARK: - --diagnose
 
@@ -324,7 +340,7 @@ enum Diagnose {
         report.liveProbe = probe
         if args.contains("--preview") {
             if let path = MoleMonitorMain.argumentValue("--preview", in: args) {
-                if let error = PreviewRenderer.render(to: URL(fileURLWithPath: path)) {
+                if let error = PanelPreview.render(to: URL(fileURLWithPath: path)) {
                     report.staticPreviewError = error
                 } else {
                     report.staticPreview = path

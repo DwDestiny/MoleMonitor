@@ -54,7 +54,7 @@ struct UITestReport: Encodable {
     var statusMtimeBeforeQuit: Double?
 }
 
-// MARK: - Frame registry (filled by `uiTestFrame` in Panel.swift)
+// MARK: - Frame registry (filled by `uiTestFrame` in PanelTokens.swift)
 
 final class UITestFrameStore: @unchecked Sendable {
     static let shared = UITestFrameStore()
@@ -71,6 +71,12 @@ final class UITestFrameStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return frames[id]
+    }
+
+    func remove(_ id: String) {
+        lock.lock()
+        frames.removeValue(forKey: id)
+        lock.unlock()
     }
 
     func reset() {
@@ -1007,51 +1013,29 @@ final class UITestRunner {
         }
     }
 
-    // D: live charts scroll
+    // D: live data flows into the open panel
+    // The redesigned card has no 60 second live charts. The fine 5 minute layer exists only in a CPU or memory problem card,
+    // and this session shows a disk problem. So D judges the data path: the model of the open panel receives new live points.
     func stepD(ref: OpenResult) async {
         let t0 = now()
-        guard let hv = hostView else { record("D", "实时折线在滚动", false, since: t0, "no hosting view"); return }
-        // The open frames ended near 450 ms; wait until 2.5 s after the open, then one frame every 2 s.
+        guard let hv = hostView, let model = delegate.panelModel else { record("D", "实时数据流入面板", false, since: t0, "no hosting view or model"); return }
         let startRef = ref.refTime
-        var shots = [UITestShot]()
-        var cpuCounts = [Int](), netCounts = [Int]()
+        var cpuCounts = [Int](), netCounts = [Int](), modelCounts = [Int]()
         for i in 0..<4 {
             await sleepUntil(startRef + 2.5 + 2.0 * Double(i))
             cpuCounts.append(engine.live.cpu.count)
             netCounts.append(engine.live.net.count)
-            if let s = capture(hv) {
-                shots.append(s)
-                save(s, "ui-live-\(i + 1).png")
-            }
+            modelCounts.append(model.data.trend.segments.reduce(0) { $0 + $1.count })
+            if let s = capture(hv) { save(s, "ui-live-\(i + 1).png") }
         }
-        // A timer jitter can put two captures between the same pair of ticks, so equal neighbours are allowed.
         let cpuMono = zip(cpuCounts, cpuCounts.dropFirst()).allSatisfy { $0 <= $1 } && (cpuCounts.first ?? 0) < (cpuCounts.last ?? 0)
         let netMono = zip(netCounts, netCounts.dropFirst()).allSatisfy { $0 <= $1 }
-
-        let netUsable = (netCounts.last ?? 0) >= 3
-        var regionNotes = [String]()
-        var allMove = shots.count == 4
-        var values: [String: Double] = ["cpuPointsLast": Double(cpuCounts.last ?? 0), "netPointsLast": Double(netCounts.last ?? 0)]
-        func movement(_ id: String, required: Bool) {
-            guard shots.count == 4 else { return }
-            guard let loc = locate(id) else {
-                regionNotes.append("\(id): no frame")
-                if required { allMove = false }
-                return
-            }
-            let fractions = (0..<3).map { UITestPixels.compare(shots[$0], shots[$0 + 1], region: loc.rect, threshold: 12).fraction }
-            let moved = fractions.allSatisfy { $0 > 0.001 }
-            regionNotes.append("\(id) changed share \(fractions.map { String(format: "%.3f", $0) }) via \(loc.source)")
-            for (i, f) in fractions.enumerated() { values["\(id)_changed_\(i)"] = f }
-            if required && !moved { allMove = false }
-            if !required && netUsable && !moved { allMove = false }
-        }
-        movement("chart.cpu", required: true)
-        movement("chart.net", required: false)
-        let ok = cpuMono && (netMono) && (cpuCounts.last ?? 0) >= 3 && allMove
-        record("D", "实时折线在滚动", ok, since: t0,
-               "cpu points \(cpuCounts) net points \(netCounts); \(regionNotes.joined(separator: "; ")); net chart judged only when it has at least 3 points (\(netUsable))",
-               values)
+        let modelGrows = zip(modelCounts, modelCounts.dropFirst()).allSatisfy { $0 <= $1 } && (modelCounts.first ?? 0) < (modelCounts.last ?? 0)
+        let ok = cpuMono && netMono && (cpuCounts.last ?? 0) >= 3 && modelGrows
+        record("D", "实时数据流入面板", ok, since: t0,
+               "engine cpu points \(cpuCounts), net points \(netCounts); panel model trend points \(modelCounts) (must grow while the panel is open)",
+               ["cpuPointsLast": Double(cpuCounts.last ?? 0), "netPointsLast": Double(netCounts.last ?? 0),
+                "modelPointsFirst": Double(modelCounts.first ?? 0), "modelPointsLast": Double(modelCounts.last ?? 0)])
     }
 
     // F: hover
@@ -1151,14 +1135,14 @@ final class UITestRunner {
         info["axNodes"] = String(nodes.count)
         info["axIdentifiers"] = ids.joined(separator: ",")
         info["registryIds"] = UITestFrameStore.shared.ids.joined(separator: ",")
-        let ours = ids.filter { id in ["btn.", "chart.", "card.", "label."].contains { id.hasPrefix($0) } }
+        let ours = ids.filter { id in ["btn.", "chart.", "card.", "label.", "lamp."].contains { id.hasPrefix($0) } }
         guard !ours.isEmpty else {
             record("G2", "无障碍标识与中文标签", nil, since: t1,
                    "The accessibility tree has \(nodes.count) node(s) and none with our identifiers; SwiftUI does not expose its tree to this process here. The source audit in scripts/ci_acceptance.py covers identifiers and Chinese labels of every Button.")
             return
         }
         var problems = [String]()
-        for id in ["btn.quit", "chart.disk", "chart.net", "chart.cpu", "card.disk", "card.live"] {
+        for id in ["btn.quit", "chart.disk", "card.disk"] {
             guard let node = nodes.first(where: { $0.id == id }) else { problems.append("\(id): missing"); continue }
             if !UITestAX.hasChinese(node.label) { problems.append("\(id): label '\(node.label)' has no Chinese text") }
         }

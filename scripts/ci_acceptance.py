@@ -64,7 +64,12 @@ data_dir.mkdir(mode=0o700, parents=True)
 os.chmod(data_dir, 0o700)
 env = {"MOLEMONITOR_DATA_DIR": str(data_dir)}
 preview = data_dir / "preview.png"
-preview_names = [f"preview-{level}-{scheme}.png" for level in ("green", "yellow", "red") for scheme in ("light", "dark")]
+PREVIEW_CASES = ("allGreen", "cpuYellow", "diskRed", "powerYellow", "multi", "collecting", "stale")
+# Panel height tiers in points (docs/DESIGN.md 2.11): quiet 332, one problem 560, several problems 620.
+PREVIEW_HEIGHT_PT = {"allGreen": 332, "collecting": 332, "stale": 332,
+                     "cpuYellow": 560, "diskRed": 560, "powerYellow": 560, "multi": 620}
+preview_names = [f"preview-{case}-{scheme}{suffix}.png"
+                 for suffix in ("", "-empty") for case in PREVIEW_CASES for scheme in ("light", "dark")]
 t0 = time.time()
 dg = run([main_bin, "--diagnose", "--seconds", "22", "--preview", preview], env=env, timeout=180)
 print(f"diagnose wall time {time.time() - t0:.1f} s, exit code {dg.returncode}", flush=True)
@@ -155,44 +160,69 @@ p50, p95 = timings[len(timings) // 2], timings[int(len(timings) * 0.95) - 1]
 print(f"CLI --status --brief on this runner: p50={p50:.1f} ms p95={p95:.1f} ms (30 runs, includes process spawn)", flush=True)
 check(p50 <= 50, "CLI p50 under 50 ms (runner VM, informational limit)", f"{p50:.1f}")
 
-# 6. Static previews: 3 levels x light and dark, width 340 pt at scale 2, height at most 480 pt
+# 6. M1 and M3: static previews. 7 cases x light and dark x full and empty data = 28 files, 328 pt wide at scale 2.
+#    Height by case is one of the three tiers. Every file is a non-empty PNG, and no two files are equal.
 def png_size(data):
     if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
         return None
     return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
 
 
+import hashlib
+
 sizes = {}
+digests = {}
 for name in preview_names:
     path = data_dir / name
     data = path.read_bytes() if path.exists() else b""
     size = png_size(data)
-    check(size is not None and len(data) > 8000, f"preview {name} is a PNG", f"{len(data)} bytes")
+    check(size is not None and len(data) > 8000, f"M1 preview {name} is a PNG", f"{len(data)} bytes")
     if size:
         sizes[name] = size
+        digests.setdefault(hashlib.sha256(data).hexdigest(), []).append(name)
+        case = name.split("-")[1]
         print(f"  {name}: {size[0]}x{size[1]} px, {len(data)} bytes", flush=True)
-        check(size[0] == 680, f"preview {name} is 340 pt wide", str(size[0]))
-        check(size[1] <= 960, f"preview {name} is at most 480 pt high", str(size[1]))
+        check(size[0] == 656, f"M3 preview {name} is 328 pt wide", str(size[0]))
+        check(abs(size[1] - 2 * PREVIEW_HEIGHT_PT[case]) <= 2, f"M3 preview {name} has the tier height {PREVIEW_HEIGHT_PT[case]} pt", str(size[1]))
+duplicates = [names for names in digests.values() if len(names) > 1]
+check(len(preview_names) == 28 and not duplicates, "M1 the 28 previews are pairwise different", str(duplicates))
 if report:
     check(not report.get("staticPreviewError"), "no preview error", str(report.get("staticPreviewError")))
+quiet_heights = {sizes[n][1] for n in sizes if n.split("-")[1] in ("allGreen", "collecting", "stale")}
+problem_heights = {sizes[n][1] for n in sizes if n.split("-")[1] not in ("allGreen", "collecting", "stale")}
+check(bool(quiet_heights) and bool(problem_heights) and max(quiet_heights) + 400 <= min(problem_heights),
+      "M3 the quiet card is at least 200 pt smaller than any problem card", f"{quiet_heights} {problem_heights}")
 
 # 7. Release binary has no test code; the UI regression variant has it (positive control)
 release_bytes = main_bin.read_bytes()
-for marker in (b"UITestHarness", b"--ui-test"):
+for marker in (b"UITestHarness", b"--ui-test", b"UITestFrameStore"):
     check(marker not in release_bytes, f"release binary does not contain {marker.decode()}")
-# Source audit of Panel.swift. The runtime accessibility tree of SwiftUI is not always readable on a VM, so this is a separate, weaker check:
-# every Button in the panel needs an accessibilityIdentifier and a Chinese accessibilityLabel within the next 8 lines.
-panel_lines = (root / "Sources/App/Panel.swift").read_text(encoding="utf-8").splitlines()
-button_lines = [i for i, line in enumerate(panel_lines) if re.search(r"\bButton\(", line)]
+# Source audit of the panel files. The runtime accessibility tree of SwiftUI is not always readable on a VM, so this is a separate,
+# weaker check: every action Button (not a menu item with a text title) needs an accessibilityIdentifier("btn....") and an
+# accessibilityLabel with Chinese text before the next Button or within 60 lines.
+panel_files = sorted((root / "Sources/App").glob("Panel*.swift"))
+button_total = 0
 bad_buttons = []
-for i in button_lines:
-    block = "\n".join(panel_lines[i:i + 9])
-    has_id = re.search(r'accessibilityIdentifier\("btn\.[A-Za-z]+"\)', block)
-    has_label = re.search(r'accessibilityLabel\("[^"]*[\u4e00-\u9fff][^"]*"\)', block)
-    if not (has_id and has_label):
-        bad_buttons.append(i + 1)
-check(len(button_lines) >= 2 and not bad_buttons, "source audit: every Button in Panel.swift has an identifier and a Chinese label",
-      f"buttons found {len(button_lines)}, lines without both: {bad_buttons}")
+for file in panel_files:
+    lines = file.read_text(encoding="utf-8").splitlines()
+    starts = [i for i, line in enumerate(lines) if re.search(r"\bButton\(", line) and not re.search(r'\bButton\("', line)]
+    for index, i in enumerate(starts):
+        end = min(starts[index + 1] if index + 1 < len(starts) else len(lines), i + 60)
+        block = "\n".join(lines[i:end])
+        has_id = re.search(r'accessibilityIdentifier\("btn\.[A-Za-z.]+"', block)
+        has_label = re.search(r'accessibilityLabel\(.*[\u4e00-\u9fff]', block) or re.search(r'\.help\(.*[\u4e00-\u9fff]', block)
+        button_total += 1
+        if not (has_id and has_label):
+            bad_buttons.append(f"{file.name}:{i + 1}")
+check(button_total >= 6 and not bad_buttons, "source audit: every Button in Panel*.swift has an identifier and a Chinese label",
+      f"buttons found {button_total}, without both: {bad_buttons}")
+check(not (root / "Sources/App/Panel.swift").exists(), "source audit: the old Panel.swift is gone")
+timer_hits = []
+for file in panel_files:
+    text = file.read_text(encoding="utf-8")
+    if re.search(r"\bTimer\b|TimelineView|Timer\.publish", text):
+        timer_hits.append(file.name)
+check(not timer_hits, "source audit: no Timer or TimelineView in the panel files", str(timer_hits))
 ui_app = root / "dist-uitest/MoleMonitor.app"
 ui_bin = ui_app / "Contents/MacOS/MoleMonitor"
 skipped_ui = []
