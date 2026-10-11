@@ -750,7 +750,7 @@ last_updated: 2026-10-11
 |---|---|---|---|
 | 绿 | 正常 | 耳朵放松，垂在头侧 | 无 |
 | 黄 | 关注 | 耳朵翘起，耳尖向外上方张开约 20° | 最严重问题项的类别字形 |
-| 红 | 警告 | 嘴张开，舌头伸出下颌 2.5 pt，耳朵翘起 | 最严重问题项的类别字形 |
+| 红 | 警告 | 嘴张开，舌头伸出下颌 2.5 pt，耳朵竖起，比关注更高（I2 修订：与关注的 1x 异或比例因此从 0.08 升到 0.32） | 最严重问题项的类别字形 |
 | 统计中、过期 | 空心 | 正常姿态的头像只画 1 pt 描边，不填充 | 无 |
 
 ### 3.3 角标
@@ -760,7 +760,7 @@ last_updated: 2026-10-11
 | 健康项 | 字形 | 绘制规则（10 × 10 pt 框内） |
 |---|---|---|
 | CPU | 方块加一圈缺口 | 特征 1：中心 4.5 × 4.5 pt 实心方块。特征 2：外圈 9 × 9 pt 圆角环，线宽 1 pt，顶部留 3 pt 缺口 |
-| 内存 | 长条 | 特征 1：横向 9 × 4 pt 实心圆角矩形 |
+| 内存 | 长条 | 特征 1：横向 9 × 4 pt 实心圆角矩形。不加引脚：引脚会落进磁盘轮廓，1x 下与磁盘的比例只有 0.28 |
 | 温度 | 胶囊加球 | 特征 1：竖向 3 × 6.5 pt 实心胶囊。特征 2：底部直径 5 pt 实心圆球 |
 | 磁盘 | 圆柱 | 特征 1：宽 7 pt、高 9 pt 的实心圆柱外形，顶部与底部为圆弧 |
 | 耗电 | 闪电 | 特征 1：6 顶点实心多边形，坐标 (5.5, 10)、(1.5, 4.5)、(4.5, 4.5)、(3.5, 0)、(8.5, 6)、(5.5, 6)，单位 pt，y 向上 |
@@ -792,7 +792,7 @@ last_updated: 2026-10-11
 菜单栏版比熊由头像简化而来。简化规则如下：
 
 1. 只画剪影，单色。头、两耳合并为一个并集路径。
-2. 三点脸只用挖空表达：两只眼睛各为 1.6 pt 圆形挖空，鼻子为 2 × 1.6 pt 椭圆挖空。
+2. 三点脸只用挖空表达：两只眼睛各为 1.9 pt 圆形挖空，鼻子为 2.3 × 1.8 pt 椭圆挖空（I2 修订：1.6 pt 在 1x 下不能清空一个整像素，CI 判据为像素 alpha < 0.02）。
 3. 耳朵与头部之间用 0.75 pt 挖空线分开，让耳朵可读。
 4. 毛发蓬松轮廓：头顶与头侧共 8 个圆凸，每耳下沿 2 个圆凸。每个圆凸半径 ≥ 1.25 pt（2x 下 2.5 px）。
 5. 垂直与水平边对齐 0.5 pt 栅格，避免 2x 下发虚。
@@ -2065,7 +2065,7 @@ struct CurrentReadings: Codable, Equatable {
 文件只含数字与枚举，不含绘制逻辑。工程师手写固定的 Bezier 路径数据（见 [4.2](#42-外形来源手写路径与起始参考)），可以多次迭代，不改动 `DogRig`。
 
 ```swift
-enum DogPathOp: Equatable {
+enum DogPathOp: Hashable {          // I2 修订：Hashable，App 端用作 CGPath 缓存键
     case move(Double, Double)
     case line(Double, Double)
     case cubic(Double, Double, Double, Double, Double, Double)   // 控制点 1、控制点 2、终点
@@ -2076,10 +2076,17 @@ struct DogPart: Equatable {
     var name: String                 // 例如 "body"、"earNear"、"legFarFront"
     var ops: [DogPathOp]             // 部件局部坐标，单位 u
     var pivot: (x: Double, y: Double)   // 部件变换的旋转中心
-    var role: DogPartRole            // fur、shade、ear、ink、tongue、blush
-    // 元组不能自动合成 Equatable。骨架手写了 static func ==，签名不变。
+    var role: DogPartRole            // 见下方 DogPartRole
+    var layer: Int = 0               // I2 修订：合并描边分组。相邻且 layer 相同的描边部件先统一描边，再统一填充
+    // 元组不能自动合成 Equatable。骨架手写了 static func ==，签名不变，比较内容含 layer。
 }
-enum DogPartRole: String { case fur, shade, ear, ink, tongue, blush }
+// I2 修订：增加 tongueLine 至 cutout。cutout 只用于菜单栏头像，表示挖空。
+enum DogPartRole: String, CaseIterable {
+    case fur, shade, ear, ink, tongue, blush
+    case tongueLine, highlight, shadow, bundle, bundleDot, strap, bubble, effect, cutout
+}
+enum DogHeadVariant: String, CaseIterable { case smile, open, pant }      // I2 修订：头部与身体分开存放
+enum DogOverlay: String, CaseIterable { case bundle, bubble, heat, speed } // I2 修订：叠加部件
 
 enum DogArt {
     static let designSize: (w: Double, h: Double) = (120, 90)
@@ -2089,6 +2096,17 @@ enum DogArt {
     static func menuHead(_ posture: MenuPosture) -> [DogPart]
     /// 角标字形，10 × 10 pt 框。
     static func badge(_ item: HealthItem) -> [DogPart]
+    // I2 修订：以下为附加 API。
+    static let groundY: Double                                   // 82
+    static let lieHeadOffset: (x: Double, y: Double)             // 趴姿时头部平移 (0, 20)
+    static let bubbleGlyphFrame: (x: Double, y: Double, size: Double)
+    static let menuSize: (w: Double, h: Double)                  // (24, 18)
+    static let menuBadgeOrigin: (x: Double, y: Double)           // (14, 8)，y 向下
+    static let badgeSize: Double                                 // 10
+    static func parts(body: DogBasePose, head: DogHeadVariant) -> [DogPart]
+    static func overlay(_ o: DogOverlay) -> [DogPart]
+    static var menuBadgeCutout: [DogPathOp]                      // 角标周围的 12 × 12 圆角间隙
+    static func ops(_ path: String) -> [DogPathOp]               // 解析 M、L、C、Z 绝对坐标
 }
 enum DogBasePose: String, CaseIterable { case lie, stand, trot, pant }
 ```
@@ -2106,7 +2124,7 @@ struct DogInput: Equatable {
     var memoryLevel: HealthLevel
     var worstProblem: HealthItem?
     var worstLevel: HealthLevel
-    var isStatic: Bool          // 统计中、过期，或 Reduce Motion
+    var isStatic: Bool          // I2 修订：只表示统计中或过期（站姿、灰化 45%）。Reduce Motion 由 DogView 自己读取
 }
 
 struct DogPose: Equatable {
@@ -2123,6 +2141,16 @@ struct DogMotor {
     mutating func step(dt: Double, input: DogInput) -> DogPose
     /// 静态姿态：φ = π/2，用于 Reduce Motion 与图册。
     static func staticPose(gait: DogGait, input: DogInput) -> DogPose
+    /// I2 修订：固定输入下的静态步态（图册与首帧）。
+    static func staticGait(for input: DogInput) -> DogGait
+}
+
+// I2 修订：DogRig 输出一帧的部件变换列表，App 只按顺序填充。
+struct DogAffine: Equatable { var a, b, c, d, tx, ty: Double }   // translate、rotate(_:about:)、scale(_:_:about:)、then
+struct DogLayer { var part: DogPart; var transform: DogAffine; var alpha: Double }
+enum DogRig {
+    /// 绘制顺序见 4.2。pose.opacity 不进入层 alpha，渲染器对整只狗作为一组施加。
+    static func layers(gait: DogGait, pose: DogPose, glyph: [DogPart]?) -> [DogLayer]
 }
 ```
 
@@ -2136,6 +2164,13 @@ struct MenuIconState: Hashable { var posture: MenuPosture; var badge: MenuBadge?
 enum MenuIconModel {
     static func state(_ verdicts: [ItemVerdict], dataState: DataState) -> MenuIconState
     static func text(_ verdicts: [ItemVerdict], dataState: DataState, now: Date) -> String
+}
+
+// I2 修订：3.3 与 9.4 G1 的 1x 判据。实心 = alpha ≥ 0.5。比例 = 异或像素数 ÷ 两者中较大的实心像素数。
+enum IconMetrics {
+    static let solidThreshold = 0.5, badgePass = 0.35, posturePass = 0.20
+    static func xorRatio(_ a: [[Double]], _ b: [[Double]]) -> Double
+    static func matrix(_ grids: [(String, [[Double]])]) -> (pairs: [String: Double], minimum: Double)
 }
 ```
 
@@ -2351,7 +2386,7 @@ I1 在主分支交付“空实现”骨架。空实现的定义：代码能编�
 | 占用 App | 合并 Helper 进程、忽略列表、pid 复用、CPU% 换算、footprint 降级到 RSS |
 | 提示词黄金测试 | 总览与 6 个专项、每个 `PreviewCase` 的总览、单个专项范围、隐藏 App 名、长度压缩 L1 至 L5（用 `maxLength` 覆盖，见 [7.6](#76-长度控制)）、最长场景 ≤ 3000。每个 `mo analyze` 都带 `--json`。全文不含 `mmcli`。黄金文件放在 `Tests/CoreTests/Golden/` |
 | 脱敏 | [7.5](#75-脱敏规则) 的 T1 至 T13 |
-| 比熊 | 步态迟滞、4 秒最短保持、10 秒内最多 2 次切换、步频限速、相位连续（相邻帧腿角差 < 12°）、Reduce Motion 静态姿态。`DogArt` 数据校验：路径闭合，坐标在 120 × 90 范围内，4 个关键姿态的部件齐全 |
+| 比熊 | 步态迟滞、4 秒最短保持、10 秒内最多 2 次切换、步频限速、相位连续（I2 修订：走步相邻帧腿角差 < 12°。小跑与冲刺的稳态上限为摆幅 × 2π × 最高步频 × dt。换步态时的跳变 < 冲刺自然上限 + 3°。原 12° 对冲刺不成立：3.6 Hz、摆幅 40°、24 fps 时每帧自然转角约 34°）、Reduce Motion 静态姿态。`DogArt` 数据校验：路径闭合，坐标在 120 × 90 范围内，4 个关键姿态的部件齐全 |
 | 菜单栏模型 | 姿态与角标的映射、角标不分黄红、多问题时角标取排序第一、无障碍文字的顺序 |
 | CLI（`scripts/test_cli.py`） | `prompt` 与 `--prompt`、每个 `--topic`（含 `power`）、`--no-apps`、退出码 0/2/3/4、与 `PromptBuilder` 输出逐字相同 |
 

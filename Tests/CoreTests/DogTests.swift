@@ -98,20 +98,15 @@ func dogMenuGrid(_ posture: MenuPosture, badge: HealthItem?) -> [[Double]] {
     func over(_ c: [[Double]]) { for y in 0..<h { for x in 0..<w { a[y][x] = c[y][x] + a[y][x] * (1 - c[y][x]) } } }
     func clear(_ c: [[Double]]) { for y in 0..<h { for x in 0..<w { a[y][x] *= (1 - c[y][x]) } } }
     let hollow = (posture == .hollow)
-    for part in DogArt.menuHead(posture) {
+    if hollow {
+        // Outer outline of the head and ear union: stroke 2 pt, clear every interior, then the face dots solid.
+        let silhouette = DogArt.menuHead(posture).filter { $0.role == .fur || $0.role == .ear }.map { dogPolygons($0.ops) }
+        for polys in silhouette { over(dogCoverage(polys, w: w, h: h, stroke: 2)) }
+        for polys in silhouette { clear(dogCoverage(polys, w: w, h: h)) }
+        for part in DogArt.menuHead(posture) where part.role == .cutout { over(dogCoverage(dogPolygons(part.ops), w: w, h: h)) }
+    }
+    for part in DogArt.menuHead(posture) where !hollow {
         let polys = dogPolygons(part.ops)
-        if hollow {
-            switch part.role {
-            case .fur, .ear:
-                clear(dogCoverage(polys, w: w, h: h))
-                over(dogCoverage(polys, w: w, h: h, stroke: 1))
-            case .cutout:
-                over(dogCoverage(polys, w: w, h: h))
-            default:
-                break
-            }
-            continue
-        }
         if part.role == .ear || part.role == .tongue { clear(dogCoverage(polys, w: w, h: h, stroke: 1.5)) }
         if part.role == .cutout { clear(dogCoverage(polys, w: w, h: h)) } else { over(dogCoverage(polys, w: w, h: h)) }
     }

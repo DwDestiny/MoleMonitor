@@ -160,22 +160,22 @@ enum MenuIconRenderer {
         ctx.setFillColor(ink)
         ctx.setStrokeColor(ink)
         let hollow = (state.posture == .hollow)
-        for part in DogArt.menuHead(state.posture) {
-            let path = DogPathCache.path(part.ops)
-            if hollow {
-                switch part.role {
-                case .fur, .ear:
-                    fill(path, clear: true, in: ctx)
-                    ctx.setLineWidth(hollowLine)
-                    ctx.addPath(path)
-                    ctx.strokePath()
-                case .cutout:
-                    fill(path, clear: false, in: ctx)
-                default:
-                    break
-                }
-                continue
+        if hollow {
+            // Outer outline of the head and ear union only: stroke 2 pt (1 pt lands outside), clear every
+            // interior, then draw the three face dots solid. No inner lines, so it reads as one light outline.
+            let parts = DogArt.menuHead(state.posture)
+            let silhouette = parts.filter { $0.role == .fur || $0.role == .ear }.map { DogPathCache.path($0.ops) }
+            ctx.setLineWidth(hollowLine * 2)
+            ctx.setLineJoin(.round)
+            for path in silhouette {
+                ctx.addPath(path)
+                ctx.strokePath()
             }
+            for path in silhouette { fill(path, clear: true, in: ctx) }
+            for part in parts where part.role == .cutout { fill(DogPathCache.path(part.ops), clear: false, in: ctx) }
+        }
+        for part in DogArt.menuHead(state.posture) where !hollow {
+            let path = DogPathCache.path(part.ops)
             if part.role == .ear || part.role == .tongue {
                 ctx.saveGState()
                 ctx.setBlendMode(.clear)
