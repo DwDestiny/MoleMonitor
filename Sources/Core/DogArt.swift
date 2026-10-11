@@ -349,7 +349,7 @@ enum DogArt {
 
     /// Badge glyph: power. 10 x 10 pt box, y down.
     static let badgePower: [DogPart] = [
-        DogPart(name: "power.bolt", ops: ops("M 5.5 0 L 1.5 5.5 L 4.5 5.5 L 3.5 10 L 8.5 4 L 5.5 4 Z"), pivot: (5, 5), role: .ink, layer: 0),
+        DogPart(name: "power.bolt", ops: ops("M 6.5 0 L 1.5 6 L 4 6 L 3.5 10 L 8.5 4 L 6 4 Z"), pivot: (5, 5), role: .ink, layer: 0),
     ]
     // ART-END
 }
