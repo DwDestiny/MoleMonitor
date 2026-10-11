@@ -679,8 +679,6 @@ extension UITestRunner {
         record("M12", "冷启动首帧有曲线（Q8）", ok, since: t0, note, values)
     }
 }
-#endif
-
 
 /// Rasterizes a menu bar icon image at 2x into an alpha-only bitmap and hashes it.
 /// The `tiffRepresentation` of a drawing-handler image is not a reliable fingerprint, so the pixels are drawn here.
@@ -708,3 +706,4 @@ enum UITestIconRaster {
         return (String(hash, radix: 16), opaque)
     }
 }
+#endif
