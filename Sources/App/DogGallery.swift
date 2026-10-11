@@ -2,8 +2,8 @@
 // Copyright (c) 2026 DwDestiny
 // Input: An output directory from `--dog-gallery <directory>` (docs/DESIGN.md 4.8, 8.5).
 // Output: PNG gallery of all static dog poses, menu bar icons and badges (1x and 2x, light and dark), contact sheets,
-//         a menu bar mock-up with 8x pixel zoom, manifest.json (file names and pixel hashes), badge-matrix.json and
-//         menu-metrics.json (1x XOR ratios measured on the real Core Graphics raster, DESIGN.md 3.3 and 9.4 G1).
+//         a menu bar mock-up with 8x pixel zoom, manifest.json (file names and pixel hashes), badge-matrix.json,
+//         menu-metrics.json and card-metrics.json (measured on the real Core Graphics raster, DESIGN.md 3.3, 4.8, 9.4 G1).
 // Pos: Review and CI tool; the app never calls it at run time. Offline, no network. Owner I2.
 //
 // Self-check: returns an error when two different poses give the same pixels, or when a 1x metric fails its gate.
@@ -47,7 +47,8 @@ enum DogGallery {
             CardPose(name: "trot-b", gait: .trot, input: input(cpu: 60), phase: Double.pi * 1.5),
             CardPose(name: "sprint", gait: .sprint, input: input(cpu: 95)),
             CardPose(name: "pant", gait: .stand, input: input(thermal: .serious)),
-            CardPose(name: "bundle", gait: .walk, input: input(cpu: 25, memory: .red)),
+            // Round 3: no bundle. Memory red is the walk with the bubble (red memory glyph) and the menu alarm disc.
+            CardPose(name: "memory-red", gait: .walk, input: input(cpu: 25, memory: .red, problem: .memory, level: .red)),
             CardPose(name: "attention", gait: .stand, input: input(problem: .disk, level: .yellow)),
             CardPose(name: "alarm", gait: .stand, input: input(thermal: .critical, problem: .thermal, level: .red)),
             CardPose(name: "gray", gait: .stand, input: input(cpu: nil, isStatic: true)),
@@ -101,6 +102,7 @@ enum DogGallery {
         renderMenu()
         renderBadges()
         let choice = writeMetrics()
+        writeCardMetrics()
         sheetCard()
         sheetMenu(.glyph)
         sheetMenu(.letter)
@@ -175,9 +177,32 @@ enum DogGallery {
                         ctx.fillPath()
                     }
                     save(image, "badge/\(style.rawValue)-\(item.rawValue)@\(scale)x.png", group: "badge-\(scale)")
+                    let disc = draw(alarmSize, scale: scale, background: barBackground[false]) { ctx in
+                        drawAlarm(item, style: style, ink: barInk(false), in: ctx)
+                    }
+                    save(disc, "badge/alarm-\(style.rawValue)-\(item.rawValue)@\(scale)x.png", group: "alarm-\(scale)")
                 }
             }
         }
+    }
+
+    static let alarmSize = CGSize(width: DogArt.alarmSize, height: DogArt.alarmSize)
+
+    /// The alarm badge alone in its 9 x 9 pt box: the disc, then the glyph cleared out (as MenuIconRenderer does).
+    static func drawAlarm(_ item: HealthItem, style: GlyphStyle, ink: CGColor, in ctx: CGContext) {
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        ctx.setFillColor(ink)
+        for part in DogArt.alarmDisc { ctx.addPath(GlyphPaths.cgPath(part.ops)) }
+        ctx.fillPath()
+        ctx.setBlendMode(.clear)
+        ctx.addPath(GlyphPaths.alarmKnockout(item, style: style))
+        ctx.fillPath()
+        ctx.setBlendMode(.normal)
+        ctx.endTransparencyLayer()
+    }
+
+    static func alarmGrid(_ item: HealthItem, style: GlyphStyle) -> [[Double]] {
+        alphaGrid(alarmSize) { ctx in drawAlarm(item, style: style, ink: CGColor(gray: 0, alpha: 1), in: ctx) }
     }
 
     // MARK: Metrics (1x, Core Graphics raster)
@@ -245,6 +270,21 @@ enum DogGallery {
         }
         let choice: GlyphStyle = passing.first ?? .glyph
         badgeJSON["threshold"] = IconMetrics.badgePass
+        // Round 3: the alarm discs (red level). Gate on the glyph style; the letter style is recorded only.
+        var alarmJSON = [String: Any]()
+        for style in GlyphStyle.allCases {
+            let grids = HealthItem.allCases.map { ($0.rawValue, alarmGrid($0, style: style)) }
+            let m = IconMetrics.matrix(grids)
+            var solid = [String: Int]()
+            for (name, grid) in grids { solid[name] = solidCount(grid) }
+            alarmJSON[style.rawValue] = ["pairs": m.pairs.mapValues(rounded), "minimum": rounded(m.minimum),
+                                         "pass": m.minimum >= IconMetrics.alarmPass, "solidPixels": solid] as [String: Any]
+            if style == .glyph, m.minimum < IconMetrics.alarmPass {
+                failures.append("Alarm gate: minimum XOR \(rounded(m.minimum)) < \(IconMetrics.alarmPass) at 1x.")
+            }
+        }
+        alarmJSON["threshold"] = IconMetrics.alarmPass
+        badgeJSON["alarm"] = alarmJSON
         badgeJSON["choice"] = choice.rawValue
         badgeJSON["codeChoice"] = GlyphPaths.chosen.rawValue
         writeJSON(badgeJSON, "badge-matrix.json")
@@ -266,13 +306,29 @@ enum DogGallery {
         if relaxedRaised < IconMetrics.relaxedRaisedPass {
             failures.append("Relaxed and raised differ by \(rounded(relaxedRaised)) < \(IconMetrics.relaxedRaisedPass) at 1x.")
         }
-        // Pixel centers of the eyes (5.5, 8.5), (9.5, 8.5) and the nose (7.5, 11.4) of the menu art.
+        // Pixel centers of the eyes (5.5, 8.5), (9.5, 8.5) and the nose (7.5, 11.4) of the menu art. Round 3: the raised
+        // face moves 1 px right with the tilt; the pant nose sits 1 px higher.
         let face: [(String, Int, Int)] = [("eyeLeft", 5, 8), ("eyeRight", 9, 8), ("nose", 7, 11)]
         var faceJSON = [String: Double]()
-        for (name, x, y) in face {
-            faceJSON[name] = rounded(relaxed[y][x])
-            if relaxed[y][x] >= 0.02 { failures.append("Face cutout \(name) is not clear at 1x (alpha \(relaxed[y][x])).") }
+        for (p, (posture, grid)) in grids.enumerated() {
+            for (name, x0, y0) in face {
+                let x = x0 + (p == 1 ? 1 : 0), y = y0 - (p == 2 && name == "nose" ? 1 : 0)
+                faceJSON[posture + "." + name] = rounded(grid[y][x])
+                if grid[y][x] >= 0.02 { failures.append("Face cutout \(posture).\(name) is not clear at 1x (alpha \(grid[y][x])).") }
+            }
         }
+        // The badge never touches the head: the head columns are the same with and without a badge
+        // (0 to 15 next to the 8 pt glyph, 0 to 14 next to the 9 pt alarm disc of the pant head).
+        var untouched = true
+        for posture in MenuPosture.allCases {
+            let plain = menuGrid(MenuIconState(posture: posture, badge: nil))
+            let columns = posture == .pant ? Int(DogArt.alarmOrigin.x) : Int(DogArt.menuBadgeOrigin.x)
+            for item in HealthItem.allCases {
+                let marked = menuGrid(MenuIconState(posture: posture, badge: MenuBadge(item: item)))
+                for y in 0..<marked.count { for x in 0..<columns where abs(marked[y][x] - plain[y][x]) > 1e-9 { untouched = false } }
+            }
+        }
+        if !untouched { failures.append("A badge changes pixels of the head columns at 1x.") }
         let hollow = menuGrid(MenuIconState(posture: .hollow, badge: nil))
         if solidCount(hollow) * 10 >= solidCount(relaxed) * 6 {
             failures.append("Hollow icon is not lighter than 60 % of the filled icon.")
@@ -288,12 +344,107 @@ enum DogGallery {
         menuJSON["relaxedRaisedXOR"] = rounded(relaxedRaised)
         menuJSON["relaxedRaisedThreshold"] = IconMetrics.relaxedRaisedPass
         menuJSON["faceCutoutAlpha"] = faceJSON
+        menuJSON["headUntouchedByBadge"] = untouched
         menuJSON["solidPixels"] = coverage
         menuJSON["hollowSolid"] = solidCount(hollow)
         menuJSON["relaxedSolid"] = solidCount(relaxed)
         menuJSON["pathCacheEntries"] = DogPathCache.count
         writeJSON(menuJSON, "menu-metrics.json")
         return choice
+    }
+
+    // MARK: Card metrics (round 3)
+
+    /// card-metrics.json: leg band XOR of stand, walk and trot at 72 x 54 1x, paw lift, body bob, bubble size and gap.
+    private static func writeCardMetrics() {
+        let size = cardSizes[1]
+        let px = Double(size.width) / DogArt.designSize.w          // 0.6 px per u
+        let gaits: [(String, DogGait, DogInput)] = [("stand", .stand, input()), ("walk", .walk, input(cpu: 25)),
+                                                     ("trot", .trot, input(cpu: 60))]
+        let grids = gaits.map { g in
+            (g.0, alphaGrid(size) { ctx in
+                DogRenderer.drawStatic(g.2, gait: g.1, dark: false, in: CGRect(origin: .zero, size: size), ctx: ctx)
+            })
+        }
+        var band = [String: Double]()
+        for i in 0..<grids.count {
+            for j in (i + 1)..<grids.count {
+                let r = IconMetrics.bandRatio(grids[i].1, grids[j].1, rows: IconMetrics.cardLegRows)
+                band[grids[i].0 + "/" + grids[j].0] = rounded(r)
+                if r < IconMetrics.cardLegPass {
+                    failures.append("Card legs: \(grids[i].0)/\(grids[j].0) differ by \(rounded(r)) < \(IconMetrics.cardLegPass) at 72.")
+                }
+            }
+        }
+        // Paw lift: the highest lifted paw bottom above the ground, from the drawn paths. Bob: bodyY range per stride.
+        var lift = [String: Double](), bob = [String: Double]()
+        let moving: [(String, DogGait, DogInput)] = Array(gaits.dropFirst()) + [("sprint", .sprint, input(cpu: 95))]
+        for (name, gait, inp) in moving {
+            let pose = DogMotor.staticPose(gait: gait, input: inp)
+            var best = -Double.infinity
+            for layer in DogRig.layers(gait: gait, pose: pose) where DogRig.legNames.contains(layer.part.name) {
+                best = max(best, (DogArt.groundY - Double(DogRenderer.transformed(layer).boundingBoxOfPath.maxY)) * px)
+            }
+            lift[name] = rounded(best)
+            let ys = (0..<32).map { DogMotor.staticPose(gait: gait, input: inp, phase: Double($0) * Double.pi / 16).bodyY }
+            bob[name] = rounded((ys.max()! - ys.min()!) * px)
+            if name != "sprint", best < IconMetrics.pawLiftPx {
+                failures.append("Card legs: the \(name) paw lifts \(rounded(best)) px < \(IconMetrics.pawLiftPx) px at 72.")
+            }
+            if bob[name]! < IconMetrics.bobPx { failures.append("Card legs: the \(name) body bobs \(bob[name]!) px < \(IconMetrics.bobPx) px.") }
+        }
+        // Bubble: diameter, and the gap between the drawn bubble (outline included) and the drawn dog, at 4x.
+        let c = DogArt.bubbleCircle
+        let outline = Double(DogRenderer.outlineWidth) / 2
+        let diameter = rounded((2 * c.r + 2 * outline) * px)
+        if diameter < IconMetrics.bubbleMinPx { failures.append("Bubble is \(diameter) px < \(IconMetrics.bubbleMinPx) px at 72.") }
+        var gaps = [String: Double](), dotGaps = [String: Double]()
+        let tail = DogArt.bubble.first(where: { $0.name == "bubble.tail1" })
+        let dotBox = tail.map { GlyphPaths.cgPath($0.ops).boundingBoxOfPath } ?? .zero
+        let dot = (x: Double(dotBox.midX), y: Double(dotBox.midY), r: Double(dotBox.width) / 2)
+        let problems: [(String, DogGait, DogInput)] = [
+            ("lie", .lie, input(cpu: 3, problem: .disk, level: .yellow)), ("stand", .stand, input(problem: .disk, level: .yellow)),
+            ("walk", .walk, input(cpu: 25, problem: .memory, level: .red)), ("trot", .trot, input(cpu: 60, problem: .cpu, level: .yellow)),
+            ("sprint", .sprint, input(cpu: 95, problem: .cpu, level: .red)),
+            ("alarm", .stand, input(thermal: .critical, problem: .thermal, level: .red))]
+        let k = 4
+        for (name, gait, inp) in problems {
+            var worst = Double.infinity, worstDot = Double.infinity
+            for step in 0..<8 {
+                let pose = DogMotor.staticPose(gait: gait, input: inp, phase: Double(step) * Double.pi / 4)
+                let dog = DogRig.layers(gait: gait, pose: pose).filter { !$0.part.name.hasPrefix("bubble.") }
+                let g = alphaGrid(CGSize(width: size.width * CGFloat(k), height: size.height * CGFloat(k))) { ctx in
+                    ctx.scaleBy(x: CGFloat(px) * CGFloat(k), y: CGFloat(px) * CGFloat(k))
+                    DogRenderer.draw(dog, opacity: 1, palette: DogPalette(dark: false), level: .yellow, in: ctx)
+                }
+                for (y, row) in g.enumerated() {
+                    for (x, v) in row.enumerated() where v >= IconMetrics.solidThreshold {
+                        let ux = (Double(x) + 0.5) / Double(k) / px, uy = (Double(y) + 0.5) / Double(k) / px
+                        let d = ((ux - c.x) * (ux - c.x) + (uy - c.y) * (uy - c.y)).squareRoot() - c.r - outline
+                        worst = min(worst, d * px)
+                        let e = ((ux - dot.x) * (ux - dot.x) + (uy - dot.y) * (uy - dot.y)).squareRoot() - dot.r - outline
+                        worstDot = min(worstDot, e * px)
+                    }
+                }
+            }
+            gaps[name] = rounded(worst)
+            dotGaps[name] = rounded(worstDot)
+            if worstDot < IconMetrics.bubbleGapPx { failures.append("Bubble tail dot gap \(name): \(rounded(worstDot)) px < \(IconMetrics.bubbleGapPx) px.") }
+            if worst < IconMetrics.bubbleGapPx { failures.append("Bubble gap \(name): \(rounded(worst)) px < \(IconMetrics.bubbleGapPx) px at 72.") }
+        }
+        var json = [String: Any]()
+        json["legBandRows"] = [IconMetrics.cardLegRows.lowerBound, IconMetrics.cardLegRows.upperBound - 1]
+        json["legBandXOR"] = band
+        json["legBandThreshold"] = IconMetrics.cardLegPass
+        json["pawLiftPx"] = lift
+        json["pawLiftThreshold"] = IconMetrics.pawLiftPx
+        json["bodyBobPx"] = bob
+        json["bodyBobThreshold"] = IconMetrics.bobPx
+        json["bubbleDiameterPx"] = diameter
+        json["bubbleGapPx"] = gaps
+        json["bubbleTailDotGapPx"] = dotGaps
+        json["bubbleGapThreshold"] = IconMetrics.bubbleGapPx
+        writeJSON(json, "card-metrics.json")
     }
 
     // MARK: Contact sheets
@@ -361,36 +512,48 @@ enum DogGallery {
     private static func sheetBadges() {
         let cell: CGFloat = 96
         let top: CGFloat = 30
-        let size = CGSize(width: 70 + cell * 5 + 8, height: top + (cell + 24) * 4 + 8)
+        // Rows: yellow glyph, yellow letter, red alarm disc (glyph), red alarm disc (letter). Each has a vector row
+        // (8x) and a 1x pixel row (8x zoom).
+        let kinds: [(String, GlyphStyle, Bool)] = [("字形", .glyph, false), ("字母", .letter, false),
+                                                   ("红盘字形", .glyph, true), ("红盘字母", .letter, true)]
+        let size = CGSize(width: 90 + cell * 5 + 8, height: top + (cell + 24) * CGFloat(kinds.count * 2) + 8)
         let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
-            label("角标对照：每种 2 行，上为 8 倍矢量，下为 1x（8 × 8 像素）放大 8 倍", at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
-            for (s, style) in GlyphStyle.allCases.enumerated() {
+            label("角标对照：黄为 8 × 8 字形，红为 9 × 9 实心圆盘镂空字形。每种 2 行，上为 8 倍矢量，下为 1x 放大 8 倍",
+                  at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
+            for (s, kind) in kinds.enumerated() {
+                let side = kind.2 ? CGFloat(DogArt.alarmSize) : CGFloat(DogArt.badgeSize)
                 for (i, item) in HealthItem.allCases.enumerated() {
-                    let x = 70 + CGFloat(i) * cell
+                    let x = 90 + CGFloat(i) * cell
                     let yVector = top + CGFloat(s * 2) * (cell + 24)
                     let yPixel = yVector + cell + 24
                     label(item.label, at: CGPoint(x: x, y: yVector + 14), size: 10, in: ctx)
-                    let box = CGRect(x: x, y: yVector + 20, width: 64, height: 64)
+                    let box = CGRect(x: x, y: yVector + 20, width: side * 8, height: side * 8)
                     fill(box, barBackground[false] ?? 0, in: ctx)
                     ctx.saveGState()
                     ctx.translateBy(x: box.minX, y: box.minY)
                     ctx.scaleBy(x: 8, y: 8)
-                    ctx.setFillColor(barInk(false))
-                    ctx.addPath(GlyphPaths.badgeYDown(item, style: style))
-                    ctx.fillPath()
-                    ctx.restoreGState()
-                    let side = CGFloat(DogArt.badgeSize)
-                    let one = draw(CGSize(width: side, height: side), scale: 1, background: barBackground[false]) { c1 in
-                        c1.setFillColor(barInk(false))
-                        c1.addPath(GlyphPaths.badgeYDown(item, style: style))
-                        c1.fillPath()
+                    if kind.2 {
+                        drawAlarm(item, style: kind.1, ink: barInk(false), in: ctx)
+                    } else {
+                        ctx.setFillColor(barInk(false))
+                        ctx.addPath(GlyphPaths.badgeYDown(item, style: kind.1))
+                        ctx.fillPath()
                     }
-                    pixels(one, in: CGRect(x: x, y: yPixel + 4, width: 64, height: 64), ctx: ctx)
+                    ctx.restoreGState()
+                    let one = draw(CGSize(width: side, height: side), scale: 1, background: barBackground[false]) { c1 in
+                        if kind.2 {
+                            drawAlarm(item, style: kind.1, ink: barInk(false), in: c1)
+                        } else {
+                            c1.setFillColor(barInk(false))
+                            c1.addPath(GlyphPaths.badgeYDown(item, style: kind.1))
+                            c1.fillPath()
+                        }
+                    }
+                    pixels(one, in: CGRect(x: x, y: yPixel + 4, width: side * 8, height: side * 8), ctx: ctx)
                 }
-                let name = (style == .glyph) ? "字形" : "字母"
                 let yy = top + CGFloat(s * 2) * (cell + 24)
-                label(name, at: CGPoint(x: 8, y: yy + 64), size: 11, in: ctx)
-                label(name + " 1x", at: CGPoint(x: 8, y: yy + cell + 24 + 50), size: 11, in: ctx)
+                label(kind.0, at: CGPoint(x: 8, y: yy + 64), size: 11, in: ctx)
+                label(kind.0 + " 1x", at: CGPoint(x: 8, y: yy + cell + 24 + 50), size: 11, in: ctx)
             }
         }
         save(image, "sheet-badges.png", group: nil)

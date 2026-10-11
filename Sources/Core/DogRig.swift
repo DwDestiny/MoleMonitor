@@ -6,6 +6,8 @@
 //
 // Angle conventions (degrees): legAngle > 0 swings the paw forward. earAngle < 0 lifts the ear tip.
 // tailAngle < 0 lowers the plume backward. bodyPitch > 0 leans the nose down. headTilt > 0 lifts the nose (curious).
+// Round 3 (I2): legLift is a distance in u (the paw rises off the ground); planted paws stay on the ground
+// while the body bobs. The memory bundle is gone: memory red shows only through the bubble and the menu badge.
 
 import Foundation
 
@@ -14,6 +16,7 @@ enum DogGait: String, CaseIterable { case lie, stand, walk, trot, sprint }
 struct DogInput: Equatable {
     var cpuPercent: Double?
     var thermal: ThermalLevel?
+    /// Kept for the callers; the dog does not read it since round 3 (no bundle, no slower steps).
     var memoryLevel: HealthLevel
     var worstProblem: HealthItem?
     var worstLevel: HealthLevel
@@ -24,8 +27,8 @@ struct DogInput: Equatable {
 struct DogPose: Equatable {
     var bodyY = 0.0, bodyPitch = 0.0, breath = 0.0, headY = 0.0, headTilt = 0.0, earAngle = 0.0, tailAngle = 0.0
     var legAngle: [Double] = [0, 0, 0, 0]      // 4 items: far hind, far fore, near hind, near fore
-    var legLift: [Double] = [0, 0, 0, 0]       // 4 items
-    var mouthOpen = 0.0, tongue = 0.0, eyesClosed = 0.0, bundle = 0.0, bubble = 0.0
+    var legLift: [Double] = [0, 0, 0, 0]       // 4 items, u: how far the paw rises off the ground
+    var mouthOpen = 0.0, tongue = 0.0, eyesClosed = 0.0, bubble = 0.0
     var opacity = 1.0
 }
 
@@ -137,20 +140,19 @@ struct DogMotor {
             }
         }
 
-        let load = (input.memoryLevel == .red) ? 0.85 : 1.0
-        let target = DogGaitRules.frequency(gait, s: smoothed ?? 0) * load
+        let target = DogGaitRules.frequency(gait, s: smoothed ?? 0)
         let maxStep = DogGaitRules.maxFrequencySlope * dt
         frequency += min(max(target - frequency, -maxStep), maxStep)
         phase += 2 * Double.pi * frequency * dt
         if phase > 2000 * Double.pi { phase -= 2000 * Double.pi }   // Keeps precision; a whole number of cycles
 
-        var pose = DogMotor.gaitPose(gait, phase: phase, time: time, load: load)
+        var pose = DogMotor.gaitPose(gait, phase: phase, time: time)
         if let from = previousGait {
             let k = (time - blendStart) / blendDuration
             if k >= 1 {
                 previousGait = nil
             } else {
-                let old = DogMotor.gaitPose(from, phase: phase, time: time, load: load)
+                let old = DogMotor.gaitPose(from, phase: phase, time: time)
                 pose = DogMotor.blend(old, pose, smoothstep(k))
             }
         }
@@ -161,14 +163,13 @@ struct DogMotor {
     /// The gallery also asks for phase 0 and pi (frames A and B of one stride).
     static func staticPose(gait: DogGait, input: DogInput, phase: Double = Double.pi / 2) -> DogPose {
         if input.isStatic {
-            var pose = gaitPose(.stand, phase: Double.pi / 2, time: 0, load: 1)
+            var pose = gaitPose(.stand, phase: Double.pi / 2, time: 0)
             pose.tailAngle = 0
             pose.breath = 0
             pose.opacity = 0.45
             return pose
         }
-        let load = (input.memoryLevel == .red) ? 0.85 : 1.0
-        var pose = gaitPose(gait, phase: phase, time: 0, load: load)
+        var pose = gaitPose(gait, phase: phase, time: 0)
         pose.breath = 0
         return applyOverlays(pose, input: input, time: 0, animated: false)
     }
@@ -181,16 +182,16 @@ struct DogMotor {
 
     // MARK: Pose math (DESIGN.md 4.4)
 
-    /// Pure gait pose at phase `phase` (radians) and time `time` (s). `load` is 0.85 with the bundle.
-    static func gaitPose(_ gait: DogGait, phase: Double, time t: Double, load: Double) -> DogPose {
+    /// Pure gait pose at phase `phase` (radians) and time `time` (s).
+    static func gaitPose(_ gait: DogGait, phase: Double, time t: Double) -> DogPose {
         var p = DogPose()
         let tau = 2 * Double.pi
-        /// `liftShift` moves the highest paw point later in the swing (radians): 0 lifts the paw as it passes
-        /// under the body, pi / 4 lifts it while it reaches forward.
+        /// `lift` is the highest paw point above the ground (u). `liftShift` moves it later in the swing
+        /// (radians): 0 lifts the paw as it passes under the body, pi / 4 lifts it while it reaches forward.
         func legs(_ amp: Double, _ offsets: [Double], lift: Double, liftShift: Double = 0) {
             for i in 0..<4 {
                 let a = phase + tau * offsets[i]
-                p.legAngle[i] = amp * load * sin(a)
+                p.legAngle[i] = amp * sin(a)
                 p.legLift[i] = lift * max(0, cos(a - liftShift))
             }
         }
@@ -203,24 +204,25 @@ struct DogMotor {
             p.breath = 0.012 * sin(tau * t / 2.5)
             p.tailAngle = 6 * sin(tau * 1.2 * t)
         case .walk:
-            // Four-beat walk. At phase pi / 2 the near fore paw is up and forward; the body bobs 2 u per step.
-            legs(20, [0.125, 0.375, 0.625, 0.875], lift: 0.3, liftShift: Double.pi / 4)
-            p.bodyY = -1 + cos(2 * phase)
+            // Four-beat walk. At phase pi / 2 the near fore paw is 11 u up and forward (6.6 px at the 72 pt card);
+            // the body bobs 4 u (2.4 px) twice per stride.
+            legs(26, [0.125, 0.375, 0.625, 0.875], lift: 11, liftShift: Double.pi / 4)
+            p.bodyY = -2 + 2 * cos(2 * phase)
             p.headY = -0.5 * abs(sin(2 * (phase - tau * 0.1)))
             p.earAngle = 10 * sin(phase)
             p.tailAngle = 8 * sin(phase)
         case .trot:
-            // Diagonal pairs cross wide, the body leans forward.
-            legs(34, [0, 0.5, 0.5, 0], lift: 0.2)
+            // Diagonal pairs cross wide and the forward pair is in the air, the body leans forward.
+            legs(34, [0, 0.5, 0.5, 0], lift: 15, liftShift: Double.pi / 4)
             p.bodyPitch = 4
-            p.bodyY = -1.6 * abs(sin(phase))
+            p.bodyY = -4 * abs(sin(phase))
             p.earAngle = 8 * sin(phase - tau * 0.15)
             p.tailAngle = 10 + 6 * sin(phase)
         case .sprint:
             // Gallop: strong forward lean and ears blown back. No speed lines (round 2).
-            legs(40, [0.5, 0, 0.58, 0.08], lift: 0.2)
+            legs(40, [0.5, 0, 0.58, 0.08], lift: 12, liftShift: Double.pi / 4)
             p.bodyPitch = 8 + 3 * sin(phase)
-            p.bodyY = -2.5 * abs(sin(phase))
+            p.bodyY = -4 * abs(sin(phase))
             p.earAngle = -40 + 5 * sin(phase - tau * 0.15)
             p.headTilt = -4
             p.tailAngle = -20
@@ -228,15 +230,10 @@ struct DogMotor {
         return p
     }
 
-    /// Thermal pant, memory bundle and the attention bubble on top of the gait pose.
+    /// Thermal pant and the attention bubble on top of the gait pose.
     static func applyOverlays(_ base: DogPose, input: DogInput, time t: Double, animated: Bool) -> DogPose {
         var p = base
         let tau = 2 * Double.pi
-        if input.memoryLevel == .red {
-            // bundle > 0 shows the pack. Its scale is 0.96 + 0.04 x bundle: it puffs by 4 % on a 1.6 s cycle.
-            p.bundle = animated ? max(0.01, 0.5 + 0.5 * cos(tau * t / 1.6)) : 1
-            p.bodyY += 2
-        }
         if input.thermal == .serious || input.thermal == .critical {
             p.mouthOpen = 1
             p.tongue = animated ? 8 + sin(tau * 2.5 * t) : 8
@@ -260,7 +257,7 @@ struct DogMotor {
         p.legAngle = (0..<4).map { m(a.legAngle[$0], b.legAngle[$0]) }
         p.legLift = (0..<4).map { m(a.legLift[$0], b.legLift[$0]) }
         p.mouthOpen = m(a.mouthOpen, b.mouthOpen); p.tongue = m(a.tongue, b.tongue); p.eyesClosed = m(a.eyesClosed, b.eyesClosed)
-        p.bundle = m(a.bundle, b.bundle); p.bubble = m(a.bubble, b.bubble)
+        p.bubble = m(a.bubble, b.bubble)
         p.opacity = m(a.opacity, b.opacity)
         return p
     }
@@ -334,7 +331,12 @@ enum DogRig {
         let headArt = head(for: gait, pose: pose)
         let lie = (bodyArt == .lie)
         let center: (x: Double, y: Double) = lie ? (52, 70) : (55, 55)
-        let base = DogAffine.rotate(pose.bodyPitch, about: center).then(.translate(0, pose.bodyY))
+        // While the bubble shows, the whole dog shrinks about a ground point at the tail side (round 3).
+        let k = min(1, max(0, pose.bubble))
+        let shrink = 1 - (1 - DogArt.bubbleShrink) * k
+        let fit = DogAffine.scale(shrink, shrink, about: DogArt.bubbleShrinkAnchor)
+        let pitch = DogAffine.rotate(pose.bodyPitch, about: center)
+        let base = pitch.then(.translate(0, pose.bodyY)).then(fit)
         let headPivot: (x: Double, y: Double) = lie ? (80, 65) : (80, 45)
         let head = DogAffine.rotate(-pose.headTilt, about: headPivot).then(.translate(0, pose.headY)).then(base)
         var out = [DogLayer]()
@@ -346,10 +348,16 @@ enum DogRig {
             let n = part.name
             if n == "shadow" {
                 let sx = 1 + max(-0.1, min(0.05, pose.bodyY * 0.04))
-                add(part, .scale(sx, 1, about: part.pivot))
+                add(part, DogAffine.scale(sx, 1, about: part.pivot).then(fit))
             } else if let i = legNames.firstIndex(of: n) {
-                let t = DogAffine.scale(1, 1 - pose.legLift[i], about: part.pivot)
-                    .then(.rotate(-pose.legAngle[i], about: part.pivot)).then(base)
+                // Legs do not bob with the body. Swing about the hip and lean with the body, then move the leg
+                // so its lowest paw corner is on the ground again, then lift it by legLift (u).
+                let hip = pitch.apply(part.pivot.x, part.pivot.y)
+                let turn = (pose.bodyPitch - pose.legAngle[i]) * Double.pi / 180
+                let length = DogArt.groundY - part.pivot.y
+                let low = hip.y + length * cos(turn) + DogArt.pawHalfWidth * abs(sin(turn))
+                let t = DogAffine.rotate(-pose.legAngle[i], about: part.pivot).then(pitch)
+                    .then(.translate(0, DogArt.groundY - low - pose.legLift[i])).then(fit)
                 add(part, t)
             } else if n == "tail" {
                 add(part, DogAffine.rotate(pose.tailAngle, about: part.pivot).then(base))
@@ -371,23 +379,16 @@ enum DogRig {
                 add(part, base)
             }
         }
-        if pose.bundle > 0 {
-            for part in DogArt.overlay(.bundle) {
-                let s = 0.96 + 0.04 * min(1, pose.bundle)
-                add(part, DogAffine.scale(s, s, about: part.pivot).then(base))
-            }
-        }
         if headArt == .pant {
-            for part in DogArt.overlay(.heat) { add(part, head, 1) }
+            for part in DogArt.overlay(.sweat) { add(part, head, 1) }
         }
         if pose.bubble > 0 {
-            let k = min(1, pose.bubble)
             for part in DogArt.overlay(.bubble) {
                 add(part, .scale(k, k, about: part.pivot))
             }
             if let glyph {
                 let f = DogArt.bubbleGlyphFrame
-                let pivot = DogArt.overlay(.bubble).last?.pivot ?? (108.5, 11.5)
+                let pivot = (DogArt.bubbleCircle.x, DogArt.bubbleCircle.y)
                 let place = DogAffine.scale(f.size / DogArt.badgeSize, f.size / DogArt.badgeSize, about: (0, 0))
                     .then(.translate(f.x, f.y)).then(.scale(k, k, about: pivot))
                 for part in glyph {

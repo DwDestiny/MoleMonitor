@@ -51,7 +51,6 @@ struct DogView: View {
         case .sprint: parts.append("比熊在冲刺")
         }
         if input.thermal == .serious || input.thermal == .critical { parts.append("热得喘气") }
-        if input.memoryLevel == .red { parts.append("背着包袱") }
         if let item = input.worstProblem, input.worstLevel == .yellow || input.worstLevel == .red {
             parts.append("在留意" + item.label)
         }

@@ -51,10 +51,8 @@ struct DogPalette {
         case .blush: return DogPalette.rgb(0xFF9FB2, 0.45)
         case .highlight: return DogPalette.rgb(0xFFFFFF)
         case .shadow: return CGColor(srgbRed: 0, green: 0, blue: 0, alpha: dark ? 0.35 : 0.10)
-        case .bundle: return dark ? DogPalette.rgb(0xBFA984) : DogPalette.rgb(0xD9C3A0)
-        case .bundleDot: return dark ? DogPalette.rgb(0xD8C7A8) : DogPalette.rgb(0xF3E6CF)
-        case .strap: return dark ? DogPalette.rgb(0x9E8661) : DogPalette.rgb(0xB79D74)
-        case .effect: return dark ? DogPalette.rgb(0xAAAAAB, 0.35) : DogPalette.rgb(0x5A5A5A, 0.35)
+        // Round 3: sweat drops, a pale blue that stays lighter than the fur outline.
+        case .effect: return dark ? DogPalette.rgb(0x8CC4F2, 0.5) : DogPalette.rgb(0x6EAAE1, 0.55)
         }
     }
 
@@ -150,6 +148,8 @@ enum DogRenderer {
 /// The menu bar template icon: Bichon head on the left, badge on the right (DESIGN.md 3.1 to 3.4). Alpha is all that matters.
 /// Round 2 (I2): the head (x 0 to 15) and the badge (x 16 to 24) never overlap, so there is no badge gap and the head
 /// is never cut. The ears are part of one head silhouette, so there is no ear gap either.
+/// Round 3 (I2): the red level (pant head) gets the alarm badge, a 9 x 9 pt solid disc at x 15 to 24 with the glyph
+/// knocked out (alpha 0). The yellow level keeps the 8 x 8 pt glyph. The tongue is drawn at 55 % alpha.
 enum MenuIconRenderer {
     static let size = CGSize(width: DogArt.menuSize.w, height: DogArt.menuSize.h)
     /// Clear stroke around the tongue: half of it (0.75 pt) separates the tongue from the chin.
@@ -191,15 +191,28 @@ enum MenuIconRenderer {
                     ctx.addPath(path)
                     ctx.strokePath()
                     ctx.restoreGState()
+                    // Lighter than the face: the tongue reads as a tongue, not as a beard.
+                    ctx.saveGState()
+                    ctx.setAlpha(CGFloat(DogArt.menuTongueAlpha))
+                    fill(path, clear: false, in: ctx)
+                    ctx.restoreGState()
+                    continue
                 }
                 fill(path, clear: part.role == .cutout, in: ctx)
             }
         }
         if let badge = state.badge {
-            let o = DogArt.menuBadgeOrigin
-            ctx.translateBy(x: o.x, y: o.y)
-            ctx.addPath(GlyphPaths.badgeYDown(badge.item, style: style))
-            ctx.fillPath()
+            if state.posture == .pant {
+                let o = DogArt.alarmOrigin
+                ctx.translateBy(x: o.x, y: o.y)
+                for part in DogArt.alarmDisc { fill(DogPathCache.path(part.ops), clear: false, in: ctx) }
+                fill(GlyphPaths.alarmKnockout(badge.item, style: style), clear: true, in: ctx)
+            } else {
+                let o = DogArt.menuBadgeOrigin
+                ctx.translateBy(x: o.x, y: o.y)
+                ctx.addPath(GlyphPaths.badgeYDown(badge.item, style: style))
+                ctx.fillPath()
+            }
         }
         ctx.endTransparencyLayer()
         ctx.restoreGState()

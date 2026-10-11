@@ -3,6 +3,7 @@
 // Input: A health item and a glyph style (docs/DESIGN.md 3.3, 8.4, 8.5).
 // Output: The category badge path: `badge` is y up in a 10 x 10 pt box (fixed contract, the card's CategoryGlyph),
 // `badgeYDown` is y down in a box of any size, by default the 8 x 8 pt menu bar box (DogArt.badgeSize).
+// `alarmKnockout` is the glyph cut out of the 9 x 9 pt alarm disc (red level, round 3).
 // Pos: One glyph source for the menu bar badge, the bubble and the card's CategoryGlyph (I3 calls it). Owner I2.
 //
 // Glyphs come from the fixed art in DogArt.badge (8 x 8 pt art), scaled to the box. Letters (the fallback) come from
@@ -52,6 +53,24 @@ enum GlyphPaths {
             return path
         case .letter:
             return letterPath(letter(item), box: box)
+        }
+    }
+
+    /// Knockout of the alarm badge (red level), inside (0, 0, 9, 9), y down: the part the renderer clears out of the
+    /// 9 x 9 pt disc (DogArt.alarmDisc). Glyph style: pixel-aligned art (DogArt.alarmBadge). Letter style: the letter,
+    /// cap height 0.6 x the box, so a ring of the disc stays around it.
+    static func alarmKnockout(_ item: HealthItem, style: GlyphStyle) -> CGPath {
+        let box = CGFloat(DogArt.alarmSize)
+        switch style {
+        case .glyph:
+            let path = CGMutablePath()
+            for part in DogArt.alarmBadge(item) { path.addPath(cgPath(part.ops)) }
+            return path
+        case .letter:
+            let inner = box * 0.75
+            var t = CGAffineTransform(translationX: (box - inner) / 2, y: (box - inner) / 2)
+            let p = letterPath(letter(item), box: inner)
+            return p.copy(using: &t) ?? p
         }
     }
 

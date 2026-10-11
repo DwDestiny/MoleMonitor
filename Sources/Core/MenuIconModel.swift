@@ -98,6 +98,25 @@ enum IconMetrics {
     static let posturePass = 0.20
     /// Relaxed against raised must reach this ratio (round 2, I2): "attention" has to read at 1x on its own.
     static let relaxedRaisedPass = 0.25
+    /// Alarm discs (red level, 9 x 9 pt, glyph knocked out) pass at this ratio (round 3, I2). A knockout in a
+    /// 9 px disc has less room than an 8 px glyph on an empty box, so the gate is lower than badgePass; the
+    /// level itself reads from the shape (solid disc against open glyph), not from this ratio.
+    static let alarmPass = 0.30
+
+    /// Card legs (round 3, I2): rows 38 to 49 of the 72 x 54 pt card at 1x (y 63 to 83 u) hold the legs.
+    /// stand, walk and trot must differ there by this ratio, a lifted paw must clear the ground by `pawLiftPx`,
+    /// the body must bob by `bobPx`, and the bubble must keep `bubbleGapPx` off the fur.
+    static let cardLegRows = 38..<50
+    static let cardLegPass = 0.30
+    static let pawLiftPx = 6.0
+    static let bobPx = 2.0
+    static let bubbleMinPx = 14.0
+    static let bubbleGapPx = 2.0
+
+    /// xorRatio over the rows `rows` only.
+    static func bandRatio(_ a: [[Double]], _ b: [[Double]], rows: Range<Int>) -> Double {
+        xorRatio(Array(a[rows]), Array(b[rows]))
+    }
 
     /// XOR pixel count divided by the larger solid pixel count. Inputs are alpha grids of the same size.
     static func xorRatio(_ a: [[Double]], _ b: [[Double]]) -> Double {
