@@ -3,7 +3,7 @@
 // Input: Health verdicts, UI state and the visible screen height (docs/DESIGN.md 2.3, 2.5, 2.11, 8.1).
 // Output: A PanelLayoutPlan: section order, one of three tier heights (332, 560, 620), compression steps.
 // Pos: Pure layout planning; the SwiftUI card only renders the plan. Foundation only. Owner I1, main user I3.
-// SKELETON: PanelLayout.plan returns three fixed plans by problem count. No evidence height range, no compression.
+//      The evidence height and the compression steps follow DESIGN.md 2.11 and reproduce every row of its table.
 
 import Foundation
 
@@ -57,39 +57,132 @@ struct PanelLayoutInput: Equatable {
 }
 
 enum PanelLayout {
-    /// SKELETON: 0 problem items give the quiet plan (332), 1 gives the single plan (560), 2 or more give the
-    /// multi plan (620). Problem items are the yellow and red verdicts in input order. The evidence height is
-    /// fixed at 102. Compression, height clamping and the "disclosure includes" flags are not computed.
+    /// Problem cards that show the app list inside the card (DESIGN.md 2.3). Others get an "占用 App" row.
+    static func cardIncludesApps(_ item: HealthItem) -> Bool {
+        item == .cpu || item == .thermal || item == .memory
+    }
+
+    /// Layout switches that the compression steps change.
+    private struct Variant {
+        var mergeApps = false
+        var disclosure26 = false
+        var compactCard = false
+        var compactRows = false
+        var hideSummary = false
+        var foldAuthorization = false
+    }
+
+    private struct Facts {
+        var quiet: Bool
+        var appsRow: Bool           // The "占用 App" row exists before any merge
+        var rowCount: Int           // Problem rows shown (at most 3)
+        var hasSummary: Bool
+        var showAuthorization: Bool
+    }
+
+    /// Height of everything except the evidence area (problem mode) or the whole content (quiet mode).
+    private static func contentHeight(_ f: Facts, _ v: Variant) -> Double {
+        let disclosureHeight = v.disclosure26 ? PanelMetrics.disclosureCompact : PanelMetrics.disclosure
+        var disclosure = [Double]()
+        if f.appsRow && !v.mergeApps { disclosure.append(disclosureHeight) }
+        disclosure.append(disclosureHeight)
+        if f.showAuthorization && !v.foldAuthorization { disclosure.append(PanelMetrics.authorization) }
+        var block = disclosure.reduce(0, +)
+        block += PanelMetrics.rowGap * Double(disclosure.count - 1)
+
+        let pad = 2 * PanelMetrics.padding
+        if f.quiet {
+            let parts: [Double] = [pad, PanelMetrics.heroQuiet, PanelMetrics.sectionGap, PanelMetrics.trendStrip,
+                                   PanelMetrics.sectionGap, block, PanelMetrics.sectionGap, PanelMetrics.footer]
+            return parts.reduce(0, +)
+        }
+        let chrome = v.compactCard ? PanelMetrics.cardChromeCompact : PanelMetrics.cardChrome
+        let rowHeight = v.compactRows ? PanelMetrics.problemRowCompact : PanelMetrics.problemRow
+        var rows = 0.0
+        if f.rowCount > 0 {
+            rows = Double(f.rowCount) * rowHeight + Double(f.rowCount - 1) * PanelMetrics.rowGap + PanelMetrics.cardRowGap
+        }
+        var summary = 0.0
+        if f.hasSummary && !v.hideSummary { summary = PanelMetrics.normalSummary + PanelMetrics.sectionGap }
+        let top: [Double] = [pad, PanelMetrics.heroProblem, PanelMetrics.sectionGap, chrome]
+        let middle: [Double] = [PanelMetrics.cardRowGap, rows, PanelMetrics.cta, PanelMetrics.sectionGap, summary]
+        let bottom: [Double] = [block, PanelMetrics.sectionGap, PanelMetrics.footer]
+        return top.reduce(0, +) + middle.reduce(0, +) + bottom.reduce(0, +)
+    }
+
+    /// Plan of the status card. The tier depends only on the number of problem items. Numbers never change it.
     static func plan(_ input: PanelLayoutInput) -> PanelLayoutPlan {
         let problems = ProblemOrder.problems(input.verdicts).map { $0.item }
-        var sections = [PanelSection]()
-
+        let tier: Double
         if problems.isEmpty {
-            sections.append(.hero(quiet: true))
-            sections.append(.trendStrip)
-            sections.append(.appsDisclosure(expanded: input.appsExpanded))
-            sections.append(.moreDisclosure(expanded: input.moreExpanded, includesApps: false, includesAuthorization: false))
-            if input.showAuthorization { sections.append(.authorization) }
-            sections.append(.footer(quiet: true))
-            return PanelLayoutPlan(quiet: true, tier: PanelMetrics.heightQuiet, sections: sections,
-                                   height: PanelMetrics.heightQuiet, compressions: [], scrollsMore: false)
+            tier = PanelMetrics.heightQuiet
+        } else if problems.count == 1 {
+            tier = PanelMetrics.heightSingle
+        } else {
+            tier = PanelMetrics.heightMulti
+        }
+        // Maximum height = min(tier, visible screen height - 40).
+        let height = min(tier, max(0, input.screenVisibleHeight - 40))
+
+        var expanded: HealthItem?
+        var others = [HealthItem]()
+        if let first = problems.first {
+            var pick = first
+            if let wanted = input.expandedProblem, problems.contains(wanted) { pick = wanted }
+            expanded = pick
+            others = problems.filter { $0 != pick }
+        }
+        let normal = input.verdicts.map { $0.item }.filter { !problems.contains($0) }
+        let appsRow: Bool
+        if let expanded { appsRow = !cardIncludesApps(expanded) } else { appsRow = true }
+        let facts = Facts(quiet: problems.isEmpty, appsRow: appsRow, rowCount: min(others.count, 3),
+                          hasSummary: !normal.isEmpty, showAuthorization: input.showAuthorization)
+
+        // Compression: apply the steps in order until the evidence area reaches its minimum (quiet: until the
+        // content fits). A step that changes nothing is skipped and not recorded.
+        var variant = Variant()
+        var applied = [PanelCompression]()
+        func evidence() -> Double { height - contentHeight(facts, variant) }
+        func needsMore() -> Bool {
+            facts.quiet ? contentHeight(facts, variant) > height : evidence() < PanelMetrics.evidenceMin
+        }
+        for step in PanelCompression.allCases {
+            if !needsMore() { break }
+            switch step {
+            case .mergeApps:
+                if facts.appsRow { variant.mergeApps = true; applied.append(step) }
+            case .disclosure26:
+                variant.disclosure26 = true; applied.append(step)
+            case .compactCard:
+                if !facts.quiet { variant.compactCard = true; applied.append(step) }
+            case .compactRows:
+                if facts.rowCount > 0 { variant.compactRows = true; applied.append(step) }
+            case .hideSummary:
+                if facts.hasSummary { variant.hideSummary = true; applied.append(step) }
+            case .foldAuthorization:
+                if facts.showAuthorization { variant.foldAuthorization = true; applied.append(step) }
+            }
         }
 
-        var expanded: HealthItem = problems[0]
-        if let wanted = input.expandedProblem, problems.contains(wanted) { expanded = wanted }
-        let others = problems.filter { $0 != expanded }
-        sections.append(.hero(quiet: false))
-        sections.append(.problemCard(expanded, compact: false, evidenceHeight: 102))
-        for item in others.prefix(3) { sections.append(.problemRow(item, compact: false)) }
-        sections.append(.copyCTA(expanded))
-        let normal = input.verdicts.map { $0.item }.filter { !problems.contains($0) }
-        if !normal.isEmpty { sections.append(.normalSummary(normal)) }
-        sections.append(.appsDisclosure(expanded: input.appsExpanded))
-        sections.append(.moreDisclosure(expanded: input.moreExpanded, includesApps: false, includesAuthorization: false))
-        if input.showAuthorization { sections.append(.authorization) }
-        sections.append(.footer(quiet: false))
-        let tier = problems.count == 1 ? PanelMetrics.heightSingle : PanelMetrics.heightMulti
-        return PanelLayoutPlan(quiet: false, tier: tier, sections: sections, height: tier,
-                               compressions: [], scrollsMore: others.count > 3)
+        var sections = [PanelSection]()
+        let includesApps = variant.mergeApps
+        let includesAuth = variant.foldAuthorization
+        if let expanded {
+            let e = min(PanelMetrics.evidenceMax, max(PanelMetrics.evidenceMin, evidence()))
+            sections.append(.hero(quiet: false))
+            sections.append(.problemCard(expanded, compact: variant.compactCard, evidenceHeight: e))
+            for item in others.prefix(3) { sections.append(.problemRow(item, compact: variant.compactRows)) }
+            sections.append(.copyCTA(expanded))
+            if facts.hasSummary && !variant.hideSummary { sections.append(.normalSummary(normal)) }
+        } else {
+            sections.append(.hero(quiet: true))
+            sections.append(.trendStrip)
+        }
+        if facts.appsRow && !variant.mergeApps { sections.append(.appsDisclosure(expanded: input.appsExpanded)) }
+        sections.append(.moreDisclosure(expanded: input.moreExpanded, includesApps: includesApps, includesAuthorization: includesAuth))
+        if facts.showAuthorization && !variant.foldAuthorization { sections.append(.authorization) }
+        sections.append(.footer(quiet: facts.quiet))
+        return PanelLayoutPlan(quiet: facts.quiet, tier: tier, sections: sections, height: height,
+                               compressions: applied, scrollsMore: others.count > 3)
     }
 }
