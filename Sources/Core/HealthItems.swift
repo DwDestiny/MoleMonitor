@@ -54,7 +54,8 @@ struct ItemVerdict: Codable, Equatable {
 /// Compares every field. Keep this list in step with `AlertItem`; I1 may move `Equatable` to the declaration later.
 extension AlertItem: Equatable {
     static func == (a: AlertItem, b: AlertItem) -> Bool {
-        a.type == b.type && a.subject == b.subject && a.level == b.level
-            && a.since == b.since && a.message == b.message && a.agentHint == b.agentHint
+        if a.type != b.type || a.subject != b.subject || a.level != b.level { return false }
+        if a.since != b.since { return false }
+        return a.message == b.message && a.agentHint == b.agentHint
     }
 }

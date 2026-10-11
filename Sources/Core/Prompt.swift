@@ -38,8 +38,9 @@ struct PromptInput: Equatable {
 /// Compares every field. Keep this list in step with `DiskGrowth`; I1 may move `Equatable` to the declaration later.
 extension DiskGrowth: Equatable {
     static func == (a: DiskGrowth, b: DiskGrowth) -> Bool {
-        a.window == b.window && a.bytes == b.bytes && a.netBytes == b.netBytes
-            && a.fromMinAt == b.fromMinAt && a.coveredHours == b.coveredHours && a.status == b.status
+        if a.window != b.window || a.bytes != b.bytes || a.netBytes != b.netBytes { return false }
+        if a.fromMinAt != b.fromMinAt { return false }
+        return a.coveredHours == b.coveredHours && a.status == b.status
     }
 }
 

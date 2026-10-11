@@ -75,7 +75,8 @@ enum PanelLayout {
                                    height: PanelMetrics.heightQuiet, compressions: [], scrollsMore: false)
         }
 
-        let expanded = input.expandedProblem.flatMap { problems.contains($0) ? $0 : nil } ?? problems[0]
+        var expanded: HealthItem = problems[0]
+        if let wanted = input.expandedProblem, problems.contains(wanted) { expanded = wanted }
         let others = problems.filter { $0 != expanded }
         sections.append(.hero(quiet: false))
         sections.append(.problemCard(expanded, compact: false, evidenceHeight: 102))

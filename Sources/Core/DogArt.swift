@@ -24,7 +24,8 @@ struct DogPart: Equatable {
 
     /// A tuple cannot get a synthesized Equatable, so the comparison is written by hand.
     static func == (a: DogPart, b: DogPart) -> Bool {
-        a.name == b.name && a.ops == b.ops && a.pivot.x == b.pivot.x && a.pivot.y == b.pivot.y && a.role == b.role
+        if a.name != b.name || a.ops != b.ops || a.role != b.role { return false }
+        return a.pivot.x == b.pivot.x && a.pivot.y == b.pivot.y
     }
 }
 

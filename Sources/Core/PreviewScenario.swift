@@ -205,8 +205,9 @@ extension PreviewScenario {
             r.cpuPercent = 12; r.cpuMean5m = 12; r.cpuMean10m = 11
             r.pressure = .normal; r.swapUsed = Int64(1.3 * gib); r.swapGrowth30m = 10_000_000; r.swapTrend = .flat
             r.batteryPercent = 61; r.powerSource = .battery
-            r.lastSleep = SleepRecord(sleptAt: t.addingTimeInterval(-(8 * 3600 + 30 * 60)),
-                                      wokeAt: t.addingTimeInterval(-(2 * 3600 + 10 * 60)),
+            let sleptAgo: Double = 8.0 * 3600.0 + 30.0 * 60.0
+            let wokeAgo: Double = 2.0 * 3600.0 + 10.0 * 60.0
+            r.lastSleep = SleepRecord(sleptAt: t.addingTimeInterval(-sleptAgo), wokeAt: t.addingTimeInterval(-wokeAgo),
                                       batteryBefore: 82, batteryAfter: 61, onBatteryBeforeSleep: true)
             r.awakeDrainPerHour = 0.8
             r.smcCPUTemperature = 38; r.fanRPMs = [0, 0]
@@ -247,7 +248,9 @@ extension PreviewScenario {
                 case .memory: text = "内存压力正常 · swap " + swap
                 case .cpu: text = "CPU 5 分钟均值 " + RateText.percent(current.cpuMean5m)
                 case .disk: text = "磁盘正常"
-                case .power: text = "电量 " + battery + (current.powerSource == .ac ? " · 接电源" : " · 电池供电")
+                case .power:
+                    let source: String = current.powerSource == .ac ? " · 接电源" : " · 电池供电"
+                    text = "电量 " + battery + source
                 }
                 return ItemVerdict(item: item, level: .green, reasonCode: "ok", headline: text,
                                    since: nil, levelChangedAt: nil, alert: nil)
@@ -273,10 +276,12 @@ extension PreviewScenario {
                         problem(.power, .yellow, "awake_drain", "电池供电 · 掉电 34%/小时", ago: 40),
                         problem(.cpu, .yellow, "cpu_mean_5m", "5 分钟均值 74%", ago: 40)]
         }
-        let rest = HealthItem.allCases
-            .filter { item in !problems.contains { $0.item == item } }
-            .sorted { $0.fixedPriority < $1.fixedPriority }
-            .map { other($0) }
+        let problemItems: [HealthItem] = problems.map { $0.item }
+        var restItems = [HealthItem]()
+        for item in HealthItem.allCases where !problemItems.contains(item) { restItems.append(item) }
+        restItems.sort { $0.fixedPriority < $1.fixedPriority }
+        var rest = [ItemVerdict]()
+        for item in restItems { rest.append(other(item)) }
         return problems + rest
     }
 
@@ -284,11 +289,21 @@ extension PreviewScenario {
 
     private static func fixtureTrend(_ c: PreviewCase, now: Date) -> TrendSeries {
         func calm(_ m: Double) -> Double {
-            max(2, 8 + 4 * sin(m * 0.35) + 3 * sin(m * 1.1) + 25 * exp(-pow((m - 70) / 3, 2)))
+            let slow: Double = 4.0 * sin(m * 0.35)
+            let fast: Double = 3.0 * sin(m * 1.1)
+            let burst: Double = 25.0 * exp(-pow((m - 70.0) / 3.0, 2.0))
+            return max(2.0, 8.0 + slow + fast + burst)
         }
-        func wave(_ base: Double, _ amp: Double, _ m: Double) -> Double { base + amp * sin(m * 0.9) + 0.4 * amp * sin(m * 2.7) }
+        func wave(_ base: Double, _ amp: Double, _ m: Double) -> Double {
+            let first: Double = amp * sin(m * 0.9)
+            let second: Double = 0.4 * amp * sin(m * 2.7)
+            return base + first + second
+        }
         func flatSwap(_ gb: Double) -> (Double) -> Int64 {
-            { m in Int64((gb + 0.03 * sin(m * 0.5)) * Double(1 << 30)) }
+            return { (m: Double) -> Int64 in
+                let wobble: Double = 0.03 * sin(m * 0.5)
+                return Int64((gb + wobble) * 1_073_741_824.0)
+            }
         }
         var shape = TrendShape(cpu: calm, swap: flatSwap(1.2), pressure: { _ in .normal },
                                battery: { _ in 83 }, power: { _ in .ac })
@@ -298,25 +313,32 @@ extension PreviewScenario {
         case .allGreen:
             break
         case .cpuYellow:
-            shape.cpu = { m in m <= 22 ? wave(76, 6, m) : wave(20, 7, m) }
+            shape.cpu = { (m: Double) -> Double in m <= 22.0 ? wave(76, 6, m) : wave(20, 7, m) }
             shape.swap = flatSwap(2.1)
         case .diskRed:
-            shape.cpu = { m in max(5, wave(23, 8, m)) }
+            shape.cpu = { (m: Double) -> Double in max(5.0, wave(23, 8, m)) }
             shape.swap = flatSwap(1.8)
         case .powerYellow:
-            shape.cpu = { m in max(3, wave(12, 5, m)) }
+            shape.cpu = { (m: Double) -> Double in max(3.0, wave(12, 5, m)) }
             shape.swap = flatSwap(1.3)
-            shape.battery = { m in 61 + 0.75 * m / 60 }
+            shape.battery = { (m: Double) -> Double in 61.0 + 0.75 * m / 60.0 }
             shape.power = { _ in .battery }
         case .multi:
-            shape.cpu = { m in m <= 40 ? wave(74, 7, m) : max(5, wave(30, 10, m)) }
-            shape.swap = { m in
-                let bytes: Double = m >= 30 ? 7_400_000_000 - (m - 30) * (2_200_000_000 / 90)
-                                            : 7_400_000_000 + (30 - m) * (2_400_000_000 / 30)
+            shape.cpu = { (m: Double) -> Double in m <= 40.0 ? wave(74, 7, m) : max(5.0, wave(30, 10, m)) }
+            shape.swap = { (m: Double) -> Int64 in
+                // 5.2 GB two hours ago, 7.4 GB 30 minutes ago, 9.8 GB now.
+                let early: Double = 2_200_000_000.0 / 90.0
+                let late: Double = 2_400_000_000.0 / 30.0
+                var bytes: Double = 7_400_000_000.0
+                if m >= 30 {
+                    bytes -= (m - 30) * early
+                } else {
+                    bytes += (30 - m) * late
+                }
                 return Int64(bytes)
             }
             shape.pressure = { m in m <= 25 ? .critical : (m <= 60 ? .warning : .normal) }
-            shape.battery = { m in m <= 70 ? 42 + 34 * m / 60 : 82 }
+            shape.battery = { (m: Double) -> Double in m <= 70.0 ? 42.0 + 34.0 * m / 60.0 : 82.0 }
             shape.power = { m in m <= 70 ? .battery : .ac }
         case .collecting:
             // A trend file restored from the last run: coarse points only, ending 12 minutes ago.
@@ -327,11 +349,14 @@ extension PreviewScenario {
         }
 
         func point(_ secondsAgo: Double) -> TrendPoint {
-            let m = secondsAgo / 60
-            let burst = exp(-pow((m - 40) / 2.5, 2))
-            let rx = 450_000 + 300_000 * (sin(m * 0.8) + 1) + 2_000_000 * burst
-            let tx = 70_000 + 50_000 * (sin(m * 1.7 + 1) + 1) + 250_000 * burst
-            return TrendPoint(t: end.addingTimeInterval(-secondsAgo), cpu: min(100, max(0, shape.cpu(m))),
+            let m: Double = secondsAgo / 60.0
+            let burst: Double = exp(-pow((m - 40.0) / 2.5, 2.0))
+            let rxWave: Double = 300_000.0 * (sin(m * 0.8) + 1.0)
+            let txWave: Double = 50_000.0 * (sin(m * 1.7 + 1.0) + 1.0)
+            let rx: Double = 450_000.0 + rxWave + 2_000_000.0 * burst
+            let tx: Double = 70_000.0 + txWave + 250_000.0 * burst
+            let cpu: Double = min(100.0, max(0.0, shape.cpu(m)))
+            return TrendPoint(t: end.addingTimeInterval(-secondsAgo), cpu: cpu,
                               rx: rx, tx: tx, swapUsed: shape.swap(m), battery: shape.battery(m),
                               pressure: shape.pressure(m), thermal: .nominal, power: shape.power(m))
         }
