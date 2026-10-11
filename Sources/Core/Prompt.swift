@@ -257,6 +257,7 @@ enum PromptBuilder {
             shownProblems = problems.filter { ProblemOrder.topic(for: $0.item) == t }
         }
 
+        let noData = hasNoData(input)
         var protect = AppNameProtection(userNames: options.userNames)
         var lines = [String]()
         lines.append("# MoleMonitor 排查请求")
@@ -279,49 +280,56 @@ enum PromptBuilder {
                                              options: options, mergeNormal: c.mergeNormal, now: now))
         lines.append("")
 
-        // Evidence.
-        lines.append("## 证据")
-        var evidence = [String]()
-        if showsApps(topicScope: topicScope, topic: topic) {
-            let key: AppSortKey = topic == .memory ? .memory : .cpu
-            let top = AppRanking.top(input.apps, by: key, count: c.appRows)
-            if !top.isEmpty {
-                var table = [String]()
-                if !options.includeAppNames { table.append("（已按设置隐藏 App 名称）") }
-                table.append("| App（\(input.appsBasis)） | CPU | 内存 |")
-                table.append("|---|---|---|")
-                for (index, app) in top.enumerated() {
-                    let name = appLabel(app, index: index, options: options, dropBundleID: c.dropBundleID, protect: &protect)
-                    table.append("| \(name) | \(TextFormat.percent(app.cpuPercent)) | \(TextFormat.bytes(app.memoryBytes)) |")
+        if noData {
+            // No usable data: no evidence table and no alert list. The agent must not judge from old or missing values.
+            lines.append("## 数据不可用")
+            lines.append(contentsOf: noDataLines(input.freshness, cli: input.env.cliPath))
+            lines.append("")
+        } else {
+            // Evidence.
+            lines.append("## 证据")
+            var evidence = [String]()
+            if showsApps(topicScope: topicScope, topic: topic) {
+                let key: AppSortKey = topic == .memory ? .memory : .cpu
+                let top = AppRanking.top(input.apps, by: key, count: c.appRows)
+                if !top.isEmpty {
+                    var table = [String]()
+                    if !options.includeAppNames { table.append("（已按设置隐藏 App 名称）") }
+                    table.append("| App（\(input.appsBasis)） | CPU | 内存 |")
+                    table.append("|---|---|---|")
+                    for (index, app) in top.enumerated() {
+                        let name = appLabel(app, index: index, options: options, dropBundleID: c.dropBundleID, protect: &protect)
+                        table.append("| \(name) | \(TextFormat.percent(app.cpuPercent)) | \(TextFormat.bytes(app.memoryBytes)) |")
+                    }
+                    evidence.append(table.joined(separator: "\n"))
                 }
+            }
+            let metrics = metricRows(input, topicScope: topicScope, topic: topic, trim: c.trimMetrics, options: options)
+            if !metrics.isEmpty {
+                var table = ["| 指标 | 值 |", "|---|---|"]
+                for (label, value) in metrics { table.append("| \(label) | \(value) |") }
                 evidence.append(table.joined(separator: "\n"))
             }
-        }
-        let metrics = metricRows(input, topicScope: topicScope, topic: topic, trim: c.trimMetrics, options: options)
-        if !metrics.isEmpty {
-            var table = ["| 指标 | 值 |", "|---|---|"]
-            for (label, value) in metrics { table.append("| \(label) | \(value) |") }
-            evidence.append(table.joined(separator: "\n"))
-        }
-        if evidence.isEmpty { evidence.append("暂无数据。") }
-        lines.append(evidence.joined(separator: "\n\n"))
-        lines.append("")
+            if evidence.isEmpty { evidence.append("暂无数据。") }
+            lines.append(evidence.joined(separator: "\n\n"))
+            lines.append("")
 
-        // Alerts.
-        lines.append("## 当前提醒")
-        let alertRows = alertTexts(shownProblems, options: options)
-        if alertRows.isEmpty {
-            lines.append("无。")
-        } else {
-            for (n, row) in alertRows.prefix(c.alertCount).enumerated() { lines.append("\(n + 1). \(row)") }
+            // Alerts.
+            lines.append("## 当前提醒")
+            let alertRows = alertTexts(shownProblems, options: options)
+            if alertRows.isEmpty {
+                lines.append("无。")
+            } else {
+                for (n, row) in alertRows.prefix(c.alertCount).enumerated() { lines.append("\(n + 1). \(row)") }
+            }
+            lines.append("")
         }
-        lines.append("")
 
         // Notes placeholder and routine check.
         lines.append("## 我注意到的现象")
         lines.append("[在此描述你注意到的现象]")
         lines.append("")
-        if routine {
+        if routine && !noData {
             lines.append("## 例行检查")
             lines.append("当前没有提醒。请做一次快速体检：")
             lines.append("1. 运行 `\(input.env.cliPath) --disk-history --days 30`，看磁盘是否持续增长。")
@@ -334,7 +342,13 @@ enum PromptBuilder {
         lines.append("## 排查规则")
         lines.append(contentsOf: rules(cli: input.env.cliPath, dataDir: input.env.dataDir))
         var text = lines.joined(separator: "\n")
-        if let topic { text += "\n" + topicSection(topic, cli: input.env.cliPath) }
+        if let topic, !noData {
+            text += "\n" + topicSection(topic, cli: input.env.cliPath)
+            if !topicScope {
+                let extra = otherProblems(problems, mainTopic: topic, cli: input.env.cliPath)
+                if !extra.isEmpty { text += "\n" + extra }
+            }
+        }
 
         // S8: the last step runs S2 and S3 on the whole text, then the App names return.
         text = Redactor.redact(text, home: options.homeDirectory, userNames: options.userNames)
@@ -598,14 +612,76 @@ enum PromptBuilder {
 
     // MARK: Fixed text
 
+    // MARK: No data and other problems
+
+    /// True when the numbers cannot be trusted: stale data, a stopped App, or every item still collecting or stale.
+    static func hasNoData(_ input: PromptInput) -> Bool {
+        switch input.freshness {
+        case .stale, .notRunning: return true
+        case .fresh: break
+        }
+        if input.verdicts.isEmpty { return false }
+        return input.verdicts.allSatisfy { $0.level == .unknown || $0.level == .stale }
+    }
+
+    private static func noDataLines(_ f: PromptFreshness, cli: String) -> [String] {
+        var out = [String]()
+        switch f {
+        case .stale(let m): out.append("监测数据已过期（\(m) 分钟前），当前读数不可信。")
+        case .notRunning(let m): out.append("MoleMonitor 未运行，最后数据在 \(m) 分钟前，当前读数不可信。")
+        case .fresh: out.append("MoleMonitor 刚开始运行，还在收集首批数据，当前没有可用读数。")
+        }
+        out.append("不要根据这些数据判断问题，也不要推测问题。")
+        out.append("1. 运行 `\(cli) --status`，确认 App 在运行且数据是新的。")
+        out.append("2. 如果 App 未运行，告诉我，等我启动后再排查。不要自行启动或安装。")
+        out.append("3. 如果数据已是新的，按新数据重新判断。")
+        return out
+    }
+
+    /// The first read-only step of a topic, for the problems that get no topic section.
+    private static func firstStep(_ topic: PromptTopic, cli: String) -> String {
+        switch topic {
+        case .disk: return "运行 `\(cli) --disk-history --days 30`，找出增长集中的日期。"
+        case .memory: return "运行 `sysctl vm.swapusage` 与 `vm_stat`，确认 swap 与压缩内存。"
+        case .cpu: return "运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。"
+        case .thermal: return "运行 `pmset -g therm`，确认是否有降频记录。"
+        case .power: return "运行 `pmset -g batt`，确认电源、电量和充电状态。"
+        case .network: return "运行 `nettop -P -L 1`，找出流量最多的进程。"
+        }
+    }
+
+    /// One line for each problem that the topic section does not cover, in problem order.
+    private static func otherProblems(_ problems: [ItemVerdict], mainTopic: PromptTopic, cli: String) -> String {
+        var rows = [String]()
+        for v in problems {
+            guard let topic = ProblemOrder.topic(for: v.item), topic != mainTopic else { continue }
+            let level: String = v.level == .red ? "红" : "黄"
+            rows.append("- [\(level)] \(topicName(topic))：\(firstStep(topic, cli: cli))")
+        }
+        if rows.isEmpty { return "" }
+        let head = "\n## 其他问题\n上面的专项只展开了排在最前的问题。下面的问题也要排查，每个只给第一条只读命令。回复时按严重程度汇报全部问题："
+        return head + "\n" + rows.joined(separator: "\n")
+    }
+
+    private static func topicName(_ t: PromptTopic) -> String {
+        switch t {
+        case .disk: return "磁盘"
+        case .memory: return "内存"
+        case .cpu: return "CPU"
+        case .thermal: return "温度"
+        case .power: return "耗电"
+        case .network: return "网络"
+        }
+    }
+
     private static func rules(cli: String, dataDir: String) -> [String] {
         var out = [String]()
         out.append("1. 先只读诊断，再给建议。")
-        out.append("2. 删除、卸载或清理前，先列清单（对象、大小、理由），等我确认。")
+        out.append("2. 删除、卸载、清理、结束进程、退出 App 前，都先列清单（对象、大小、理由），等我确认。")
         out.append("3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。")
         out.append("4. 只读工具：`\(cli) --status`、`\(cli) --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`\(dataDir)`。")
-        out.append("5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。")
-        out.append("6. 命令报错时先运行 `<命令> --help`，不猜命令名或参数。")
+        out.append("5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。如果找不到 `mo`，说明我没有安装 Mole，不要自行安装。")
+        out.append("6. 命令报错时先运行 `<命令> --help` 或 `man <命令>`，不猜命令名或参数。")
         out.append("7. 回复：结论一句 \u{2192} 证据 \u{2192} 下一步（标明是否改动系统）。")
         return out
     }
@@ -631,7 +707,7 @@ enum PromptBuilder {
             1. 运行 `sysctl vm.swapusage` 与 `vm_stat`，确认 swap 与压缩内存。
             2. 运行 `ps -Ao pid,rss,comm -m | head -n 15`，对照上表找出大户。
             3. 5 分钟后再运行第 2 步。持续上涨的 App 可能有泄漏。
-            4. 建议顺序：重启该 App → 减少标签页或扩展。不建议 `sudo purge` 或内存清理软件。
+            4. 建议顺序：重启该 App（先问我）→ 减少标签页或扩展。不建议 `sudo purge` 或内存清理软件。
             """
         case .cpu:
             return """
@@ -641,7 +717,7 @@ enum PromptBuilder {
             1. 运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。
             2. 1 分钟后再运行一次，区分短时尖峰与持续占用。
             3. 系统进程（mds_stores、mdworker、photoanalysisd、backupd）：说明用途，通常等它完成，不结束它。
-            4. 用户 App：先建议保存并正常退出，不直接 `kill -9`。
+            4. 用户 App：先列出进程与理由，等我确认后，再建议保存并正常退出。不要自行结束进程，不直接 `kill -9`。
             """
         case .thermal:
             return """

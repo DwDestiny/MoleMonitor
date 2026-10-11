@@ -42,11 +42,11 @@
 
 ## 排查规则
 1. 先只读诊断，再给建议。
-2. 删除、卸载或清理前，先列清单（对象、大小、理由），等我确认。
+2. 删除、卸载、清理、结束进程、退出 App 前，都先列清单（对象、大小、理由），等我确认。
 3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
 4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
-5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。
-6. 命令报错时先运行 `<命令> --help`，不猜命令名或参数。
+5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。如果找不到 `mo`，说明我没有安装 Mole，不要自行安装。
+6. 命令报错时先运行 `<命令> --help` 或 `man <命令>`，不猜命令名或参数。
 7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。
 
 ## 专项：磁盘增长
@@ -55,3 +55,9 @@
 2. 运行 `mo analyze --json ~` 找最大目录，再对其中最大的子目录运行 `mo analyze --json <目录>`。不要不带 --json 运行 `mo analyze`，交互模式可能把文件移到废纸篓。
 3. 对照日期判断来源：下载、虚拟机镜像、Xcode 数据、容器镜像、照片库、本地备份。
 4. 列出可回收项：路径（家目录写 ~）、大小、能否再生成。只用 dry-run 预览。
+
+## 其他问题
+上面的专项只展开了排在最前的问题。下面的问题也要排查，每个只给第一条只读命令。回复时按严重程度汇报全部问题：
+- [红] 内存：运行 `sysctl vm.swapusage` 与 `vm_stat`，确认 swap 与压缩内存。
+- [黄] 耗电：运行 `pmset -g batt`，确认电源、电量和充电状态。
+- [黄] CPU：运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。

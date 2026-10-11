@@ -15,38 +15,21 @@
 | 耗电 | 过期 | — | — |
 | CPU | 过期 | — | — |
 
-## 证据
-| App（近 5 分钟） | CPU | 内存 |
-|---|---|---|
-| Orchard Browser（com.example.orchard） | 6% | 1.9 GB |
-| Kiln Studio（com.example.kiln-studio） | 2% | 1.2 GB |
-| Aster Notes（com.example.aster-notes） | 2% | 800 MB |
-| WindowServer | 1% | 500 MB |
-| Aster Chat（com.example.aster-chat） | <1% | 900 MB |
-
-| 指标 | 值 |
-|---|---|
-| swap | 1.3 GB，30 分钟 +20 MB |
-| 磁盘增长 | 1 天 +0.0 GB · 5 天 +4.0 GB · 30 天 +15 GB |
-| CPU 2 小时 | 均值 10%，峰值 34% |
-
-## 当前提醒
-无。
+## 数据不可用
+监测数据已过期（25 分钟前），当前读数不可信。
+不要根据这些数据判断问题，也不要推测问题。
+1. 运行 `~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`，确认 App 在运行且数据是新的。
+2. 如果 App 未运行，告诉我，等我启动后再排查。不要自行启动或安装。
+3. 如果数据已是新的，按新数据重新判断。
 
 ## 我注意到的现象
 [在此描述你注意到的现象]
 
-## 例行检查
-当前没有提醒。请做一次快速体检：
-1. 运行 `~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`，看磁盘是否持续增长。
-2. 运行 `mo status --json`，看是否有长期高占用的进程。
-3. 只汇报发现，不做任何改动。
-
 ## 排查规则
 1. 先只读诊断，再给建议。
-2. 删除、卸载或清理前，先列清单（对象、大小、理由），等我确认。
+2. 删除、卸载、清理、结束进程、退出 App 前，都先列清单（对象、大小、理由），等我确认。
 3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
 4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
-5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。
-6. 命令报错时先运行 `<命令> --help`，不猜命令名或参数。
+5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。如果找不到 `mo`，说明我没有安装 Mole，不要自行安装。
+6. 命令报错时先运行 `<命令> --help` 或 `man <命令>`，不猜命令名或参数。
 7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。

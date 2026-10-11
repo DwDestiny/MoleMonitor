@@ -32,11 +32,11 @@
 
 ## 排查规则
 1. 先只读诊断，再给建议。
-2. 删除、卸载或清理前，先列清单（对象、大小、理由），等我确认。
+2. 删除、卸载、清理、结束进程、退出 App 前，都先列清单（对象、大小、理由），等我确认。
 3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
 4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
-5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。
-6. 命令报错时先运行 `<命令> --help`，不猜命令名或参数。
+5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。如果找不到 `mo`，说明我没有安装 Mole，不要自行安装。
+6. 命令报错时先运行 `<命令> --help` 或 `man <命令>`，不猜命令名或参数。
 7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。
 
 ## 专项：CPU
@@ -44,4 +44,4 @@
 1. 运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。
 2. 1 分钟后再运行一次，区分短时尖峰与持续占用。
 3. 系统进程（mds_stores、mdworker、photoanalysisd、backupd）：说明用途，通常等它完成，不结束它。
-4. 用户 App：先建议保存并正常退出，不直接 `kill -9`。
+4. 用户 App：先列出进程与理由，等我确认后，再建议保存并正常退出。不要自行结束进程，不直接 `kill -9`。
