@@ -2200,14 +2200,14 @@ extension PreviewScenario {
 ```swift
 final class MonitorEngine: ObservableObject {
     // 现有属性保留：status、diskLevel、alerts、authorization、diskSeries、diskTrigger。
-    // 删除：live（被 trend 与 current 取代）。
+    // live 暂时保留（Panel.swift 仍在使用）。I3 的新状态卡落地后，由 I3 或协调者删除。
 
     @Published private(set) var verdicts: [ItemVerdict]        // 全部健康项
     @Published private(set) var problems: [ItemVerdict]        // ProblemOrder.problems 的结果
     @Published private(set) var current: CurrentReadings
     @Published private(set) var trend: TrendSeries             // 2 小时，含细段
     @Published private(set) var topApps: [AppUsage]
-    @Published private(set) var appsBasis: String              // "近 N 分钟"（N 最大 5）或 "实时"
+    @Published private(set) var appsBasis: String              // "近 N 分钟"（N 最大 5）、"实时" 或 "采样于 HH:mm"
     @Published private(set) var coverage: ProcessCoverage
     @Published private(set) var dataState: DataState
 
@@ -2218,6 +2218,8 @@ final class MonitorEngine: ObservableObject {
     @Published private(set) var sleeps: [SleepRecord]          // 最近的睡眠记录，供耗电项
     func prompt(scope: PromptScope) -> String                  // 主线程调用，< 2 ms
     func promptInput() -> PromptInput
+    func diagnosticSnapshot() -> DiagnosticSnapshot            // 真实读数与定时器数，供 --diagnose 与 I3
+    var openCardHandler: ((HealthItem?) -> Void)?              // 主线程。用户点按通知时调用，由 App 层打开状态卡
 
 #if UITEST
     var activeTimerCount: Int { get }                          // 关闭时应为 1
@@ -2231,7 +2233,7 @@ final class MonitorEngine: ObservableObject {
 | 文件 | 职责 |
 |---|---|
 | `Sources/App/SystemSampler.swift` | 合并现有 `LiveSampler`：CPU tick、网卡、内存压力、swap、热状态、机型与芯片。删除 `LiveSampler.swift` |
-| `Sources/Sensors.swift` | 增加电池电量与电源读取（IOKit 电源接口，只读）。睡眠前后各读一次电量，生成 `SleepRecord` |
+| `Sources/Sensors.swift` | 增加电池电量与电源读取（只读 IORegistry 的 AppleSmartBattery 项，不用 IOPS 接口，不建 run loop 源）。睡眠前后各读一次电量，生成 `SleepRecord` |
 | `Sources/App/ProcessSampler.swift` | `proc_listallpids`、`proc_pid_rusage`、`proc_name`、`proc_pidpath`、包信息缓存，输出 `[ProcessSample]` 与 `ProcessCoverage`。扫描周期 300 秒（全绿且状态卡关闭）、180 秒（任一项黄或红）、4 秒（状态卡打开） |
 | `Sources/App/Clipboard.swift` | `enum Clipboard { static func copy(_ text: String) -> Bool }`，封装 `NSPasteboard` 与触感反馈 |
 | `Sources/App/Notifier.swift` | 增加通知动作“复制给 Agent”与点按通知打开状态卡的回调 |
