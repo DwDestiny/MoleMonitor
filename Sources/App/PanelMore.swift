@@ -6,6 +6,14 @@
 
 import SwiftUI
 
+enum PanelMoreBattery {
+    /// The engine has no power verdict on a Mac without a battery. A fixture or an old status can mark it not applicable.
+    static func exists(_ data: PanelData) -> Bool {
+        guard let v = data.verdict(.power) else { return false }
+        return v.level != .notApplicable
+    }
+}
+
 struct MoreDisclosure: View {
     @ObservedObject var model: PanelModel
     let expanded: Bool
@@ -30,7 +38,7 @@ struct MoreDisclosure: View {
     }
 
     /// A desktop Mac has no battery: the power item is not applicable and the row does not mention it.
-    private var hasBattery: Bool { data.verdict(.power)?.level != .notApplicable }
+    private var hasBattery: Bool { PanelMoreBattery.exists(data) }
 
     private var preview: String {
         if data.isCollecting { return "统计中" }
@@ -105,7 +113,7 @@ private struct MoreContent: View {
                 networkBlock
             }
             trafficBlock
-            if !isProblem(.power) && data.verdict(.power)?.level != .notApplicable {
+            if !isProblem(.power) && PanelMoreBattery.exists(data) {
                 batteryBlock
             }
             sensorBlock
