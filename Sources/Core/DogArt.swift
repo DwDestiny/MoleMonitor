@@ -324,7 +324,7 @@ enum DogArt {
     /// Badge glyph: thermal. 8 x 8 pt box, y down, on the 1x pixel grid.
     static let badgeThermal: [DogPart] = [
         DogPart(name: "thermal.stem", ops: ops("M 4 0 L 4 0 C 4.55 0 5 0.45 5 1 L 5 4 C 5 4.55 4.55 5 4 5 L 4 5 C 3.45 5 3 4.55 3 4 L 3 1 C 3 0.45 3.45 0 4 0 Z"), pivot: (4, 4), role: .ink, layer: 0),
-        DogPart(name: "thermal.bulb", ops: ops("M 6.2 5.8 C 6.2 7.02 5.22 8 4 8 C 2.78 8 1.8 7.02 1.8 5.8 C 1.8 4.58 2.78 3.6 4 3.6 C 5.22 3.6 6.2 4.58 6.2 5.8 Z"), pivot: (4, 4), role: .ink, layer: 0),
+        DogPart(name: "thermal.bulb", ops: ops("M 6.5 5.5 C 6.5 6.88 5.38 8 4 8 C 2.62 8 1.5 6.88 1.5 5.5 C 1.5 4.12 2.62 3 4 3 C 5.38 3 6.5 4.12 6.5 5.5 Z"), pivot: (4, 4), role: .ink, layer: 0),
     ]
 
     /// Badge glyph: disk. 8 x 8 pt box, y down, on the 1x pixel grid.
@@ -335,7 +335,7 @@ enum DogArt {
 
     /// Badge glyph: power. 8 x 8 pt box, y down, on the 1x pixel grid.
     static let badgePower: [DogPart] = [
-        DogPart(name: "power.bolt", ops: ops("M 4 0 L 7 0 L 5.2 3 L 7.5 3 L 2.5 8 L 3.6 4.6 L 1 4.6 Z"), pivot: (4, 4), role: .ink, layer: 0),
+        DogPart(name: "power.bolt", ops: ops("M 4 0 L 7 0 L 5 3 L 7.5 3 L 2.5 8 L 3.5 5 L 1 5 Z"), pivot: (4, 4), role: .ink, layer: 0),
     ]
     // ART-END
 }
