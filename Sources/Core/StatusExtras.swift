@@ -174,10 +174,8 @@ enum StatusExtras {
         return .absent(unit: "percent", status: .collecting)
     }
 
-    /// Union of the top 8 by CPU and the top 8 by memory, at most 16 entries (DESIGN.md 8.1).
-    /// Nil when there are no apps, so the field stays out of the file until the first scan is done.
-    static func topApps(_ apps: [AppUsage], coverage: ProcessCoverage?, sampledAt: Date, basis: String) -> TopAppsStatus? {
-        guard !apps.isEmpty else { return nil }
+    /// Union of the top 8 by CPU and the top 8 by memory, at most 16 entries (DESIGN.md 8.1). CPU order first.
+    static func unionApps(_ apps: [AppUsage]) -> [AppUsage] {
         var chosen = [AppUsage]()
         var seen = Set<String>()
         let byCPU: [AppUsage] = AppRanking.top(apps, by: .cpu, count: topPerKey)
@@ -186,8 +184,14 @@ enum StatusExtras {
             seen.insert(app.key)
             chosen.append(app)
         }
+        return Array(chosen.prefix(maxTopApps))
+    }
+
+    /// The `top_apps` field. Nil when there are no apps, so the field stays out of the file until the first scan is done.
+    static func topApps(_ apps: [AppUsage], coverage: ProcessCoverage?, sampledAt: Date, basis: String) -> TopAppsStatus? {
+        guard !apps.isEmpty else { return nil }
         var entries = [TopAppEntry]()
-        for app in chosen.prefix(maxTopApps) {
+        for app in unionApps(apps) {
             entries.append(TopAppEntry(name: app.name, bundleID: app.bundleID, cpuPercent: app.cpuPercent,
                                        memoryBytes: app.memoryBytes, memoryBasis: app.memoryBasis,
                                        processCount: app.processCount, isSystem: app.isSystem))

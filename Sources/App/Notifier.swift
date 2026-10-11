@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: Authorization requests and alerts (type, title, body) from MonitorEngine.
-// Output: System notifications through UNUserNotificationCenter; authorization state as a string.
-// Pos: Mac-only notification layer (docs/PROJECT.md 5); without an app bundle it does nothing and reports "unavailable".
+// Input: Authorization requests and planned notifications (title, body, topic) from MonitorEngine.
+// Output: System notifications through UNUserNotificationCenter with the action "复制给 Agent"; authorization state as a string.
+//         Callbacks: the action (copy the prompt of one topic, the card stays closed) and a tap on the notification (open the card).
+// Pos: Mac-only notification layer (docs/PROJECT.md 5, docs/DESIGN.md 6.9); without an app bundle it does nothing and reports "unavailable".
+//      The global budget (3 per hour, 10 per day) moved to the engine, which consumes it in problem order.
 
 import Foundation
 import UserNotifications
@@ -10,9 +12,15 @@ import UserNotifications
 /// Authorization strings: "authorized" | "denied" | "not_determined" | "unavailable".
 /// Completion handlers run on an arbitrary queue; the caller hops to its own queue.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
+    static let categoryID = "molemonitor.alert"
+    static let copyActionID = "molemonitor.copy-prompt"
+
     private let center: UNUserNotificationCenter?
-    private let lock = NSLock()
-    private var budget = NotificationBudget()
+
+    /// Called on an arbitrary queue when the user taps "复制给 Agent". The card stays closed.
+    var onCopyPrompt: ((PromptTopic) -> Void)?
+    /// Called on an arbitrary queue when the user taps the notification itself. The card opens and shows the item.
+    var onOpenCard: ((HealthItem?) -> Void)?
 
     var isAvailable: Bool { center != nil }
 
@@ -26,6 +34,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
         super.init()
         center?.delegate = self
+        // UNVERIFIED-ON-MAC: UNNotificationAction/UNNotificationCategory initializers and setNotificationCategories.
+        // Fallback: remove the category; notifications then come without the action and a tap still opens the card.
+        let copy = UNNotificationAction(identifier: Notifier.copyActionID, title: "复制给 Agent", options: [])
+        let category = UNNotificationCategory(identifier: Notifier.categoryID, actions: [copy], intentIdentifiers: [], options: [])
+        center?.setNotificationCategories([category])
     }
 
     // MARK: Authorization
@@ -61,24 +74,20 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: Posting
 
-    /// Posts one notification when authorized and under the global cap (3 per hour, 10 per day).
-    /// An over-cap alert is dropped here; it stays in the engine's alert list.
-    /// The identifier is "type:subject", so a newer notification of the same alert replaces the older one.
-    func post(type: String, subject: String, title: String, body: String, now: Date) {
+    /// Posts one planned notification when authorized. The engine has already applied the budget and the order.
+    /// The identifier is the dedupe key, so a newer notification of the same event replaces the older one.
+    func post(_ planned: PlannedNotification) {
         guard let center else { return }
-        center.getNotificationSettings { [weak self] settings in
-            guard let self else { return }
+        center.getNotificationSettings { settings in
             guard Notifier.authorizationString(settings.authorizationStatus) == "authorized" else { return }
-            self.lock.lock()
-            let allowed = self.budget.tryConsume(now: now)
-            self.lock.unlock()
-            guard allowed else { return }
             let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
+            content.title = planned.title
+            content.body = planned.body
             content.sound = .default
-            content.threadIdentifier = type
-            let request = UNNotificationRequest(identifier: "\(type):\(subject)", content: content, trigger: nil)
+            content.threadIdentifier = planned.item.rawValue
+            content.categoryIdentifier = Notifier.categoryID
+            content.userInfo = ["topic": planned.topic.rawValue, "item": planned.item.rawValue]
+            let request = UNNotificationRequest(identifier: planned.key, content: content, trigger: nil)
             center.add(request) { _ in }
         }
     }
@@ -91,5 +100,20 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .list, .sound])
+    }
+
+    /// A tap on the action or on the notification body.
+    // UNVERIFIED-ON-MAC: didReceive response delegate signature and UNNotificationDefaultActionIdentifier.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let info = response.notification.request.content.userInfo
+        let topic: PromptTopic? = (info["topic"] as? String).flatMap { PromptTopic(rawValue: $0) }
+        let item: HealthItem? = (info["item"] as? String).flatMap { HealthItem(rawValue: $0) }
+        if response.actionIdentifier == Notifier.copyActionID {
+            if let topic { onCopyPrompt?(topic) }
+        } else if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            onOpenCard?(item)
+        }
+        completionHandler()
     }
 }

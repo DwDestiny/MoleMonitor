@@ -101,7 +101,7 @@ enum SupplementalSensors {
         return sample
     }
 
-    private static func numberProperty(_ entry: io_registry_entry_t, _ key: String) -> Double? {
+    fileprivate static func numberProperty(_ entry: io_registry_entry_t, _ key: String) -> Double? {
         guard let property = IORegistryEntryCreateCFProperty(entry, key as CFString,
                                                             kCFAllocatorDefault, 0)?.takeRetainedValue(),
               let number = property as? NSNumber else { return nil }
@@ -109,7 +109,7 @@ enum SupplementalSensors {
         return value.isFinite ? value : nil
     }
 
-    private static func boolProperty(_ entry: io_registry_entry_t, _ key: String) -> Bool? {
+    fileprivate static func boolProperty(_ entry: io_registry_entry_t, _ key: String) -> Bool? {
         guard let value = numberProperty(entry, key), value == 0 || value == 1 else { return nil }
         return value == 1
     }
@@ -145,6 +145,39 @@ enum SupplementalSensors {
         if brand.contains("Intel") { return ["TCAD", "TC0D", "TC0F"] }
         return []
     }()
+}
+
+/// Battery level and power source for the trend (docs/DESIGN.md 6.1, 8.2). Read-only AppleSmartBattery properties.
+/// The engine calls it every 60 s on battery power and every 5 minutes on AC. A Mac without a battery returns
+/// `hasBattery == false`; a failed read leaves the fields nil and never turns them into 0.
+struct PowerSnapshot: Equatable {
+    var hasBattery: Bool
+    var percent: Double?
+    var source: PowerSource?
+    var charging: Bool?
+}
+
+enum PowerReader {
+    static func read() -> PowerSnapshot {
+        let battery = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard battery != 0 else { return PowerSnapshot(hasBattery: false, percent: nil, source: nil, charging: nil) }
+        defer { IOObjectRelease(battery) }
+        guard SupplementalSensors.boolProperty(battery, "BatteryInstalled") != false else {
+            return PowerSnapshot(hasBattery: false, percent: nil, source: nil, charging: nil)
+        }
+        var percent: Double?
+        if let current = SupplementalSensors.numberProperty(battery, "CurrentCapacity"),
+           let maximum = SupplementalSensors.numberProperty(battery, "MaxCapacity"),
+           maximum > 0, current >= 0, current <= maximum {
+            percent = 100 * current / maximum
+        }
+        var source: PowerSource?
+        if let external = SupplementalSensors.boolProperty(battery, "ExternalConnected") {
+            source = external ? .ac : .battery
+        }
+        return PowerSnapshot(hasBattery: true, percent: percent, source: source,
+                             charging: SupplementalSensors.boolProperty(battery, "IsCharging"))
+    }
 }
 
 // The wire layout/command numbers are informed by SMCKit; the CPU key catalog
