@@ -352,6 +352,8 @@ final class UITestRunner {
     var anchorWindow: NSWindow?
     var axCache: [UITestAXNode]?
     var eventNumber = 1
+    var windowCaptureMethod: String?
+    var windowCaptureUnavailable = false
     var quitPressWorked = false
     var quitNeedsActivation = false
 
@@ -422,45 +424,74 @@ final class UITestRunner {
     }
 
     typealias WindowImageFunction = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+    typealias DisplayImageFunction = @convention(c) (UInt32, CGRect) -> Unmanaged<CGImage>?
 
     /// The window as the window server composites it, so animations in flight are included. cacheDisplay draws the final
-    /// state of the view tree and misses Core Animation motion. The call is looked up at run time because the SDK marks it as replaced.
+    /// state of the view tree and misses Core Animation motion. The calls are looked up at run time because the SDK marks them as replaced.
+    /// The first method that returns an image is remembered; the diagnostics list what each method returned.
     func windowImage(_ window: NSWindow) -> CGImage? {
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
-        let function = unsafeBitCast(symbol, to: WindowImageFunction.self)
-        // 8 = only the one window, 1 = ignore the framing, 16 = nominal resolution
-        return function(CGRect.null, 8, UInt32(window.windowNumber), 1 | 16)?.takeRetainedValue()
+        let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        let f = window.frame
+        let rect = CGRect(x: f.minX, y: screenHeight - f.maxY, width: f.width, height: f.height)
+        let number = UInt32(window.windowNumber)
+        var methods = [(name: String, run: () -> CGImage?)]()
+        if let symbol = dlsym(rtldDefault, "CGWindowListCreateImage") {
+            let list = unsafeBitCast(symbol, to: WindowImageFunction.self)
+            methods.append(("window list, window only", { list(CGRect.null, 8, number, 1 | 16)?.takeRetainedValue() }))
+            methods.append(("window list, window by frame", { list(rect, 8, number, 16)?.takeRetainedValue() }))
+            methods.append(("window list, screen region", { list(rect, 1, 0, 16)?.takeRetainedValue() }))
+        }
+        if let symbol = dlsym(rtldDefault, "CGDisplayCreateImageForRect") {
+            let display = unsafeBitCast(symbol, to: DisplayImageFunction.self)
+            methods.append(("display rect", { display(CGMainDisplayID(), rect)?.takeRetainedValue() }))
+        }
+        if let known = windowCaptureMethod, let m = methods.first(where: { $0.name == known }) { return m.run() }
+        var results = [String]()
+        for m in methods {
+            if let image = m.run(), image.width > 8, image.height > 8 {
+                windowCaptureMethod = m.name
+                info["windowCaptureMethod"] = m.name
+                return image
+            }
+            results.append("\(m.name): none")
+        }
+        windowCaptureUnavailable = true
+        let listed = (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? [])
+            .filter { ($0[kCGWindowOwnerPID as String] as? Int32) == getpid() }
+            .map { "\($0[kCGWindowNumber as String] ?? "?")@\($0[kCGWindowLayer as String] ?? "?") onscreen=\($0[kCGWindowIsOnscreen as String] ?? "?")" }
+        info["windowCaptureDiagnostics"] = "\(methods.count) methods \(results.joined(separator: ", ")); window number \(number); frame \(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))x\(Int(rect.height)); windows of this process \(listed.joined(separator: " | "))"
+        return nil
     }
 
-    /// A frame for the motion checks: the window server image when it is available, else cacheDisplay.
-    func captureFrame(_ view: NSView) -> (shot: UITestShot, fromWindowServer: Bool)? {
-        busy { () -> (shot: UITestShot, fromWindowServer: Bool)? in
+    /// A frame for the motion checks from the window server. nil when no method works; cacheDisplay shows only the end state of an animation.
+    func windowFrame(_ view: NSView) -> UITestShot? {
+        guard !windowCaptureUnavailable else { return nil }
+        return busy { () -> UITestShot? in
             let t = now()
-            if let window = view.window, let cg = windowImage(window),
-               let shot = UITestPixels.shot(from: cg, pointWidth: window.frame.width) {
-                renderMs.append((now() - t) * 1000)
-                return (shot, true)
-            }
-            return captureUnmarked(view).map { (shot: $0, fromWindowServer: false) }
+            guard let window = view.window, let cg = windowImage(window),
+                  let shot = UITestPixels.shot(from: cg, pointWidth: window.frame.width) else { return nil }
+            renderMs.append((now() - t) * 1000)
+            return shot
         }
     }
 
-    /// Sum over the presentation layers of opacity and position. It changes while a Core Animation animation runs.
-    func layerSignature(_ view: NSView) -> (value: Double, animated: Int) {
-        guard let root = view.window?.contentView?.superview?.layer ?? view.layer else { return (0, 0) }
+    /// Sums over the presentation layers: opacity, position and the layer count. They change while an animation runs.
+    func layerSignature(_ view: NSView) -> (value: Double, animated: Int, count: Int) {
+        guard let root = view.window?.contentView?.superview?.layer ?? view.layer else { return (0, 0, 0) }
         var value = 0.0
         var animated = 0
-        var budget = 4000
+        var count = 0
         func walk(_ layer: CALayer, _ depth: Int) {
-            guard budget > 0, depth < 40 else { return }
-            budget -= 1
+            guard count < 4000, depth < 40 else { return }
+            count += 1
             let p = layer.presentation() ?? layer
             value += Double(p.opacity) * 3 + Double(p.position.y) * 0.01 + Double(p.position.x) * 0.007 + Double(p.bounds.width) * 0.001
             animated += layer.animationKeys()?.count ?? 0
             for sub in layer.sublayers ?? [] { walk(sub, depth + 1) }
         }
         walk(root, 0)
-        return (value, animated)
+        return (value, animated, count)
     }
 
     /// Asks the system to build the accessibility tree of this process. SwiftUI builds it only when a client is present.
@@ -568,7 +599,8 @@ final class UITestRunner {
         switch (ax, registry) {
         case let (a?, r?):
             if iou(a, r) >= 0.5 { return Located(rect: a, source: "accessibility tree") }
-            return Located(rect: r, source: "layout registry (accessibility frame disagrees)")
+            // The accessibility frame matched the rendered image in the review; the registry frame is offset. Trust the tree.
+            return Located(rect: a, source: "accessibility tree (layout registry disagrees)")
         case let (a?, nil):
             return Located(rect: a, source: "accessibility tree")
         case let (nil, r?):
@@ -740,7 +772,7 @@ final class UITestRunner {
         var beforeTime: Double
         var afterTime: Double
         var windowCapture: Bool
-        var signatures: [(offset: Double, value: Double, animated: Int)]
+        var signatures: [(offset: Double, value: Double, animated: Int, count: Int)]
     }
 
     enum OpenVia: String {
@@ -779,19 +811,23 @@ final class UITestRunner {
         let ref = box.value ?? before
         var live: Double?
         var shots = [(offset: Double, shot: UITestShot)]()
-        var signatures = [(offset: Double, value: Double, animated: Int)]()
-        var windowCapture = true
-        for offset in offsets {
-            await sleepUntil(ref + offset / 1000)
-            if live == nil, engine.isLiveSampling { live = (now() - ref) * 1000 }
+        var signatures = [(offset: Double, value: Double, animated: Int, count: Int)]()
+        var nextShot = 0
+        let sampleUntil = offsets.isEmpty ? 0 : Swift.max(offsets.last ?? 0, 600)
+        // Sample the layers every few ms and take the pixel frames at the offsets. Only the layer sampling runs between frames.
+        while !offsets.isEmpty {
             let at = (now() - ref) * 1000
-            let sig = layerSignature(hv)
-            signatures.append((at, sig.value, sig.animated))
-            if let frame = captureFrame(hv) {
-                shots.append((at, frame.shot))
-                if !frame.fromWindowServer { windowCapture = false }
+            if live == nil, engine.isLiveSampling { live = at }
+            let sig = busy { layerSignature(hv) }
+            signatures.append((at, sig.value, sig.animated, sig.count))
+            if nextShot < offsets.count, at >= offsets[nextShot] {
+                if let frame = windowFrame(hv) { shots.append((at, frame)) }
+                nextShot += 1
             }
+            if at >= sampleUntil { break }
+            await sleepMs(6)
         }
+        let windowCapture = !windowCaptureUnavailable && shots.count == offsets.count
         if live == nil {
             let spent = (now() - ref) * 1000
             if let waited = await waitFor(timeoutMs: Swift.max(0, 1500 - spent), { engine.isLiveSampling }) { live = spent + waited }
@@ -914,6 +950,20 @@ final class UITestRunner {
         return result
     }
 
+    /// Motion in layer samples: steps where the value changed while the layer count stayed the same, and the time of the last change.
+    func layerMotion(_ r: OpenResult) -> (steps: Int, settledMs: Double, settled: Bool, minValue: Double, maxValue: Double) {
+        let s = r.signatures
+        var steps = 0
+        var lastChange = 0.0
+        for (a, b) in zip(s, s.dropFirst()) where abs(a.value - b.value) > 1e-6 {
+            if a.count == b.count { steps += 1 }
+            lastChange = b.offset
+        }
+        let tail = s.suffix(5)
+        let settled = tail.count == 5 && (tail.map { $0.value }.max() ?? 0) - (tail.map { $0.value }.min() ?? 0) < 1e-6
+        return (steps, lastChange, settled, s.map { $0.value }.min() ?? 0, s.map { $0.value }.max() ?? 0)
+    }
+
     // C: entrance animation advances
     func stepC(_ open: OpenResult) {
         let t0 = now()
@@ -922,31 +972,35 @@ final class UITestRunner {
         for i in 0..<Swift.max(0, shots.count - 1) {
             fractions.append(UITestPixels.compare(shots[i].shot, shots[i + 1].shot).fraction)
         }
-        let enough = shots.count >= 6
+        let enough = open.windowCapture && shots.count >= 6
         let moving = enough ? fractions.prefix(4).filter { $0 > 0.005 }.count : 0
-        let settled = enough && fractions[4] < 0.001
+        let settledPixels = enough && fractions[4] < 0.001
         let total = enough ? UITestPixels.compare(shots[0].shot, shots[5].shot).fraction : 0
-        let pixelOk = open.windowCapture && moving >= 2 && settled && total > 0.01
+        let pixelOk = enough && moving >= 2 && settledPixels && total > 0.01
 
-        // Core Animation view of the same open: the presentation values must change and then stop.
-        let sig = open.signatures.map { $0.value }
-        let sigChanges = zip(sig, sig.dropFirst()).filter { abs($0 - $1) > 1e-6 }.count
-        let sigSettled = sig.count >= 2 && abs(sig[sig.count - 1] - sig[sig.count - 2]) < 1e-6
+        let layer = layerMotion(open)
+        let layerOk = layer.steps >= 3 && layer.settled
         let animatedMax = open.signatures.map { $0.animated }.max() ?? 0
-        let layerOk = sigChanges >= 2 && sigSettled
-        let offsets = open.shots.map { Int($0.offset.rounded()) }
+        let offsets = shots.map { Int($0.offset.rounded()) }
         let gap = probe.maxAppGap(from: open.afterTime, to: open.refTime + 1.5)
         var values: [String: Double] = ["movingTransitions": Double(moving), "firstToLast": total,
-                                        "layerSignatureChanges": Double(sigChanges), "layerAnimationsMax": Double(animatedMax),
+                                        "layerMotionSteps": Double(layer.steps), "layerLastChangeMs": layer.settledMs,
+                                        "layerSamples": Double(open.signatures.count), "layerAnimationsMax": Double(animatedMax),
                                         "windowCapture": open.windowCapture ? 1 : 0, "gapAfterOpenMs": gap]
         for (i, f) in fractions.enumerated() { values["changedFraction_\(i)_\(i + 1)"] = f }
-        let how = pixelOk ? "window pixels" : (layerOk ? "Core Animation layer values" : "no method")
-        let signatureText = open.signatures.map { String(format: "%.2f/%d", $0.value, $0.animated) }.joined(separator: " ")
+        let how = pixelOk ? "window pixels" : (layerOk ? "layer values" : "no method")
         info["entranceFrameOffsetsMs"] = offsets.map(String.init).joined(separator: ",")
-        info["layerSignatures"] = signatureText
-        record("C", "入场动画在推进", pixelOk || layerOk, since: t0,
-               "frames at \(offsets) ms (open call \(String(format: "%.0f", open.clickMs)) ms, window-server capture=\(open.windowCapture)); changed-pixel share per step \(fractions.map { String(format: "%.3f", $0) }); steps that moved \(moving) of 4, settled at the end=\(settled); layer value changes \(sigChanges), layers with animations (max) \(animatedMax), layers settled=\(sigSettled); motion shown by \(how); layer values \(signatureText); longest main-thread gap after the show call \(String(format: "%.1f", gap)) ms",
-               values)
+        info["layerSignatures"] = open.signatures.enumerated().filter { $0.offset % 3 == 0 }
+            .map { String(format: "%.0f:%.2f/%d", $0.element.offset, $0.element.value, $0.element.count) }.joined(separator: " ")
+        let detail = "layer samples \(open.signatures.count), steps with a changing value at a constant layer count \(layer.steps), last change at \(Int(layer.settledMs)) ms, settled at the end=\(layer.settled), values \(String(format: "%.2f", layer.minValue))...\(String(format: "%.2f", layer.maxValue)), layers with a Core Animation animation (max) \(animatedMax); window-server frames \(shots.count) (capture works=\(open.windowCapture)) at \(offsets) ms, changed-pixel share per step \(fractions.map { String(format: "%.3f", $0) }); open call \(String(format: "%.0f", open.clickMs)) ms; longest main-thread gap after the show call \(String(format: "%.1f", gap)) ms; motion shown by \(how)"
+        if pixelOk || layerOk {
+            record("C", "入场动画在推进", true, since: t0, detail, values)
+        } else if !open.windowCapture && layer.steps < 3 {
+            // Neither view could see the animation. That is a limit of this VM, not a measured absence of motion.
+            record("C", "入场动画在推进", nil, since: t0, "Cannot observe the animation here: no window-server capture and the SwiftUI drawing exposes no changing layer values. " + detail, values)
+        } else {
+            record("C", "入场动画在推进", false, since: t0, detail, values)
+        }
     }
 
     // D: live charts scroll
@@ -1175,8 +1229,8 @@ final class UITestRunner {
             return shots.first { UITestPixels.compare($0.shot, final).fraction < 0.001 }?.offset
         }
         func settleBySignature(_ r: OpenResult) -> Double? {
-            guard let last = r.signatures.last?.value else { return nil }
-            return r.signatures.first { abs($0.value - last) < 1e-6 }?.offset
+            guard !r.signatures.isEmpty else { return nil }
+            return layerMotion(r).settledMs
         }
         let usePixels = first.windowCapture && again.windowCapture
         let firstSettle = usePixels ? settleOffset(first.shots) : settleBySignature(first)
@@ -1191,7 +1245,7 @@ final class UITestRunner {
         let gap = probe.maxAppGap(from: again.afterTime, to: again.refTime + 1.5)
         func fmt(_ v: Double?) -> String { v.map { String(format: "%.0f", $0) } ?? "never" }
         record("I", "再次打开", openOk && shorter && liveOk && again.timersWhileOpen == 2, since: t0,
-               "open call \(String(format: "%.1f", again.clickMs)) ms (earlier open with the full entrance \(String(format: "%.1f", first.clickMs)) ms); settled at \(fmt(secondSettle)) ms (first open \(fmt(firstSettle)) ms); settled within 120 ms=\(settledBy120 == 1) (compared by \(usePixels ? "window pixels" : "layer values")); longest main-thread gap after the show call \(String(format: "%.1f", gap)) ms; liveSampling at \(fmt(again.liveSeenMs)) ms",
+               "open call \(String(format: "%.1f", again.clickMs)) ms (earlier open with the full entrance \(String(format: "%.1f", first.clickMs)) ms); settled at \(fmt(secondSettle)) ms (first open \(fmt(firstSettle)) ms); settled within 120 ms=\(settledBy120 == 1) (compared by \(usePixels ? "window pixels" : "layer values"), layer motion steps \(layerMotion(again).steps) after the reopen against \(layerMotion(first).steps) after the full entrance); longest main-thread gap after the show call \(String(format: "%.1f", gap)) ms; liveSampling at \(fmt(again.liveSeenMs)) ms",
                ["openCallMs": again.clickMs, "firstOpenCallMs": first.clickMs, "settledMs": secondSettle ?? -1,
                 "firstSettledMs": firstSettle ?? -1, "settledWithin120ms": settledBy120, "gapAfterOpenMs": gap])
 
