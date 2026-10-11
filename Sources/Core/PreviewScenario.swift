@@ -15,7 +15,7 @@ enum PreviewScenario {
 
     /// Invented used space in GB, `daysAgo` days before now (30 down to 0).
     static func usedGB(_ level: PreviewLevel, daysAgo d: Double) -> Double {
-        let wobble = 3.0 * sin(d * 1.7) + 1.5 * sin(d * 4.1)
+        let wobble = 1.2 * sin(d * 0.9) + 0.4 * sin(d * 2.3)
         switch level {
         case .green:
             return 380 + 0.5 * (30 - d) + wobble
