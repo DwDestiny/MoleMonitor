@@ -129,13 +129,18 @@ extension PreviewScenario {
             engine = r
             samples = s
         }
-        let status = StatusFile(appVersion: AppInfo.version, writtenAt: statusNow, writerPid: 0,
+        var status = StatusFile(appVersion: AppInfo.version, writtenAt: statusNow, writerPid: 0,
                                 overall: engine.overall, items: engine.items, activeAlerts: engine.activeAlerts,
                                 notifications: .init(authorization: "authorized"))
 
         var current = fixtureCurrent(c, at: statusNow)
         if c != .collecting { current.diskAvailable = engine.items.disk.availableImportant.value }
         let verdicts = fixtureVerdicts(c, current: current, engine: engine, now: statusNow)
+        // The fixture disk problem started 3 hours ago (see `fixtureVerdicts`): the status item says the same.
+        if let disk = verdicts.first(where: { $0.item == .disk }), disk.isProblem {
+            status.items.disk.since = disk.since
+            status.items.disk.levelChangedAt = disk.levelChangedAt
+        }
         let dog = fixtureDogInput(c)
 
         var trend = TrendSeries.empty

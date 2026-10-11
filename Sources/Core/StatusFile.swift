@@ -22,6 +22,11 @@ struct StatusFile: Codable {
     struct Items: Codable {
         var disk: DiskItem
         var network: NetworkItem
+        /// Added with the problem-first redesign (DESIGN.md 8.1). Absent in files of older apps: readers must accept nil.
+        var memory: HealthItemStatus?
+        var cpu: HealthItemStatus?
+        var thermal: HealthItemStatus?
+        var power: HealthItemStatus?
     }
 
     struct Notifications: Codable {
@@ -37,9 +42,15 @@ struct StatusFile: Codable {
     var items: Items
     var activeAlerts: [AlertItem]
     var notifications: Notifications
+    /// Added with the redesign. All three are optional: an old file decodes with nil, and the writer leaves out nil.
+    var topApps: TopAppsStatus?
+    var env: EnvStatus?
+    var promptPrefs: PromptPrefs?
 
     enum CodingKeys: String, CodingKey {
-        case overall, items, notifications
+        case overall, items, notifications, env
+        case topApps = "top_apps"
+        case promptPrefs = "prompt_prefs"
         case schemaVersion = "schema_version"
         case appVersion = "app_version"
         case writtenAt = "written_at"

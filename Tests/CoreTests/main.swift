@@ -576,6 +576,7 @@ runHealthRuleTests()
 runPowerTests()
 runLayoutTests()
 runDogTests()
+runPipelineTests()
 
 // MARK: - Summary
 
