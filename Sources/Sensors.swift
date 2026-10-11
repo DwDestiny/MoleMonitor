@@ -10,7 +10,6 @@ import Darwin
 
 struct SupplementalSample: Codable {
     var batteryPercent: Double?
-    var batteryCycles: Int?
     var batteryTemperature: Double?
     var charging: Bool?
     var externalPower: Bool?
@@ -35,10 +34,6 @@ enum SupplementalSensors {
                    let maximum = numberProperty(battery, "MaxCapacity"),
                    maximum > 0, current >= 0, current <= maximum {
                     sample.batteryPercent = 100 * current / maximum
-                }
-                if let cycles = numberProperty(battery, "CycleCount"),
-                   cycles >= 0, cycles <= 100_000, cycles.rounded() == cycles {
-                    sample.batteryCycles = Int(cycles)
                 }
                 sample.charging = boolProperty(battery, "IsCharging")
                 sample.externalPower = boolProperty(battery, "ExternalConnected")

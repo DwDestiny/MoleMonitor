@@ -1,44 +1,107 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (c) 2026 DwDestiny
-# Input: Swift sources, verified upstream status download, and licenses.
-# Output: dist/MoleMonitor.app; no installation or UI launch.
-# Pos: Reproducible local build.
+# Input: Swift sources under Sources/ and the license files.
+# Output: dist/MoleMonitor.app with the app, the molemonitor-cli helper and ad-hoc signatures; no download, no installation, no UI launch.
+# Pos: Reproducible local build; needs arm64 macOS 14+ and the Xcode command line tools.
 from pathlib import Path
-import subprocess
 import plistlib
+import re
 import shutil
-from fetch_status import ensure_status
+import subprocess
+import sys
 
 root = Path(__file__).resolve().parent.parent
-status_binary = ensure_status(root)
+swiftc = "/usr/bin/swiftc"
+codesign = "/usr/bin/codesign"
+target = "arm64-apple-macos14.0"
 app = root / "dist/MoleMonitor.app"
+
+
+def fail(message):
+    sys.exit(f"build.py: {message}")
+
+
+def run(command):
+    print("+ " + " ".join(str(part) for part in command), flush=True)
+    result = subprocess.run([str(part) for part in command])
+    if result.returncode != 0:
+        fail(f"command failed with exit code {result.returncode}: {Path(str(command[0])).name}")
+
+
+def read_version():
+    text = (root / "Sources/Core/AppInfo.swift").read_text(encoding="utf-8")
+    match = re.search(r'static\s+let\s+version\s*=\s*"(\d+\.\d+\.\d+)"', text)
+    if not match:
+        fail('cannot read `static let version = "x.y.z"` from Sources/Core/AppInfo.swift')
+    return match.group(1)
+
+
+def swift_files(folder):
+    return sorted((root / folder).glob("*.swift"))
+
+
+if sys.platform != "darwin":
+    fail("this script builds the macOS app and must run on macOS 14 or later")
+
+version = read_version()
+core = swift_files("Sources/Core")
+app_files = swift_files("Sources/App")
+entry = root / "Sources/MoleMonitor.swift"
+sensors = root / "Sources/Sensors.swift"
+cli_main = root / "Sources/cli/main.swift"
+if not core:
+    fail("no Swift files in Sources/Core")
+if not app_files:
+    fail("no Swift files in Sources/App")
+for required in (entry, sensors):
+    if not required.exists():
+        fail(f"missing {required.relative_to(root)}")
+if not cli_main.exists():
+    fail("missing Sources/cli/main.swift (the CLI source); the build does not skip the CLI")
+
+# Remove only the generated app of this project, so no stale resource stays in the bundle.
+if app.exists():
+    shutil.rmtree(app)
 macos = app / "Contents/MacOS"
+helpers = app / "Contents/Helpers"
 resources = app / "Contents/Resources"
-macos.mkdir(parents=True, exist_ok=True)
-resources.mkdir(parents=True, exist_ok=True)
-subprocess.run([
-    "/usr/bin/swiftc", "-swift-version", "5", "-O", "-parse-as-library",
-    "-target", "arm64-apple-macos14.0",
-    str(root / "Sources/MoleMonitor.swift"), str(root / "Sources/Sensors.swift"),
+for folder in (macos, helpers, resources):
+    folder.mkdir(parents=True, exist_ok=True)
+
+# App: -parse-as-library because MoleMonitor.swift uses @main.
+run([
+    swiftc, "-swift-version", "5", "-O", "-parse-as-library", "-target", target,
+    *core, *app_files, entry, sensors,
     "-framework", "AppKit", "-framework", "SwiftUI", "-framework", "IOKit",
-    "-o", str(macos / "MoleMonitor"),
-], check=True)
-shutil.copy2(status_binary, resources / "mole-status")
+    "-framework", "UserNotifications", "-framework", "Combine",
+    "-o", macos / "MoleMonitor",
+])
+
+# CLI: no -parse-as-library because main.swift has top-level code; Foundation only.
+cli = helpers / "molemonitor-cli"
+run([
+    swiftc, "-swift-version", "5", "-O", "-target", target,
+    *core, cli_main,
+    "-o", cli,
+])
+
 shutil.copy2(root / "LICENSE", resources / "LICENSE-MoleMonitor")
-shutil.copy2(root / "Vendor/LICENSE-Mole", resources / "LICENSE-Mole")
 for name in ("LICENSE-SMCKit", "LICENSE-Stats"):
     shutil.copy2(root / "Vendor" / name, resources / name)
 shutil.copy2(root / "Vendor/NOTICE.md", resources / "Source-Attribution.md")
+
 info = {
     "CFBundleExecutable": "MoleMonitor",
     "CFBundleIdentifier": "io.github.dwdestiny.MoleMonitor",
     "CFBundleName": "MoleMonitor", "CFBundleDisplayName": "Mole Monitor",
-    "CFBundleVersion": "1", "CFBundleShortVersionString": "0.1.0",
+    "CFBundleVersion": "1", "CFBundleShortVersionString": version,
     "LSMinimumSystemVersion": "14.0", "LSUIElement": True,
     "NSHighResolutionCapable": True,
 }
 (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
-subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(resources / "mole-status")], check=True)
-subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(app)], check=True)
+
+# Ad-hoc signatures: helper first, then the whole app.
+run([codesign, "--force", "--sign", "-", cli])
+run([codesign, "--force", "--sign", "-", app])
 print(app)

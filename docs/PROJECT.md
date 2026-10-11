@@ -6,7 +6,7 @@ last_updated: 2026-10-11
 
 # 产品定位与目标设计
 
-MoleMonitor 是 macOS 菜单栏上的轻量状态监测与预警工具。它只检测和预警，不做清理。清理由用户的 agent 调用 Mole CLI 完成。本文件描述目标设计。目标设计尚未实现，见 [当前状态说明](#当前状态说明)。
+MoleMonitor 是 macOS 菜单栏上的轻量状态监测与预警工具。它只检测和预警，不做清理。清理由用户的 agent 调用 Mole CLI 完成。本文件描述目标设计。阶段 1 的代码已写完，其余阶段尚未实现，见 [当前状态说明](#当前状态说明)。
 
 ## 1. 产品定位与需求摘要
 
@@ -328,6 +328,12 @@ MoleMonitor 是 macOS 菜单栏上的轻量状态监测与预警工具。它只�
 - 热状态用系统通知事件，不轮询。
 - 进程扫描间隔 180 秒。泄漏检测的 5 分钟取点按时间戳对齐。
 
+阶段 1 的实现细节：
+
+- 引擎只有一个 5 分钟 tick。每第 3 个 tick 采样一次，即每 15 分钟一次。
+- 其余 tick 不采样，只刷新 `status.json` 的 `written_at`。
+- 状态卡打开触发的采样有 30 秒去抖。距上次采样不足 30 秒时，不再采样。
+
 ### 6.2 内存中的短期窗口
 
 CPU、内存和温度的短期窗口只放内存，不落盘。App 重启后从头积累。CLI 对不足的窗口返回 `insufficient_window`。
@@ -341,6 +347,7 @@ CPU、内存和温度的短期窗口只放内存，不落盘。App 重启后从�
 | `disk-YYYY-MM.ndjson` | 每 15 分钟一行：磁盘样本、网络累计字节、开机时间 | 追加写，不调用 fsync。按月分文件，保留 2 个月 |
 | `status.json` | 当前完整状态 | 写临时文件后 `rename` 原子替换，只保留 1 份 |
 | `config.json` | 可选。忽略列表，阈值覆盖 | 用户手动编辑，工具只读 |
+| `alert-state.json` | 磁盘通知状态 `DiskAlertState`：上次增长通知的字节数与等级，上次低空间通知的时间 | 状态变化时写临时文件后 `rename` 原子替换。启动时读回。该文件存在也是 `isFirstLaunch` 判据之一 |
 
 第一版不做耗电小时汇总文件，也不做事件日志。
 
@@ -369,8 +376,8 @@ CPU、内存和温度的短期窗口只放内存，不落盘。App 重启后从�
 
 | 规则 | 内容 |
 |---|---|
-| 计入 | 物理网卡：Wi-Fi、有线、蜂窝 |
-| 排除 | `lo`、`utun*`、`awdl*`、`llw*`、`bridge*`、`ap*` |
+| 计入的名称前缀 | `en`（Wi-Fi 与有线）、`pdp_ip`（蜂窝） |
+| 排除的名称前缀 | `lo`、`utun`、`awdl`、`llw`、`bridge`、`ap`、`gif`、`stf`、`anpi`、`vmenet` |
 | 计数器 | 64 位，来自 `sysctl NET_RT_IFLIST2`，避免 32 位回绕 |
 
 共享或桥接场景可能重复计数。这一项列为验证项 V22。
@@ -387,7 +394,7 @@ CPU、内存和温度的短期窗口只放内存，不落盘。App 重启后从�
 
 ### 8.1 形态
 
-构建时多编一个只链接 Foundation 的小二进制，建议名 `molemonitor`。它放在 App 包内的 `Contents/MacOS/` 或 `Contents/Helpers/`。CLI 走这个二进制，不加载 AppKit。目标启动到返回 ≤ 20 ms。目标待 Mac 实测，做不到再放宽。构建脚本不自动安装 CLI。
+构建时多编一个只链接 Foundation 的小二进制，名称是 `molemonitor-cli`。它放在 App 包内的 `Contents/Helpers/`。App 可执行文件叫 `MoleMonitor`。macOS 默认文件系统不区分大小写，所以不能把 CLI 命名为 `molemonitor`，否则两者同名冲突。CLI 走这个二进制，不加载 AppKit。目标启动到返回 ≤ 20 ms。目标待 Mac 实测，做不到再放宽。构建脚本不自动安装 CLI。
 
 ### 8.2 子命令
 
@@ -416,6 +423,7 @@ CPU、内存和温度的短期窗口只放内存，不落盘。App 重启后从�
 - `active_alerts` 的每一项含 `type`、`subject`、`level`、`since`、`message`、`agent_hint`。
 - JSON 不输出任何"已恢复"字段。
 - 第一版 JSON 不输出 `usage_15m`、`wired`、`compressed` 和 `basis` 文本块。口径说明放进 `--schema`。
+- 例外：磁盘 `growth` 对象在有 2 条以上样本时，即使 `status` 为 `insufficient_window`，也给出 `bytes`，该值是下限。
 
 ### 8.4 退出码
 
@@ -457,21 +465,21 @@ CPU、内存和温度的短期窗口只放内存，不落盘。App 重启后从�
 | `--diagnose --seconds N` | 重写 | 无界面运行采样器，输出健康 JSON |
 | `--preview` | 保留 | 渲染新状态卡 |
 
-建议的新源文件划分（实现时可调整）：
+阶段 1 的实际源文件划分如下。阶段 2 起会在 `Core/` 增加 CPU、内存和泄漏规则。
 
 | 文件 | 职责 |
 |---|---|
-| `Sampler.swift` | CPU、内存、进程、磁盘、电池、网络计数器的只读采样 |
-| `Sensors.swift` | SMC 与电池的 IOKit 读取（现有） |
-| `Health.swift` | 健康规则、窗口、迟滞。只依赖 Foundation |
-| `Store.swift` | NDJSON 追加，`status.json` 原子写入，启动读取 |
-| `Notifier.swift` | 通知授权、去重、冷却、上限 |
-| `StatusIcon.swift` | 小狗与点的绘制和缓存 |
-| `Panel.swift` | SwiftUI 状态卡 |
+| `Core/` | 只依赖 Foundation，Linux 可测。含等级与缺失值模型、磁盘样本与增长量、磁盘健康与提醒策略、`status.json` 模型与读写、CLI 报告、网卡过滤、引擎纯逻辑、路径与版本 |
+| `App/Sampler.swift` | 磁盘容量、网卡 64 位计数器、开机时间的只读采样 |
+| `App/Engine.swift` | 定时、睡眠唤醒、评估、写 `status.json`、发通知 |
+| `App/Notifier.swift` | 通知授权与发送，全局上限 |
+| `App/StatusIcon.swift` | 小狗与点的绘制和缓存 |
+| `App/Panel.swift` | SwiftUI 状态卡 |
+| `Sensors.swift` | SMC 与电池的 IOKit 读取（现有，阶段 1 不引用） |
 | `MoleMonitor.swift` | 入口分流，App 生命周期 |
-| `cli/main.swift` | CLI 小二进制，只依赖 Foundation |
+| `cli/main.swift` | CLI 小二进制，只依赖 Foundation 与 `Core/` |
 
-`Health.swift` 与 CLI 里的磁盘增长量计算要共用同一份逻辑。共用方式是两个目标都编译同一个源文件。
+App 与 CLI 编译同一份 `Core/` 源文件，因此磁盘增长量只有一份实现。
 
 ## 10. 阶段计划
 
@@ -480,7 +488,7 @@ CPU、内存和温度的短期窗口只放内存，不落盘。App 重启后从�
 | 项 | 内容 |
 |---|---|
 | 交付物 | 删除 Go 采集器和 `fetch_status.py`，修改 `build.py`。磁盘采样与 NDJSON（含网络累计字节与开机时间）。`status.json`。独立 CLI 小二进制与 `--status`、`--status --brief`、`--disk-history`。磁盘两类通知与授权流程。菜单栏 `dog.fill` 加两个灰点，磁盘红色角标。简版状态卡（磁盘、提醒、授权状态） |
-| Linux 上可做 | 源码审阅。`Health.swift` 的磁盘增长量逻辑。文档与链接检查 |
+| Linux 上可做 | 源码审阅。`Core/` 的磁盘增长量与健康规则，以及 CLI。文档与链接检查 |
 | 只能在 Mac 上做 | 构建、签名、`--self-test`。验证项 V10、V11、V17、V19。连续运行 3 天，确认每天约 96 行 |
 | 验收标准 | CLI 返回 ≤ 20 ms。创建本地快照前后，真实已用变化 < 1 GB。人工复制 30 GB 文件后，1 天增长量正确，黄色等级出现，通知只发 1 条 |
 
@@ -534,7 +542,7 @@ CPU、内存和温度的短期窗口只放内存，不落盘。App 重启后从�
 | V19 | `UNUserNotificationCenter` 在 ad-hoc 签名下 | 能弹出授权框。失败时走 [5.3](#53-未授权时的降级) |
 | V20 | App Nap 对 30 秒定时器的影响 | 记录实际间隔分布 |
 | V21 | 内存压力事件与 sysctl | 制造内存压力，两者结果一致 |
-| V22 | 网络计数器 | 64 位计数器无回绕。物理网卡过滤正确。连接 VPN 时不双算。共享与桥接场景不重复计数。重启后计数器重置能被检测 |
+| V22 | 网络计数器 | Thunderbolt 桥接成员 `en1` 至 `en4` 会被计入，需在 Mac 上验证是否重复计数。64 位计数器无回绕。物理网卡过滤正确。连接 VPN 时不双算。共享与桥接场景不重复计数。重启后计数器重置能被检测 |
 
 > **注意**：创建本地快照、满核负载测试和需要 sudo 的 `powermetrics` 只由用户在 Mac 上手动执行。App 本身不调用这些命令。
 
@@ -570,18 +578,18 @@ CPU、内存和温度的短期窗口只放内存，不落盘。App 重启后从�
 
 ## 当前状态说明
 
-> **注意**：`Sources/` 与 `scripts/` 里的代码仍是第一版，使用 Mole Go 采集器方案。本文件描述的是目标设计，尚未实现。
+> **注意**：阶段 1 的代码已经写完，但 `Sources/App/` 尚未在 Mac 上编译或运行。目标设计的其余阶段（2 至 4）尚未实现。
 
-第一版代码的现状如下：
+阶段 1 代码的现状如下：
 
-| 项 | 第一版现状 |
+| 项 | 现状 |
 |---|---|
-| 采集 | 下载固定版本 Mole `V1.59.1` 状态采集器，持续读取 NDJSON |
-| 菜单栏 | CPU、内存占用百分比、上下行网络速率 |
-| 展开面板 | CPU/内存概览、内存压力、磁盘剩余空间、电池、循环次数、温度、风扇、前 5 名应用 |
-| 验证 | 2026-10-10 在一台 Apple M5/macOS 27 设备上完成构建、协议自检和短时无界面采样。详见 [VERIFICATION.md](VERIFICATION.md) |
+| `Sources/Core/` | 纯 Foundation 逻辑。在 Linux 上通过 294 条断言（`python3 scripts/test_core.py`） |
+| `Sources/cli/` | `molemonitor-cli`。在 Linux 上通过 79 项检查（`python3 scripts/test_cli.py`） |
+| `Sources/App/` | 引擎、采样器、通知、图标、状态卡。只做过 Linux 桩类型检查，未在 Mac 上编译或运行 |
+| `scripts/build.py` | 已重写：不下载，编译 App 和 CLI，ad-hoc 签名。未在 Mac 上运行 |
+| 旧 Go 采集器方案 | 已从代码中删除：`Vendor/mole-status`、`scripts/fetch_status.py`、1 Hz 界面定时器。第一版的验证记录见 [VERIFICATION.md](VERIFICATION.md)，标注为"方案已废弃" |
 
-- 真实菜单栏交互、长期功耗、睡眠唤醒和网络切换在第一版也未验收。
-- 上表的"循环次数"与 Go 采集器在目标设计中均被删除。
+- 阶段 1 的 Mac 验证项（V10、V11、V17、V19）尚未完成。
 - 目标设计中的所有阈值和目标值，都是设计补充或待验证目标，不是已测结果。
 - 实现某一阶段后，同步更新本文件、`README.md`、`HANDOFF.md` 和 `VERIFICATION.md`。

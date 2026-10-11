@@ -5,10 +5,6 @@ __pycache__/
 *.pyc
 .venv/
 
-# Downloaded upstream executable; fetch_status.py pins and verifies it.
-Vendor/mole-status
-Vendor/.mole-status-*
-
 # Original local diagnostics, system snapshots, and migration records.
 docs/verification/
 docs/MIGRATION.md
