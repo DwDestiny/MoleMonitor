@@ -1129,8 +1129,9 @@ final class UITestRunner {
     // MARK: Output
 
     func writeReport() {
+        let gaps = probe.gaps()
         let report = UITestReport(items: items,
-                                  mainThreadIntervalsMs: probe.intervalsMs.isEmpty ? nil : UITestStats(probe.intervalsMs),
+                                  mainThreadIntervalsMs: gaps.app.isEmpty ? nil : UITestStats(gaps.app),
                                   renderMs: renderMs.isEmpty ? nil : UITestStats(renderMs),
                                   frames: frameFiles, info: info, statusMtimeBeforeQuit: statusMtimeBeforeQuit)
         let encoder = JSONEncoder()
