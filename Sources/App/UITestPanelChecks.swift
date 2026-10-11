@@ -2,9 +2,10 @@
 // Copyright (c) 2026 DwDestiny
 // Input: The UI regression runner (UITestHarness.swift), the fixtures of PreviewScenario and the real popover of AppDelegate.
 // Output: The panel gates of docs/DESIGN.md 9.2: M2 order, M3 height tiers, M4 stable size, M5 contrast (Q1), M6 large type (Q2),
-//         M11 no focus ring (Q9), M12 first frame with a curve, M13 copy (the part that fixtures can check).
+//         M11 no focus ring (Q9), M12 first frame with a curve, M13 copy (the part that fixtures can check),
+//         N1 copy with the real engine input, N2 the trend history exists when the card opens (trendSeed).
 // Pos: Test code. It exists only in the UITEST build. The release binary has none of it (checked by scripts/ci_acceptance.py).
-//      Each scenario opens the real popover with a fixture model. The engine is not attached, so the data is the invented fixture.
+//      The M gates open the real popover with a fixture model (engine not attached, invented data). The N gates attach the real engine.
 
 #if UITEST
 import AppKit
@@ -388,6 +389,61 @@ extension UITestRunner {
         note += "The text comes from the PromptBuilder skeleton until I1 lands."
         let values: [String: Double] = ["copiedSeconds": seconds, "changedShare": changed, "textLength": Double(text.count)]
         record("M13", "复制状态机", ok, since: t0, note, values)
+    }
+
+    // MARK: N1 and N2, the real engine drives the card
+
+    private func trendPointCount(_ series: TrendSeries) -> Int {
+        series.segments.reduce(0) { $0 + $1.count }
+    }
+
+    /// N2: a cold start restores the history, so the card has curve points at the moment it opens.
+    /// N1: the copy button of the engine model copies the text of `PromptBuilder` for the engine input.
+    func stepN() async {
+        let t0 = now()
+        await closePanelQuietly()
+        delegate.testModel = nil
+        delegate.showPanel()
+        guard let model = delegate.panelModel else {
+            record("N2", "打开即有历史", false, since: t0, "The engine model was not created.")
+            record("N1", "真实引擎复制", false, since: t0, "The engine model was not created.")
+            return
+        }
+        // N2: read the model in the same turn as the show call, before any 2 second point exists.
+        let seeded = MonitorEngine.trendSeed?.count ?? 0
+        let atOpen = trendPointCount(model.data.trend)
+        let needed = Swift.max(30, seeded / 2)
+        let sectionKeys = model.layoutPlan.sections.map { PanelGeometry.key($0) }
+        var note2 = "the trend seed has \(seeded) points. The model had \(atOpen) points when the card opened (needs at least \(needed)). "
+        note2 += "Sections: " + sectionKeys.joined(separator: ", ") + "; plan height \(Int(model.layoutPlan.height)) pt."
+        let values2: [String: Double] = ["seedPoints": Double(seeded), "pointsAtOpen": Double(atOpen), "sections": Double(sectionKeys.count)]
+        record("N2", "打开即有历史", seeded > 0 && atOpen >= needed, since: t0, note2, values2)
+
+        await sleepMs(700)
+        if let hv = hostView, let shot = capture(hv) { save(shot, "ui-real-engine.png") }
+
+        // N1
+        let t1 = now()
+        let box = UITestTextBox()
+        model.onCopyText = { text in
+            box.value = text
+            return true
+        }
+        model.copy(.primary)
+        let text = box.value ?? ""
+        let options = PromptOptions.forCurrentUser(includeAppNames: engine.includeAppNamesInPrompt)
+        let expected = PromptBuilder.build(engine.promptInput(), scope: model.scope(for: .primary), options: options)
+        let equal = (text == expected)
+        let short = text.count <= 3000
+        let homeFree = !text.contains(NSHomeDirectory()) && (NSUserName().count < 3 || !text.contains(NSUserName()))
+        let hasTopic = text.contains("磁盘")
+        var note1 = "text length \(text.count) (limit 3000)=\(short); equals PromptBuilder text of the engine input=\(equal); "
+        note1 += "no home directory or user name=\(homeFree); names the disk problem=\(hasTopic). "
+        note1 += "The click path and the pasteboard are not exercised."
+        let values1: [String: Double] = ["textLength": Double(text.count)]
+        record("N1", "真实引擎复制", !text.isEmpty && equal && short && homeFree && hasTopic, since: t1, note1, values1)
+        model.onCopyText = { Clipboard.copy($0) }
+        await closePanelQuietly()
     }
 
     // MARK: M6 and Q2, 1.25 times type

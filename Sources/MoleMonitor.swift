@@ -59,6 +59,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             .store(in: &cancellables)
 
+        // The menu bar icon follows the verdicts and the data state of the engine. StatusIconController is I2's view.
+        Publishers.CombineLatest(engine.$verdicts, engine.$dataState)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] verdicts, dataState in
+                let now = Date()
+                self?.iconController.apply(MenuIconModel.state(verdicts, dataState: dataState),
+                                           text: MenuIconModel.text(verdicts, dataState: dataState, now: now))
+            }
+            .store(in: &cancellables)
+        // A tapped notification opens the card and expands the item of the notification.
+        engine.openCardHandler = { [weak self] item in self?.openPanel(expanding: item) }
+
         engine.start()
 
         if showFirstPanel {
@@ -89,11 +101,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         button.toolTip = state.description
         button.setAccessibilityLabel(state.description)
         lastIconState = state
-        // WIRE-LATER: I1's engine publishes real verdicts. Until then the adapter gives the disk verdict only.
-        let now = Date()
-        let data = PanelEngineAdapter.data(status: status, alerts: [], series: [], trigger: nil, live: .empty, now: now)
-        iconController.apply(MenuIconModel.state(data.verdicts, dataState: data.dataState),
-                             text: MenuIconModel.text(data.verdicts, dataState: data.dataState, now: now))
     }
 
     // MARK: Panel
@@ -104,6 +111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             showPanel()
         }
+    }
+
+    /// Opens the card, or keeps it open, and expands one problem item. Called when the user taps a notification.
+    func openPanel(expanding item: HealthItem?) {
+        if !popover.isShown { showPanel() }
+        panelModel?.expand(item)
     }
 
     func showPanel() {
@@ -144,9 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         model = testModel
 #endif
         let fromEngine = (model == nil)
-        let created = model ?? PanelModel(data: PanelEngineAdapter.data(
-            status: engine.status, alerts: engine.alerts, series: engine.diskSeries, trigger: engine.diskTrigger,
-            live: engine.live, now: Date()))
+        let created = model ?? PanelModel(data: PanelEngineAdapter.data(engine: engine, now: Date()))
         let visible = (button.window?.screen ?? NSScreen.main)?.visibleFrame.height ?? 1200
         created.screenVisibleHeight = Double(visible)
         created.onEnableNotifications = { [weak self] in self?.engine.requestNotificationAuthorization() }
@@ -275,6 +286,10 @@ enum Diagnose {
         var staticPreview: String?
         var staticPreviewError: String?
         var liveProbe: LiveProbe?
+        /// Real readings while the panel logic is open, after it closed, and at the end (docs/DESIGN.md 8.2).
+        var diagnosticOpen: DiagnosticSnapshot?
+        var diagnosticClosed: DiagnosticSnapshot?
+        var diagnosticFinal: DiagnosticSnapshot?
     }
 
     /// Opens and closes the panel logic once to check that live sampling runs while open and stops completely after close.
@@ -324,13 +339,16 @@ enum Diagnose {
         wait(7)
         let openSampling = engine.isLiveSampling
         let during = engine.live
+        let snapshotOpen = engine.diagnosticSnapshot()
         engine.panelClosed()
         wait(2)
+        let snapshotClosed = engine.diagnosticSnapshot()
         let probe = LiveProbe(samplingWhileOpen: openSampling, netPointsWhileOpen: during.net.count,
                               cpuPointsWhileOpen: during.cpu.count, lastCpuPercent: during.cpuPercent,
                               lastRxBytesPerSecond: during.rx, samplingAfterClose: engine.isLiveSampling,
                               netPointsAfterClose: engine.live.net.count, cpuPointsAfterClose: engine.live.cpu.count)
         wait(max(0, seconds - 12))
+        let snapshotFinal = engine.diagnosticSnapshot()
         keepAlive.invalidate()
         engine.stop()
 
@@ -338,6 +356,9 @@ enum Diagnose {
                             authorization: engine.authorization, diskLevel: engine.diskLevel,
                             alerts: engine.alerts, status: engine.status)
         report.liveProbe = probe
+        report.diagnosticOpen = snapshotOpen
+        report.diagnosticClosed = snapshotClosed
+        report.diagnosticFinal = snapshotFinal
         if args.contains("--preview") {
             if let path = MoleMonitorMain.argumentValue("--preview", in: args) {
                 if let error = PanelPreview.render(to: URL(fileURLWithPath: path)) {

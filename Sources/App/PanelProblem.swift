@@ -215,9 +215,11 @@ private struct ProblemEvidence: View {
     var body: some View {
         switch item {
         case .cpu, .thermal:
-            AppEvidence(apps: model.topApps(by: .cpu), sort: .cpu, height: height, isReading: model.data.apps.isEmpty)
+            AppEvidence(apps: model.topApps(by: .cpu), sort: .cpu, height: height, isReading: model.data.apps.isEmpty,
+                        basis: model.data.appsBasis)
         case .memory:
-            AppEvidence(apps: model.topApps(by: .memory), sort: .memory, height: height, isReading: model.data.apps.isEmpty)
+            AppEvidence(apps: model.topApps(by: .memory), sort: .memory, height: height, isReading: model.data.apps.isEmpty,
+                        basis: model.data.appsBasis)
         case .disk:
             DiskEvidence(data: model.data, height: height)
         case .power:

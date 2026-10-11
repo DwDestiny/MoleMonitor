@@ -329,6 +329,10 @@ enum UITestHarness {
             return s
         }
 
+        // Invented 2 hour trend, restored by the engine at start like trend.json after a restart (docs/DESIGN.md 4.3).
+        let trendFixture = PreviewScenario.fixture(.allGreen, full: true, now: Date())
+        MonitorEngine.trendSeed = trendFixture.trend.segments.flatMap { $0 }
+
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let delegate = AppDelegate()
@@ -912,6 +916,7 @@ final class UITestRunner {
         await stepIJ(first: second)
         probe.stop()
         stepE()
+        await stepN()
         await stepM()
         // K clicks the quit button of the real panel, so open it again with the engine model.
         _ = await openPanel(offsets: [], via: .sendAction, holdMs: 900, prefix: "pre-k")

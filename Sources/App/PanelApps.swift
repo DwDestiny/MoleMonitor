@@ -103,6 +103,7 @@ private struct AppHeader: View {
             Text(title)
                 .font(PanelFont.caption)
                 .foregroundStyle(tok.textSecondary)
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text("CPU")
                 .font(PanelFont.caption)
@@ -141,6 +142,7 @@ struct AppEvidence: View {
     let sort: AppSortKey
     let height: Double
     let isReading: Bool
+    var basis: String = "实时"
 
     static func rowCount(height: Double) -> Int {
         let n = Int((height - 16) / 17)
@@ -150,7 +152,7 @@ struct AppEvidence: View {
     var body: some View {
         let count = AppEvidence.rowCount(height: height)
         VStack(alignment: .leading, spacing: 0) {
-            AppHeader(title: "占用 App（实时）")
+            AppHeader(title: "占用 App（" + basis + "）")
             if isReading {
                 AppSkeleton(rows: min(3, count))
                     .padding(.top, 2)
@@ -270,7 +272,7 @@ struct AppsExpanded: View {
                 AppSkeleton(rows: 3)
             } else {
                 VStack(spacing: 3) {
-                    AppHeader(title: sort == .cpu ? "按 CPU 排序" : "按内存排序")
+                    AppHeader(title: (sort == .cpu ? "按 CPU 排序" : "按内存排序") + "（" + model.data.appsBasis + "）")
                     ForEach(model.topApps(by: sort)) { app in
                         AppRow(app: app, sort: sort)
                     }

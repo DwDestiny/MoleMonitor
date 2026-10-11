@@ -109,6 +109,37 @@ if report:
     check(probe.get("samplingAfterClose") is False, "no live timer after the panel closes")
     check(probe.get("netPointsAfterClose") == 0 and probe.get("cpuPointsAfterClose") == 0, "live buffers are empty after close")
 
+    # Real readings of the new engine (status.json fields and diagnosticSnapshot), docs/DESIGN.md 8.2
+    items = status.get("items") or {}
+    memory = items.get("memory") or {}
+    thermal = items.get("thermal") or {}
+    check(memory.get("pressure") in ("normal", "warning", "critical"), "items.memory.pressure is a real value", str(memory.get("pressure")))
+    check(thermal.get("state") in ("nominal", "fair", "serious", "critical"), "items.thermal.state is a real value", str(thermal.get("state")))
+    check((memory.get("swap_used") or {}).get("status") == "ok", "items.memory.swap_used.status is ok", str(memory.get("swap_used")))
+    top_apps = status.get("top_apps") or {}
+    check(len(top_apps.get("apps") or []) >= 1, "top_apps.apps has at least one app", str(len(top_apps.get("apps") or [])))
+    check(((top_apps.get("coverage") or {}).get("readable") or 0) > 0, "top_apps.coverage.readable is above 0", str(top_apps.get("coverage")))
+    check(bool((status.get("env") or {}).get("chip")), "env.chip is not empty", str((status.get("env") or {}).get("chip")))
+    check(isinstance((status.get("prompt_prefs") or {}).get("include_app_names"), bool), "prompt_prefs.include_app_names is a boolean",
+          str(status.get("prompt_prefs")))
+    opened, closed, final = (report.get(k) or {} for k in ("diagnosticOpen", "diagnosticClosed", "diagnosticFinal"))
+    check(opened.get("panelOpen") is True and opened.get("timerCount") == 2, "diagnostic: 2 timers while the panel is open",
+          str((opened.get("panelOpen"), opened.get("timerCount"))))
+    check(opened.get("processScanPeriod") == 4, "diagnostic: process scan every 4 s while the panel is open", str(opened.get("processScanPeriod")))
+    check((opened.get("trendFinePoints") or 0) >= 1, "diagnostic: fine trend points exist while the panel is open", str(opened.get("trendFinePoints")))
+    check(closed.get("panelOpen") is False and closed.get("timerCount") == 1, "diagnostic: 1 timer after the panel closes",
+          str((closed.get("panelOpen"), closed.get("timerCount"))))
+    check(closed.get("trendFinePoints") == 0, "diagnostic: fine trend points are gone after close", str(closed.get("trendFinePoints")))
+    for label, snap in (("closed", closed), ("final", final)):
+        levels = [line.get("level") for line in snap.get("items") or []]
+        calm = bool(levels) and all(level == "green" for level in levels)
+        # The runner disk may be yellow, so a non-green set only has to use a throttled period.
+        allowed = (300,) if calm else (180, 300)
+        check(snap.get("processScanPeriod") in allowed, f"diagnostic ({label}): process scan period fits the item levels",
+              f"{snap.get('processScanPeriod')} levels={levels}")
+    check(len(final.get("topApps") or []) >= 1 and (final.get("processesReadable") or 0) > 0, "diagnostic: top apps and readable processes",
+          f"{len(final.get('topApps') or [])} apps, readable {final.get('processesReadable')}")
+
 # 4. Files on disk
 files = sorted(p.name for p in data_dir.iterdir())
 print("data dir files:", files, flush=True)
@@ -260,7 +291,7 @@ else:
     check(ui_report is not None, "UI test wrote ui-report.json")
     if ui_report:
         by_id = {item["id"]: item for item in ui_report["items"]}
-        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13"]:
+        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2"]:
             check(letter in by_id, f"UI item {letter} reported")
         for item in ui_report["items"]:
             label = f"UI {item['id']} {item['name']}"

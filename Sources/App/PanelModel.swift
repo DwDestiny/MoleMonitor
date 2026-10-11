@@ -3,7 +3,8 @@
 // Input: A PreviewFixture (previews, UI regression) or a MonitorEngine (the running app); user actions from the views.
 // Output: PanelData, the layout plan and the UI state (open row, disclosures, copy state) that the status card views read.
 // Pos: The only file that knows where the data comes from. Views read PanelModel and never the engine (docs/DESIGN.md 8.3).
-//      Keeps one stopgap: `PanelPlanFit` completes the skeleton plan (evidence height, compression). Delete it when I1's real PanelLayout lands.
+//      Engine mode reads the published properties of MonitorEngine (PanelEngineAdapter) and copies with `engine.prompt(scope:)`.
+//      Fixture mode (previews, UI regression) reads PreviewScenario.fixture and builds the prompt from the fixture data.
 
 import AppKit
 import Combine
@@ -25,6 +26,8 @@ struct PanelData {
     var dogInput: DogInput
     var dataState: DataState
     var now: Date
+    /// "实时", "近 N 分钟" or "采样于 HH:mm". The header of the app lists shows it.
+    var appsBasis: String = "实时"
 
     func verdict(_ item: HealthItem) -> ItemVerdict? {
         verdicts.first { $0.item == item }
@@ -143,161 +146,11 @@ enum PanelGeometry {
     }
 }
 
-// MARK: - Plan fit (stopgap)
-
-/// WIRE-LATER: delete when I1's real `PanelLayout.plan` lands. The skeleton plan has a fixed evidence height of 102 and
-/// no compression. This completes it by docs/DESIGN.md 2.11. On a real plan (compressions set, or evidence height
-/// not 102) it returns the plan unchanged, and the same arithmetic gives the same numbers.
-enum PanelPlanFit {
-    static func fit(_ plan: PanelLayoutPlan) -> PanelLayoutPlan {
-        if !plan.compressions.isEmpty { return plan }
-        var cardItem: HealthItem?
-        for s in plan.sections {
-            if case .problemCard(let item, _, let evidence) = s {
-                if evidence != 102 { return plan }
-                cardItem = item
-            }
-        }
-        guard let item = cardItem else { return fitQuiet(plan) }
-
-        var sections = plan.sections
-        // A CPU, memory or thermal card carries the app list, so the separate apps row goes away.
-        if item == .cpu || item == .memory || item == .thermal {
-            sections.removeAll(where: isApps)
-        }
-        var applied = [PanelCompression]()
-        for step in PanelCompression.allCases {
-            if evidence(sections, applied, tier: plan.tier) >= PanelMetrics.evidenceMin { break }
-            if apply(step, to: &sections) { applied.append(step) }
-        }
-        let e = evidence(sections, applied, tier: plan.tier)
-        let clamped = min(PanelMetrics.evidenceMax, max(PanelMetrics.evidenceMin, e))
-        sections = sections.map { (s: PanelSection) -> PanelSection in
-            if case .problemCard(let it, let compact, _) = s { return .problemCard(it, compact: compact, evidenceHeight: clamped) }
-            return s
-        }
-        var result = plan
-        result.sections = sections
-        result.compressions = applied
-        return result
-    }
-
-    /// The quiet plan has no card. It only needs to fit the tier, so it merges the apps row when an authorization row is shown.
-    private static func fitQuiet(_ plan: PanelLayoutPlan) -> PanelLayoutPlan {
-        var sections = plan.sections
-        var applied = [PanelCompression]()
-        for step in PanelCompression.allCases {
-            if PanelGeometry.total(sections, applied) <= plan.tier { break }
-            if apply(step, to: &sections) { applied.append(step) }
-        }
-        var result = plan
-        result.sections = sections
-        result.compressions = applied
-        return result
-    }
-
-    private static func isApps(_ s: PanelSection) -> Bool {
-        if case .appsDisclosure = s { return true }
-        return false
-    }
-
-    private static func isSummary(_ s: PanelSection) -> Bool {
-        if case .normalSummary = s { return true }
-        return false
-    }
-
-    private static func isAuthorization(_ s: PanelSection) -> Bool {
-        if case .authorization = s { return true }
-        return false
-    }
-
-    private static func evidence(_ sections: [PanelSection], _ applied: [PanelCompression], tier: Double) -> Double {
-        let shell = sections.map { s -> PanelSection in
-            if case .problemCard(let it, let compact, _) = s { return .problemCard(it, compact: compact, evidenceHeight: 0) }
-            return s
-        }
-        return tier - PanelGeometry.total(shell, applied)
-    }
-
-    /// Applies one step. Returns false when the step changes nothing.
-    private static func apply(_ step: PanelCompression, to sections: inout [PanelSection]) -> Bool {
-        var changed = false
-        switch step {
-        case .mergeApps:
-            let hadApps = sections.contains(where: isApps)
-            if hadApps {
-                sections.removeAll(where: isApps)
-                sections = sections.map { (s: PanelSection) -> PanelSection in
-                    if case .moreDisclosure(let expanded, _, let auth) = s {
-                        return .moreDisclosure(expanded: expanded, includesApps: true, includesAuthorization: auth)
-                    }
-                    return s
-                }
-                changed = true
-            }
-        case .disclosure26:
-            changed = sections.contains { (s: PanelSection) -> Bool in
-                switch s {
-                case .appsDisclosure, .moreDisclosure: return true
-                default: return false
-                }
-            }
-        case .compactCard:
-            sections = sections.map { (s: PanelSection) -> PanelSection in
-                if case .problemCard(let it, let compact, let e) = s {
-                    if !compact { changed = true }
-                    return .problemCard(it, compact: true, evidenceHeight: e)
-                }
-                return s
-            }
-        case .compactRows:
-            sections = sections.map { (s: PanelSection) -> PanelSection in
-                if case .problemRow(let it, let compact) = s {
-                    if !compact { changed = true }
-                    return .problemRow(it, compact: true)
-                }
-                return s
-            }
-        case .hideSummary:
-            let had = sections.contains(where: isSummary)
-            if had {
-                sections.removeAll(where: isSummary)
-                changed = true
-            }
-        case .foldAuthorization:
-            let had = sections.contains(where: isAuthorization)
-            if had {
-                sections.removeAll(where: isAuthorization)
-                sections = sections.map { (s: PanelSection) -> PanelSection in
-                    if case .moreDisclosure(let expanded, let apps, _) = s {
-                        return .moreDisclosure(expanded: expanded, includesApps: apps, includesAuthorization: true)
-                    }
-                    return s
-                }
-                changed = true
-            }
-        }
-        return changed
-    }
-}
-
-// MARK: - Pasteboard
-
-enum PanelPasteboard {
-    @discardableResult
-    static func copy(_ text: String) -> Bool {
-        let board = NSPasteboard.general
-        board.clearContents()
-        return board.setString(text, forType: .string)
-    }
-}
-
 // MARK: - Model
 
 @MainActor
 final class PanelModel: ObservableObject {
     static let copiedSeconds = 1.5
-    private static let includeAppsKey = "MoleMonitor.promptIncludeApps"
 
     @Published private(set) var data: PanelData
     @Published private(set) var layoutPlan: PanelLayoutPlan
@@ -312,7 +165,7 @@ final class PanelModel: ObservableObject {
     @Published private(set) var scrollTarget: String?
 
     /// Copies the text of a scope. Returns true when the text is on the pasteboard. The harness replaces it.
-    var onCopyText: (String) -> Bool = { PanelPasteboard.copy($0) }
+    var onCopyText: (String) -> Bool = { Clipboard.copy($0) }
     var onEnableNotifications: () -> Void = {}
     var onOpenNotificationSettings: () -> Void = {}
     var onOpenDataFolder: () -> Void = {}
@@ -329,8 +182,7 @@ final class PanelModel: ObservableObject {
 
     init(data: PanelData) {
         self.data = data
-        let stored = UserDefaults.standard.object(forKey: Self.includeAppsKey) as? Bool
-        includeAppNames = stored ?? true
+        includeAppNames = true
         layoutPlan = PanelModel.makePlan(data: data, expanded: nil, apps: false, more: false, auth: false, screen: 1200)
     }
 
@@ -390,9 +242,10 @@ final class PanelModel: ObservableObject {
         appsSort = key
     }
 
+    /// Engine mode writes the setting through to the engine (it keeps it in UserDefaults and in status.json).
     func setIncludeAppNames(_ on: Bool) {
         includeAppNames = on
-        UserDefaults.standard.set(on, forKey: Self.includeAppsKey)
+        engine?.includeAppNamesInPrompt = on
     }
 
     private func recompute() {
@@ -405,7 +258,7 @@ final class PanelModel: ObservableObject {
                                  screen: Double) -> PanelLayoutPlan {
         let input = PanelLayoutInput(verdicts: data.verdicts, showAuthorization: auth, expandedProblem: expanded,
                                      appsExpanded: apps, moreExpanded: more, screenVisibleHeight: screen)
-        return PanelPlanFit.fit(PanelLayout.plan(input))
+        return PanelLayout.plan(input)
     }
 
     // MARK: Reading helpers for the views
@@ -418,16 +271,9 @@ final class PanelModel: ObservableObject {
         return nil
     }
 
-    /// Apps sorted for one list. WIRE-LATER: use `AppRanking.top` when I1's version lands (the skeleton returns an empty list).
+    /// Apps sorted for one list. The minimum-use filter and the order come from `AppRanking.top`.
     func topApps(by key: AppSortKey, count: Int = 5) -> [AppUsage] {
-        let sorted: [AppUsage]
-        switch key {
-        case .cpu:
-            sorted = data.apps.sorted { ($0.cpuPercent ?? -1) > ($1.cpuPercent ?? -1) }
-        case .memory:
-            sorted = data.apps.sorted { ($0.memoryBytes ?? -1) > ($1.memoryBytes ?? -1) }
-        }
-        return Array(sorted.prefix(count))
+        AppRanking.top(data.apps, by: key, count: count)
     }
 
     // MARK: Copy
@@ -443,17 +289,17 @@ final class PanelModel: ObservableObject {
         }
     }
 
-    /// WIRE-LATER: replace the body with `engine.prompt(scope:)` when I1's engine lands.
+    /// The prompt text. Engine mode asks the engine (real environment, freshness, CPU summary). Fixture mode builds it from the fixture.
     func promptText(_ scope: PromptScope) -> String {
+        if let engine { return engine.prompt(scope: scope) }
         let env = PromptEnvironment(model: nil, chip: nil, memoryBytes: data.current.physicalMemory,
                                     os: ProcessInfo.processInfo.operatingSystemVersionString,
                                     appVersion: AppInfo.version, cliPath: PanelPaths.cliDisplayPath,
                                     dataDir: PanelPaths.dataDirDisplayPath)
         let input = PromptInput(env: env, sampledAt: data.current.sampledAt ?? data.now, freshness: .fresh,
-                                verdicts: data.verdicts, current: data.current, apps: data.apps, appsBasis: "实时",
+                                verdicts: data.verdicts, current: data.current, apps: data.apps, appsBasis: data.appsBasis,
                                 cpuSummary: nil, diskGrowth: data.status?.items.disk.growth ?? [:])
-        let options = PromptOptions(includeAppNames: includeAppNames, maxLength: 3000,
-                                    homeDirectory: NSHomeDirectory(), userNames: [NSUserName()])
+        let options = PromptOptions.forCurrentUser(includeAppNames: includeAppNames)
         return PromptBuilder.build(input, scope: scope, options: options)
     }
 
@@ -483,13 +329,13 @@ final class PanelModel: ObservableObject {
         copied.removeAll()
     }
 
-    // MARK: Engine (WIRE-LATER)
+    // MARK: Engine
 
-    /// WIRE-LATER: I1's engine publishes verdicts, current, trend, topApps, coverage, dataState, sleeps.
-    /// Until then this builds a degraded PanelData from the phase 1 engine: the disk verdict is real, the others are "统计中".
+    /// Engine mode: the model follows the engine's published properties until `detach()`.
     func attach(engine: MonitorEngine) {
         detach()
         self.engine = engine
+        includeAppNames = engine.includeAppNamesInPrompt
         setAuthorization(engine.authorization)
         engineCancellable = engine.objectWillChange
             .receive(on: DispatchQueue.main)
@@ -502,6 +348,12 @@ final class PanelModel: ObservableObject {
         engineCancellable = nil
         engine = nil
         cancelPending()
+    }
+
+    /// Opens the card of one problem item (a tapped notification). An item that is no problem is ignored.
+    func expand(_ item: HealthItem?) {
+        guard let item, data.problems.contains(where: { $0.item == item }) else { return }
+        toggleProblem(item)
     }
 
     /// `objectWillChange` fires before the value is stored, so the read waits one main-queue turn.
@@ -517,57 +369,52 @@ final class PanelModel: ObservableObject {
 
     private func syncFromEngine() {
         guard let engine else { return }
-        let next = PanelEngineAdapter.data(status: engine.status, alerts: engine.alerts, series: engine.diskSeries,
-                                           trigger: engine.diskTrigger, live: engine.live, now: Date())
         setAuthorization(engine.authorization)
-        replace(next)
+        replace(PanelEngineAdapter.data(engine: engine, now: Date()))
     }
 }
 
-// MARK: - Engine adapter (WIRE-LATER)
+// MARK: - Engine adapter
 
 enum PanelEngineAdapter {
+    /// A reading older than this makes the data stale even when the engine did not report it.
     static let staleAge: TimeInterval = 420
 
-    static func data(status: StatusFile?, alerts: [AlertItem], series: [DiskPoint], trigger: DiskTrigger?,
-                     live: LiveSnapshot, now: Date) -> PanelData {
-        var current = CurrentReadings()
-        current.cpuPercent = live.cpuPercent
-        current.rx = live.rx
-        current.tx = live.tx
-        current.sampledAt = status?.writtenAt
-
-        var verdicts = [ItemVerdict]()
-        for item in HealthItem.allCases {
-            if item == .disk, let disk = status?.items.disk {
-                let alert = alerts.first
-                verdicts.append(ItemVerdict(item: .disk, level: disk.level, reasonCode: disk.reasonCode, headline: disk.reason,
-                                            since: disk.since, levelChangedAt: disk.levelChangedAt, alert: alert))
-            } else {
+    /// The card data from the published state of the engine. Main thread.
+    @MainActor
+    static func data(engine: MonitorEngine, now: Date) -> PanelData {
+        var verdicts = engine.verdicts
+        if verdicts.isEmpty {
+            // Before the first evaluation every item reads "collecting".
+            for item in HealthItem.allCases {
                 verdicts.append(ItemVerdict(item: item, level: .unknown, reasonCode: "collecting", headline: "统计中",
                                             since: nil, levelChangedAt: nil, alert: nil))
             }
+            verdicts = ProblemOrder.all(verdicts)
         }
-        verdicts = ProblemOrder.all(verdicts)
-
-        var points = [TrendPoint]()
-        for p in live.cpu { points.append(TrendPoint(t: p.t, cpu: p.percent)) }
-        for p in live.net { points.append(TrendPoint(t: p.t, rx: p.rx, tx: p.tx)) }
-        points.sort { $0.t < $1.t }
-        let trend = points.isEmpty ? TrendSeries.empty : TrendSeries(segments: [points])
-
-        var state: DataState = .fresh
-        if let written = status?.writtenAt {
-            if now.timeIntervalSince(written) > staleAge { state = .stale(written) }
-        } else {
-            state = .collecting
+        var state = engine.dataState
+        if case .fresh = state, let at = engine.current.sampledAt, now.timeIntervalSince(at) > staleAge {
+            state = .stale(at)
         }
+        let readable = engine.coverage.readable + engine.coverage.unreadable
+        return make(verdicts: verdicts, current: engine.current, trend: engine.trend, sleeps: engine.sleeps, apps: engine.topApps,
+                    appsBasis: engine.appsBasis, coverage: readable > 0 ? engine.coverage : nil, status: engine.status,
+                    diskSeries: engine.diskSeries, diskTrigger: engine.diskTrigger, state: state, now: now)
+    }
+
+    /// Builds the data and the dog input. Used for the engine and for the icon.
+    static func make(verdicts: [ItemVerdict], current: CurrentReadings, trend: TrendSeries, sleeps: [SleepRecord],
+                     apps: [AppUsage], appsBasis: String, coverage: ProcessCoverage?, status: StatusFile?,
+                     diskSeries: [DiskPoint], diskTrigger: DiskTrigger?, state: DataState, now: Date) -> PanelData {
         let worst = ProblemOrder.problems(verdicts).first
-        let dog = DogInput(cpuPercent: live.cpuPercent, thermal: nil, memoryLevel: .green, worstProblem: worst?.item,
-                           worstLevel: worst?.level ?? .green, isStatic: state != .fresh)
-
-        return PanelData(verdicts: verdicts, current: current, trend: trend, sleeps: [], apps: [], coverage: nil,
-                         status: status, diskSeries: series, diskTrigger: trigger, dogInput: dog, dataState: state, now: now)
+        let memoryLevel: HealthLevel = verdicts.first(where: { $0.item == .memory })?.level ?? .green
+        var isStatic = true
+        if case .fresh = state { isStatic = false }
+        let dog = DogInput(cpuPercent: current.cpuPercent, thermal: current.thermal, memoryLevel: memoryLevel,
+                           worstProblem: worst?.item, worstLevel: worst?.level ?? .green, isStatic: isStatic)
+        return PanelData(verdicts: verdicts, current: current, trend: trend, sleeps: sleeps, apps: apps, coverage: coverage,
+                         status: status, diskSeries: diskSeries, diskTrigger: diskTrigger, dogInput: dog, dataState: state,
+                         now: now, appsBasis: appsBasis)
     }
 }
 
