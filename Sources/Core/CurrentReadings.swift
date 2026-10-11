@@ -3,7 +3,6 @@
 // Input: None (type definitions; the engine fills them).
 // Output: The latest readings for the card, the prompt and status.json, and the data state of the card.
 // Pos: Plain value types (docs/DESIGN.md 8.1); Foundation only. Owner I1. Nil means "not measured", never zero.
-// SKELETON: the types are final. Nothing computes them yet.
 
 import Foundation
 
@@ -25,6 +24,8 @@ struct CurrentReadings: Codable, Equatable {
     var tx: Double?
     var smcCPUTemperature: Double?
     var fanRPMs: [Double]?
+    /// Disk available capacity for important usage, bytes (prompt line and status.json).
+    var diskAvailable: Int64?
     var sampledAt: Date?
 }
 

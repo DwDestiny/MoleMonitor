@@ -1,0 +1,50 @@
+# MoleMonitor 排查请求
+请作为我的 Mac 维护助手，根据以下只读监测数据排查问题，并给出优化建议。
+
+## 环境
+- Mac14,15 · Apple M2 · 内存 16 GB · macOS 15.1
+- MoleMonitor 0.2.0 · 采样于 10月11日 12:00 · 数据新鲜
+- CLI：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli`
+
+## 状态摘要
+| 项 | 等级 | 当前 | 已持续 |
+|---|---|---|---|
+| 耗电 | 黄 | 睡眠 6 小时 20 分，82% → 61%，3.3%/小时 | 2 小时 10 分 |
+
+## 证据
+| App（近 5 分钟） | CPU | 内存 |
+|---|---|---|
+| Orchard Browser（com.example.orchard） | 6% | 1.9 GB |
+| Kiln Studio（com.example.kiln-studio） | 2% | 1.2 GB |
+| Aster Notes（com.example.aster-notes） | 2% | 800 MB |
+| WindowServer | 1% | 500 MB |
+| Aster Chat（com.example.aster-chat） | <1% | 900 MB |
+
+| 指标 | 值 |
+|---|---|
+| 电量 | 61%，电池供电 |
+| 上次睡眠 | 6 小时 20 分，82% → 61% |
+| 近 60 分钟 | 电量约下降 1% |
+
+## 当前提醒
+1. [黄] 睡眠掉电 3.3%/小时。
+
+## 我注意到的现象
+[在此描述你注意到的现象]
+
+## 排查规则
+1. 先只读诊断，再给建议。
+2. 删除、卸载或清理前，先列清单（对象、大小、理由），等我确认。
+3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
+4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。
+6. 命令报错时先运行 `<命令> --help`，不猜命令名或参数。
+7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。
+
+## 专项：耗电
+口径：耗电来自电池电量读数，不来自 CPU 估算。睡眠掉电 = 睡眠前后电量差 ÷ 睡眠小时数。
+1. 运行 `pmset -g batt`，确认电源、电量和充电状态。
+2. 运行 `pmset -g assertions`，找出阻止睡眠的进程。
+3. 运行 `pmset -g log | tail -n 200`，查看最近的睡眠与唤醒记录。输出很长，必须截取。
+4. 上表的 CPU 与内存只是线索，不能换算成耗电。
+5. 只建议退出阻止睡眠的 App。不运行不带 -g 的 pmset，它会修改电源设置。

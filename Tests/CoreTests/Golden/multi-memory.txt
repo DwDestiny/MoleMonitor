@@ -1,0 +1,47 @@
+# MoleMonitor 排查请求
+请作为我的 Mac 维护助手，根据以下只读监测数据排查问题，并给出优化建议。
+
+## 环境
+- Mac14,15 · Apple M2 · 内存 16 GB · macOS 15.1
+- MoleMonitor 0.2.0 · 采样于 10月11日 12:00 · 数据新鲜
+- CLI：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli`
+
+## 状态摘要
+| 项 | 等级 | 当前 | 已持续 |
+|---|---|---|---|
+| 内存 | 红 | 压力严重，swap 9.8 GB ↑↑ | 25 分 |
+
+## 证据
+| App（近 5 分钟） | CPU | 内存 |
+|---|---|---|
+| Orchard Browser（com.example.orchard） | 52% | 6.4 GB |
+| Kiln Studio（com.example.kiln-studio） | 38% | 4.2 GB |
+| kiln-compile | 24% | 1.5 GB |
+| Aster Chat（com.example.aster-chat） | 6% | 1.4 GB |
+| WindowServer | 11% | 900 MB |
+
+| 指标 | 值 |
+|---|---|
+| swap | 9.8 GB，30 分钟 +2.4 GB |
+
+## 当前提醒
+1. [红] 内存压力严重，swap 9.8 GB，30 分钟增加 2.4 GB。
+
+## 我注意到的现象
+[在此描述你注意到的现象]
+
+## 排查规则
+1. 先只读诊断，再给建议。
+2. 删除、卸载或清理前，先列清单（对象、大小、理由），等我确认。
+3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
+4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。
+6. 命令报错时先运行 `<命令> --help`，不猜命令名或参数。
+7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。
+
+## 专项：内存
+口径：看内存压力与 swap 增长，不看已用百分比。
+1. 运行 `sysctl vm.swapusage` 与 `vm_stat`，确认 swap 与压缩内存。
+2. 运行 `ps -Ao pid,rss,comm -m | head -n 15`，对照上表找出大户。
+3. 5 分钟后再运行第 2 步。持续上涨的 App 可能有泄漏。
+4. 建议顺序：重启该 App → 减少标签页或扩展。不建议 `sudo purge` 或内存清理软件。

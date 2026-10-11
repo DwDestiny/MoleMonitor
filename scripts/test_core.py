@@ -39,5 +39,8 @@ with tempfile.TemporaryDirectory(prefix="molemonitor-core-") as tmp:
     build = subprocess.run([compiler, *sources, *tests, "-o", str(binary)])
     if build.returncode != 0:
         sys.exit(f"Compile failed with exit code {build.returncode}.")
-    run = subprocess.run([str(binary)])
+    # Golden prompt files live in Tests/CoreTests/Golden. UPDATE_GOLDEN=1 rewrites them.
+    env = dict(os.environ)
+    env.setdefault("GOLDEN_DIR", str(root / "Tests/CoreTests/Golden"))
+    run = subprocess.run([str(binary)], env=env)
     sys.exit(run.returncode)

@@ -1,0 +1,57 @@
+# MoleMonitor 排查请求
+请作为我的 Mac 维护助手，根据以下只读监测数据排查问题，并给出优化建议。
+
+## 环境
+- Mac14,15 · Apple M2 · 内存 16 GB · macOS 15.1
+- MoleMonitor 0.2.0 · 采样于 10月11日 12:00 · 数据新鲜
+- CLI：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli`
+
+## 状态摘要
+| 项 | 等级 | 当前 | 已持续 |
+|---|---|---|---|
+| 磁盘 | 红 | 5 天 +314 GB，可用 402 GB | 3 小时 0 分 |
+| 内存 | 红 | 压力严重，swap 9.8 GB ↑↑ | 25 分 |
+| 耗电 | 黄 | 电池供电，掉电 34%/小时 | 40 分 |
+| CPU | 黄 | 10 分钟均值 72% | 40 分 |
+| 温度 | 正常 | 正常（nominal） | — |
+
+## 证据
+| App（近 5 分钟） | CPU | 内存 |
+|---|---|---|
+| Orchard Browser（com.example.orchard） | 52% | 6.4 GB |
+| Kiln Studio（com.example.kiln-studio） | 38% | 4.2 GB |
+| kiln-compile | 24% | 1.5 GB |
+| WindowServer | 11% | 900 MB |
+| Aster Chat（com.example.aster-chat） | 6% | 1.4 GB |
+
+| 指标 | 值 |
+|---|---|
+| swap | 9.8 GB，30 分钟 +2.4 GB |
+| 磁盘增长 | 1 天 +34 GB · 5 天 +314 GB · 30 天 +322 GB |
+| CPU 2 小时 | 均值 56%，峰值 81% |
+| 电量 | 42%，电池供电 |
+| 近 60 分钟 | 电量约下降 34% |
+
+## 当前提醒
+1. [红] 磁盘 5 天多占用了 314 GB。已排除可清除空间（快照、缓存）。
+2. [红] 内存压力严重，swap 9.8 GB，30 分钟增加 2.4 GB。
+3. [黄] 整机耗电异常：电池供电 · 掉电 34%/小时。
+
+## 我注意到的现象
+[在此描述你注意到的现象]
+
+## 排查规则
+1. 先只读诊断，再给建议。
+2. 删除、卸载或清理前，先列清单（对象、大小、理由），等我确认。
+3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
+4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。
+6. 命令报错时先运行 `<命令> --help`，不猜命令名或参数。
+7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。
+
+## 专项：磁盘增长
+口径：真实已用已排除可清除空间。增长量 = 当前值 − 窗口内最低值。
+1. 运行 `~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`，找出增长集中的日期。
+2. 运行 `mo analyze --json ~` 找最大目录，再对其中最大的子目录运行 `mo analyze --json <目录>`。不要不带 --json 运行 `mo analyze`，交互模式可能把文件移到废纸篓。
+3. 对照日期判断来源：下载、虚拟机镜像、Xcode 数据、容器镜像、照片库、本地备份。
+4. 列出可回收项：路径（家目录写 ~）、大小、能否再生成。只用 dry-run 预览。

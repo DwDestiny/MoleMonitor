@@ -1,0 +1,47 @@
+# MoleMonitor 排查请求
+请作为我的 Mac 维护助手，根据以下只读监测数据排查问题，并给出优化建议。
+
+## 环境
+- Mac14,15 · Apple M2 · 内存 16 GB · macOS 15.1
+- MoleMonitor 0.2.0 · 采样于 10月11日 12:00 · 数据新鲜
+- CLI：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli`
+
+## 状态摘要
+| 项 | 等级 | 当前 | 已持续 |
+|---|---|---|---|
+| CPU | 黄 | 10 分钟均值 74% | 18 分 |
+
+## 证据
+| App（近 5 分钟） | CPU | 内存 |
+|---|---|---|
+| Kiln Studio（com.example.kiln-studio） | 312% | 3.8 GB |
+| kiln-compile | 88% | 1.1 GB |
+| Orchard Browser（com.example.orchard） | 41% | 5.1 GB |
+| WindowServer | 12% | 900 MB |
+| Aster Chat（com.example.aster-chat） | 4% | 1.1 GB |
+
+| 指标 | 值 |
+|---|---|
+| CPU 2 小时 | 均值 48%，峰值 82% |
+
+## 当前提醒
+1. [黄] CPU 5 分钟均值持续偏高。
+
+## 我注意到的现象
+[在此描述你注意到的现象]
+
+## 排查规则
+1. 先只读诊断，再给建议。
+2. 删除、卸载或清理前，先列清单（对象、大小、理由），等我确认。
+3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
+4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。
+6. 命令报错时先运行 `<命令> --help`，不猜命令名或参数。
+7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。
+
+## 专项：CPU
+口径：单核满载为 100%，多核可超过 100%。
+1. 运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。
+2. 1 分钟后再运行一次，区分短时尖峰与持续占用。
+3. 系统进程（mds_stores、mdworker、photoanalysisd、backupd）：说明用途，通常等它完成，不结束它。
+4. 用户 App：先建议保存并正常退出，不直接 `kill -9`。

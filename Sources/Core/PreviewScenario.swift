@@ -133,7 +133,8 @@ extension PreviewScenario {
                                 overall: engine.overall, items: engine.items, activeAlerts: engine.activeAlerts,
                                 notifications: .init(authorization: "authorized"))
 
-        let current = fixtureCurrent(c, at: statusNow)
+        var current = fixtureCurrent(c, at: statusNow)
+        if c != .collecting { current.diskAvailable = engine.items.disk.availableImportant.value }
         let verdicts = fixtureVerdicts(c, current: current, engine: engine, now: statusNow)
         let dog = fixtureDogInput(c)
 
@@ -151,6 +152,34 @@ extension PreviewScenario {
         }
         return PreviewFixture(verdicts: verdicts, current: current, trend: trend, sleeps: sleeps, apps: apps,
                               status: status, diskSeries: diskSeries, diskTrigger: diskTrigger, dogInput: dog)
+    }
+
+    // MARK: Prompt input (golden tests and the CLI tests)
+
+    /// Environment of the invented machine. The user name is "tester", so it never meets a bundle id.
+    static let fixtureEnvironment = PromptEnvironment(
+        model: "Mac14,15", chip: "Apple M2", memoryBytes: fixturePhysicalMemory, os: "15.1", appVersion: AppInfo.version,
+        cliPath: "/Users/tester/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli",
+        dataDir: "/Users/tester/Library/Application Support/MoleMonitor")
+
+    static let fixturePromptOptions = PromptOptions(
+        includeAppNames: true, maxLength: 3000, homeDirectory: "/Users/tester", userNames: ["tester", "Tina Tester"],
+        timeZone: TimeZone(identifier: "UTC") ?? TimeZone.current)
+
+    /// The prompt input of one scenario (full data), as the engine would build it.
+    static func promptInput(_ c: PreviewCase, now: Date) -> PromptInput {
+        let f = fixture(c, full: true, now: now)
+        var summary: CPUSummary?
+        let cpuValues: [Double] = f.trend.segments.flatMap { $0 }.compactMap { $0.cpu }
+        if !cpuValues.isEmpty {
+            summary = CPUSummary(mean: cpuValues.reduce(0, +) / Double(cpuValues.count), peak: cpuValues.max() ?? 0)
+        }
+        let sampled = f.current.sampledAt ?? now
+        var freshness = PromptFreshness.fresh
+        if c == .stale { freshness = .stale(minutes: 25) }
+        return PromptInput(env: fixtureEnvironment, sampledAt: sampled, freshness: freshness, verdicts: f.verdicts,
+                           current: f.current, apps: f.apps, appsBasis: "近 5 分钟", cpuSummary: summary,
+                           diskGrowth: f.status.items.disk.growth)
     }
 
     // MARK: DogInput (fixed values of DESIGN.md 8.5, table 2)
@@ -228,8 +257,10 @@ extension PreviewScenario {
         func minutes(_ m: Double) -> Date { now.addingTimeInterval(-m * 60) }
         func problem(_ item: HealthItem, _ level: HealthLevel, _ code: String, _ headline: String, ago: Double,
                      alert: AlertItem? = nil) -> ItemVerdict {
-            ItemVerdict(item: item, level: level, reasonCode: code, headline: headline, since: minutes(ago),
-                        levelChangedAt: minutes(ago), alert: alert)
+            var v = ItemVerdict(item: item, level: level, reasonCode: code, headline: headline, since: minutes(ago),
+                                levelChangedAt: minutes(ago), alert: alert)
+            if alert == nil { v.alert = HealthAlerts.alert(for: v, current: current) }
+            return v
         }
         func other(_ item: HealthItem) -> ItemVerdict {
             switch c {

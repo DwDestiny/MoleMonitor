@@ -143,6 +143,15 @@ enum TextFormat {
         return "\(hours / 24) 天 \(hours % 24) 小时"
     }
 
+    /// A length of time: "45 分", "6 小时 20 分", "2 天 3 小时". Used for sleep length.
+    static func span(seconds: Double) -> String {
+        let minutes = max(0, Int((seconds / 60).rounded()))
+        if minutes < 60 { return "\(minutes) 分" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours) 小时 \(minutes % 60) 分" }
+        return "\(hours / 24) 天 \(hours % 24) 小时"
+    }
+
     /// CPU style percent: integer, "<1%" below one, "—" when missing. A multi-core app may exceed 100.
     static func percent(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "\u{2014}" }
