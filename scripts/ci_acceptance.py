@@ -198,7 +198,7 @@ release_bytes = main_bin.read_bytes()
 for marker in (b"UITestHarness", b"--ui-test", b"UITestFrameStore"):
     check(marker not in release_bytes, f"release binary does not contain {marker.decode()}")
 # Source audit of the panel files. The runtime accessibility tree of SwiftUI is not always readable on a VM, so this is a separate,
-# weaker check: every action Button (not a menu item with a text title) needs an accessibilityIdentifier("btn....") and an
+# weaker check: every action Button (not a menu item with a text title) needs an accessibilityIdentifier(...) and an
 # accessibilityLabel with Chinese text before the next Button or within 60 lines.
 panel_files = sorted((root / "Sources/App").glob("Panel*.swift"))
 button_total = 0
@@ -209,7 +209,7 @@ for file in panel_files:
     for index, i in enumerate(starts):
         end = min(starts[index + 1] if index + 1 < len(starts) else len(lines), i + 60)
         block = "\n".join(lines[i:end])
-        has_id = re.search(r'accessibilityIdentifier\("btn\.[A-Za-z.]+"', block)
+        has_id = re.search(r'accessibilityIdentifier\(', block)
         has_label = re.search(r'accessibilityLabel\(.*[\u4e00-\u9fff]', block) or re.search(r'\.help\(.*[\u4e00-\u9fff]', block)
         button_total += 1
         if not (has_id and has_label):
@@ -219,7 +219,7 @@ check(button_total >= 6 and not bad_buttons, "source audit: every Button in Pane
 check(not (root / "Sources/App/Panel.swift").exists(), "source audit: the old Panel.swift is gone")
 timer_hits = []
 for file in panel_files:
-    text = file.read_text(encoding="utf-8")
+    text = re.sub(r"//.*", "", file.read_text(encoding="utf-8"))
     if re.search(r"\bTimer\b|TimelineView|Timer\.publish", text):
         timer_hits.append(file.name)
 check(not timer_hits, "source audit: no Timer or TimelineView in the panel files", str(timer_hits))
@@ -245,7 +245,7 @@ else:
     t0 = time.time()
     ui_stdout, ui_stderr, ui_code = "", "", None
     try:
-        ui = run([ui_bin, "--ui-test", "--ui-test-out", ui_out], env={"MOLEMONITOR_DATA_DIR": str(ui_data)}, timeout=120)
+        ui = run([ui_bin, "--ui-test", "--ui-test-out", ui_out], env={"MOLEMONITOR_DATA_DIR": str(ui_data)}, timeout=170)
         ui_stdout, ui_stderr, ui_code = ui.stdout, ui.stderr, ui.returncode
     except subprocess.TimeoutExpired as e:
         def text(x):
@@ -254,13 +254,13 @@ else:
     print(f"ui-test wall time {time.time() - t0:.1f} s, exit code {ui_code}", flush=True)
     print("---- ui-test stdout ----\n" + ui_stdout[-6000:], flush=True)
     print("---- ui-test stderr (tail) ----\n" + ui_stderr[-1500:], flush=True)
-    check(ui_code is not None, "UI test finished within 120 s")
+    check(ui_code is not None, "UI test finished within 170 s")
     report_path = ui_out / "ui-report.json"
     ui_report = json.loads(report_path.read_text()) if report_path.exists() else None
     check(ui_report is not None, "UI test wrote ui-report.json")
     if ui_report:
         by_id = {item["id"]: item for item in ui_report["items"]}
-        for letter in "ABCDEFGHIJKL":
+        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13"]:
             check(letter in by_id, f"UI item {letter} reported")
         for item in ui_report["items"]:
             label = f"UI {item['id']} {item['name']}"

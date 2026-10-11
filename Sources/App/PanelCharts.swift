@@ -334,7 +334,7 @@ private struct CoarseLayer: View, Equatable {
                 RuleMark(y: .value("阈值", th))
                     .foregroundStyle(tok.textSecondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .annotation(position: .top, alignment: .trailing, spacing: 0) {
+                    .annotation(position: .top, alignment: .leading, spacing: 0) {
                         Text(String(format: "%.0f", th))
                             .font(PanelFont.caption)
                             .foregroundStyle(tok.textSecondary)
@@ -563,9 +563,11 @@ struct TrendStrip: View {
 
     var body: some View {
         let start = domainX.lowerBound
-        let cpu = MiniPlot.points(data.trend, from: start) { $0.cpu }
-        let rx = MiniPlot.points(data.trend, from: start) { $0.rx }
-        let tx = MiniPlot.points(data.trend, from: start) { $0.tx }
+        // While the first values are still being collected, the strip shows no curve (docs/DESIGN.md 2.13).
+        let collecting = data.isCollecting
+        let cpu: [PlotPoint] = collecting ? [] : MiniPlot.points(data.trend, from: start) { $0.cpu }
+        let rx: [PlotPoint] = collecting ? [] : MiniPlot.points(data.trend, from: start) { $0.rx }
+        let tx: [PlotPoint] = collecting ? [] : MiniPlot.points(data.trend, from: start) { $0.tx }
         let netMax = max(rx.map { $0.v }.max() ?? 0, tx.map { $0.v }.max() ?? 0)
         let cpuMax = cpu.map { $0.v }.max() ?? 0
         VStack(alignment: .leading, spacing: 0) {

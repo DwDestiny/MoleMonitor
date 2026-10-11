@@ -219,15 +219,16 @@ private struct ProblemEvidence: View {
         case .memory:
             AppEvidence(apps: model.topApps(by: .memory), sort: .memory, height: height, isReading: model.data.apps.isEmpty)
         case .disk:
-            DiskEvidence(data: model.data)
+            DiskEvidence(data: model.data, height: height)
         case .power:
-            PowerEvidence(verdict: verdict, data: model.data)
+            PowerEvidence(verdict: verdict, data: model.data, height: height)
         }
     }
 }
 
 private struct DiskEvidence: View {
     let data: PanelData
+    let height: Double
     @Environment(\.tok) private var tok
 
     private func growthText(_ key: String) -> String {
@@ -257,8 +258,11 @@ private struct DiskEvidence: View {
         return "可用 " + avail + "，共 " + total
     }
 
+    /// The gaps share the height that the plan gives beyond the 68 pt minimum, so the card has no empty strip.
+    private var gap: CGFloat { 4 + CGFloat(max(0, height - PanelMetrics.evidenceMin)) / 2 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: gap) {
             HStack(spacing: 8) {
                 column("1 天增长", "1d")
                 column("5 天增长", "5d")
@@ -281,6 +285,7 @@ private struct DiskEvidence: View {
 private struct PowerEvidence: View {
     let verdict: ItemVerdict
     let data: PanelData
+    let height: Double
     @Environment(\.tok) private var tok
 
     private var isSleepRule: Bool { verdict.reasonCode.contains("sleep") }
@@ -323,8 +328,10 @@ private struct PowerEvidence: View {
         .frame(height: 16)
     }
 
+    private var gap: CGFloat { 4 + CGFloat(max(0, height - PanelMetrics.evidenceMin)) / 2 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: gap) {
             line("电量", batteryText)
             line(isSleepRule ? "睡眠" : "窗口", isSleepRule ? sleepText : windowText)
             line("阈值", thresholdText)

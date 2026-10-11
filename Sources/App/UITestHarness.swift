@@ -827,7 +827,15 @@ final class UITestRunner {
             let sig = busy { layerSignature(hv) }
             signatures.append((at, sig.value, sig.animated, sig.count))
             if nextShot < offsets.count, at >= offsets[nextShot] {
-                if let frame = windowFrame(hv) { shots.append((at, frame)) }
+                if let frame = windowFrame(hv) {
+                    shots.append((at, frame))
+                    var alphaSum = 0.0
+                    var index = 3
+                    while index < frame.rgba.count { alphaSum += Double(frame.rgba[index]); index += 4 }
+                    let mean = alphaSum / Double(Swift.max(1, frame.w * frame.h)) / 255
+                    info["alpha-\(prefix)"] = (info["alpha-\(prefix)"].map { $0 + "," } ?? "")
+                        + String(format: "%.0f:%.3f/key=%d/%dx%d", at, mean, hv.window?.isKeyWindow == true ? 1 : 0, frame.w, frame.h)
+                }
                 nextShot += 1
             }
             if at >= sampleUntil { break }
@@ -904,6 +912,9 @@ final class UITestRunner {
         await stepIJ(first: second)
         probe.stop()
         stepE()
+        await stepM()
+        // K clicks the quit button of the real panel, so open it again with the engine model.
+        _ = await openPanel(offsets: [], via: .sendAction, holdMs: 900, prefix: "pre-k")
         info["totalSeconds"] = String(format: "%.1f", now() - tStart)
         await stepK()
     }

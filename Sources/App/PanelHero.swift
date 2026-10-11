@@ -186,33 +186,38 @@ private struct ProblemHero: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            HeroDog(data: data, size: CGSize(width: 72, height: 54))
-                .padding(.top, 4)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(HeroText.problemTitle(data))
-                    .font(PanelFont.title)
-                    .foregroundStyle(titleColor)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.9)
-                    .uiTestFrame("txt.hero.title")
-                    .accessibilityIdentifier("label.summary")
-                if let sub = HeroText.problemSubtitle(data) {
-                    Text(sub)
-                        .font(PanelFont.footnote)
-                        .foregroundStyle(tok.textSecondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .uiTestFrame("txt.hero.subtitle")
-                }
-                Spacer(minLength: 4)
-                FlowLayout(spacing: 10, lineSpacing: 4) {
-                    ForEach(data.lamps, id: \.item) { v in
-                        ProblemLamp(verdict: v)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                HeroDog(data: data, size: CGSize(width: 72, height: 54))
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(HeroText.problemTitle(data))
+                        .font(PanelFont.title)
+                        .foregroundStyle(titleColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.9)
+                        .uiTestFrame("txt.hero.title")
+                        .accessibilityIdentifier("label.summary")
+                    if let sub = HeroText.problemSubtitle(data) {
+                        Text(sub)
+                            .font(PanelFont.footnote)
+                            .foregroundStyle(tok.textSecondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .uiTestFrame("txt.hero.subtitle")
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 58, alignment: .top)
+            // The lamps run under the dog over the full width, so five lamps never wrap.
+            FlowLayout(spacing: 12, lineSpacing: 4) {
+                ForEach(data.lamps, id: \.item) { v in
+                    ProblemLamp(verdict: v)
+                }
+            }
+            .padding(.top, 10)
+            .padding(.leading, 4)
         }
         .frame(height: PanelMetrics.heroProblem, alignment: .top)
         .accessibilityElement(children: .contain)

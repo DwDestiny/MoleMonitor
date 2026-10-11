@@ -208,7 +208,7 @@ struct DisclosureRow: View {
         }
         .buttonStyle(PanelRowButtonStyle(level: .green))
         .accessibilityIdentifier("disclosure." + id)
-        .accessibilityLabel(Text(title))
+        .accessibilityLabel(Text("展开或收起" + title))
         .accessibilityValue(Text(expanded ? "已展开" : "已收起"))
         .uiTestFrame("disclosure." + id)
     }
