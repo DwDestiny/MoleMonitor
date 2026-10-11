@@ -16,6 +16,8 @@ let usageText = """
   --status                 输出完整状态 JSON
   --status --brief         输出一行中文摘要
   --disk-history [--days N]  输出每天的磁盘真实已用与增长量 JSON（默认 30 天，最大 60 天）
+  prompt [--topic T]       输出给 agent 的排查提示词（T 为 disk、memory、cpu、thermal、power、network）
+  prompt --apps|--no-apps  强制包含或隐藏 App 名称（默认按 App 中的设置）
   --schema                 输出字段说明与口径说明 JSON
   --version                输出版本
   --help                   输出本说明
@@ -54,7 +56,10 @@ let schemaDocument: [String: Any] = [
         "fresh": "App 在运行且 age_seconds 不超过 420 为 true",
         "recomputed": "true 表示磁盘与网络流量由 CLI 从 NDJSON 历史重新计算，其他内容来自旧的 status.json",
         "overall": "整体等级与一句话原因",
-        "items": "disk 与 network 两项",
+        "items": "disk 与 network，以及 memory、cpu、thermal、power（App 0.3 起写入；旧文件没有这四项）",
+        "top_apps": "占用前几名的 App：CPU 前 8 与内存前 8 的并集，最多 16 项。含 sampled_at、basis、coverage",
+        "env": "机型、芯片、内存大小、系统版本",
+        "prompt_prefs": "include_app_names：提示词是否包含 App 名称",
         "active_alerts": "当前提醒，每项含 type、subject、level、since、message、agent_hint；不输出已恢复的提醒",
         "notifications": "通知授权状态",
     ] as [String: Any],
@@ -89,12 +94,14 @@ func schemaText() -> String {
 
 // MARK: - Argument parsing
 
-enum Command { case status, diskHistory, schema, version, help }
+enum Command { case status, diskHistory, schema, version, help, prompt }
 
 var command: Command?
 var brief = false
 var days = 30
 var daysGiven = false
+var topic: PromptTopic?
+var appsOverride: Bool?
 var args = Array(CommandLine.arguments.dropFirst())
 var i = 0
 func setCommand(_ c: Command, _ arg: String) {
@@ -104,6 +111,19 @@ func setCommand(_ c: Command, _ arg: String) {
 while i < args.count {
     let a = args[i]
     switch a {
+    case "prompt", "--prompt":
+        if a == "prompt" && i != 0 { fail("未知参数：\(a)") }
+        setCommand(.prompt, a)
+    case "--topic":
+        i += 1
+        guard i < args.count, let t = PromptTopic(rawValue: args[i]) else {
+            fail("--topic 需要 disk、memory、cpu、thermal、power 或 network")
+        }
+        topic = t
+    case "--apps", "--no-apps":
+        let wanted = a == "--apps"
+        if let existing = appsOverride, existing != wanted { fail("--apps 与 --no-apps 不能同时使用") }
+        appsOverride = wanted
     case "--status": setCommand(.status, a)
     case "--brief": brief = true
     case "--disk-history": setCommand(.diskHistory, a)
@@ -122,6 +142,7 @@ while i < args.count {
 guard let command else { fail("缺少命令") }
 if brief && command != .status { fail("--brief 只能与 --status 一起使用") }
 if daysGiven && command != .diskHistory { fail("--days 只能与 --disk-history 一起使用") }
+if (topic != nil || appsOverride != nil) && command != .prompt { fail("--topic、--apps、--no-apps 只能与 prompt 一起使用") }
 
 // MARK: - Run
 
@@ -151,6 +172,25 @@ case .status:
         FileHandle.standardError.write(Data("无法编码状态\n".utf8))
         exit(1)
     }
+    exit(result.exitCode)
+case .prompt:
+    let dir = MoleMonitorPaths.dataDir(environment: ProcessInfo.processInfo.environment)
+    let now = Date()
+    guard let result = StatusReportBuilder.build(dir: dir, now: now, todayStart: localMidnight(now),
+                                                 pidAlive: StatusStore.processAlive) else {
+        emit(StatusReportBuilder.neverRunText)
+        exit(4)
+    }
+    let status = result.report.status
+    let cliPath: String = Bundle.main.executablePath ?? CommandLine.arguments[0]
+    let input = StatusExtras.promptInput(status: status, freshness: result.report.freshness, cliPath: cliPath,
+                                         dataDir: dir.path, timeZone: TimeZone.current)
+    let include: Bool = appsOverride ?? status.promptPrefs?.includeAppNames ?? true
+    let options = PromptOptions.forCurrentUser(includeAppNames: include)
+    let scope: PromptScope = topic.map { PromptScope.topic($0) } ?? PromptScope.overview
+    var text = PromptBuilder.build(input, scope: scope, options: options)
+    while text.hasSuffix("\n") { text.removeLast() }
+    emit(text)
     exit(result.exitCode)
 case .diskHistory:
     let dir = MoleMonitorPaths.dataDir(environment: ProcessInfo.processInfo.environment)

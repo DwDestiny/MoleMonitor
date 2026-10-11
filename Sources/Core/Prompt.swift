@@ -56,6 +56,20 @@ struct PromptOptions: Equatable {
     var timeZone = TimeZone.current
 }
 
+extension PromptOptions {
+    /// Options for the user who runs the process: the home directory, the account name and the full name.
+    /// The app and the CLI both call this, so both redact the same text.
+    static func forCurrentUser(includeAppNames: Bool) -> PromptOptions {
+        var names = [String]()
+        let account: String = NSUserName()
+        let full: String = NSFullUserName()
+        if !account.isEmpty { names.append(account) }
+        if !full.isEmpty && full != account { names.append(full) }
+        return PromptOptions(includeAppNames: includeAppNames, maxLength: 3000, homeDirectory: NSHomeDirectory(),
+                             userNames: names, timeZone: TimeZone.current)
+    }
+}
+
 // MARK: - Redaction (DESIGN.md 7.5)
 
 enum Redactor {

@@ -71,12 +71,27 @@ enum StatusReportBuilder {
         if let a = DiskAlertPolicy.growthAlert(verdict: verdict, since: since, state: DiskAlertState()) { alerts.append(a) }
         if let a = DiskAlertPolicy.lowSpaceAlert(verdict: verdict, since: since, state: DiskAlertState(), now: now) { alerts.append(a) }
         let writtenAt = prev?.writtenAt ?? lastSample ?? now
-        let file = StatusFile(appVersion: prev?.appVersion ?? AppInfo.version, writtenAt: writtenAt,
-                              writerPid: prev?.writerPid ?? 0,
-                              overall: .init(level: HealthLevel.worst([verdict.level]), summary: verdict.reason),
-                              items: .init(disk: disk, network: NetworkItem.make(samples: samples, now: now, todayStart: todayStart)),
-                              activeAlerts: alerts,
+        var items = StatusFile.Items(disk: disk, network: NetworkItem.make(samples: samples, now: now, todayStart: todayStart))
+        var overall = StatusFile.Overall(level: HealthLevel.worst([verdict.level]), summary: verdict.reason)
+        // Items of the redesign come from the last status.json of the app: the CLI cannot measure them.
+        // Their alerts and the new fields are carried over as they were written.
+        if let prev, prev.items.memory != nil || prev.items.cpu != nil || prev.items.thermal != nil || prev.items.power != nil {
+            items.memory = prev.items.memory
+            items.cpu = prev.items.cpu
+            items.thermal = prev.items.thermal
+            items.power = prev.items.power
+            alerts.append(contentsOf: prev.activeAlerts.filter { !$0.type.hasPrefix("disk_") })
+        }
+        var file = StatusFile(appVersion: prev?.appVersion ?? AppInfo.version, writtenAt: writtenAt,
+                              writerPid: prev?.writerPid ?? 0, overall: overall, items: items, activeAlerts: alerts,
                               notifications: prev?.notifications ?? .init(authorization: "unavailable"))
+        file.topApps = prev?.topApps
+        file.env = prev?.env
+        file.promptPrefs = prev?.promptPrefs
+        if items.memory != nil || items.cpu != nil || items.thermal != nil || items.power != nil {
+            overall = StatusExtras.overall(verdicts: StatusExtras.verdicts(from: file), diskSummary: verdict.reason)
+            file.overall = overall
+        }
         let running = prev.map { pidAlive($0.writerPid) } ?? false
         let report = StatusReport(status: file, readAt: now, ageSeconds: now.timeIntervalSince(writtenAt),
                                   appRunning: running, fresh: false, recomputed: true)

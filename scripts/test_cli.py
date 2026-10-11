@@ -122,6 +122,35 @@ def write_status(d, now, written_at, pid):
     Path(d, "status.json").write_text(json.dumps(doc, ensure_ascii=False, indent=2))
 
 
+def write_status_new(d, now, written_at, pid, include_names=True):
+    """A status.json of the redesign: the old fields plus items, top_apps, env and prompt_prefs."""
+    write_status(d, now, written_at, pid)
+    path = Path(d, "status.json")
+    doc = json.loads(path.read_text())
+    at = now - timedelta(minutes=1)
+    since = now - timedelta(minutes=25)
+    doc["items"]["memory"] = {
+        "level": "red", "reason_code": "pressure_critical", "headline": "压力严重 · swap 9.8 GB", "since": iso(since),
+        "level_changed_at": iso(since), "pressure": "critical", "swap_used": measured(9_800_000_000, at),
+        "swap_growth_30m": measured(3_100_000_000, at), "swap_trend": "steep_up"}
+    doc["items"]["cpu"] = {
+        "level": "green", "reason_code": "ok", "headline": "CPU 5 分钟均值 21%",
+        "mean_5m": measured(21.0, at, "percent"), "mean_10m": measured(22.0, at, "percent"),
+        "trend_2h": {"mean": 24.0, "peak": 31.0}}
+    doc["items"]["thermal"] = {"level": "green", "reason_code": "ok", "headline": "温度正常", "state": "nominal"}
+    doc["items"]["power"] = {"level": "green", "reason_code": "ok", "headline": "电量 83% · 接电源",
+                             "battery_percent": 83, "power_source": "ac"}
+    doc["active_alerts"] = [{"type": "memory_pressure", "subject": "memory", "level": "red", "since": iso(since),
+                             "message": "内存压力严重，swap 9.8 GB。", "agent_hint": "用 vm_stat 与 ps 找出占用内存最多的 App"}]
+    doc["top_apps"] = {"sampled_at": iso(at), "basis": "5m", "coverage": {"readable": 300, "unreadable": 40},
+                       "apps": [{"name": "Orchard Browser", "bundle_id": "com.example.orchard", "cpu_percent": 52.0,
+                                 "memory_bytes": 6_400_000_000, "memory_basis": "footprint", "process_count": 12,
+                                 "is_system": False}]}
+    doc["env"] = {"model": "Mac14,15", "chip": "Apple M2", "memory_bytes": 17179869184, "os": "15.1"}
+    doc["prompt_prefs"] = {"include_app_names": include_names}
+    path.write_text(json.dumps(doc, ensure_ascii=False, indent=2))
+
+
 def main():
     compiler = find_compiler()
     print(f"Compiler: {compiler}", flush=True)
@@ -269,6 +298,63 @@ def main():
         b = run(d_io, "--status", "--brief")
         check(b.returncode == 0 and b.stdout.startswith("磁盘 红（5 天 +300 GB）"), f"interop brief ({b.stdout!r})")
         check(os.stat(d_io / "status.json").st_mode & 0o777 == 0o600, "Core writes status.json with mode 0600")
+
+
+        # 8b. prompt subcommand.
+        d_pn = tmp / "prompt-new"
+        write_samples(d_pn, now)
+        write_status_new(d_pn, now, now - timedelta(seconds=30), me)
+        before = snapshot(d_pn)
+        r = run(d_pn, "prompt")
+        check(r.returncode == 0, f"prompt fresh exit 0 (got {r.returncode}, {r.stderr})")
+        out = r.stdout
+        check(out.startswith("# MoleMonitor 排查请求\n"), "prompt starts with the title")
+        check(out.endswith("\n") and not out.endswith("\n\n"), "prompt ends with exactly one newline")
+        check("## 状态摘要" in out and "## 排查规则" in out, "prompt has the summary and the rules")
+        check("| 内存 | 红 | 压力严重，swap 9.8 GB ↑↑ | " in out, "prompt memory row from status.json")
+        check("## 专项：" in out and "内存压力严重" in out, "prompt has an auto topic and the alert")
+        check("Orchard Browser（com.example.orchard）" in out and "采样于" in out, "prompt has apps from top_apps with the scan time")
+        check(len(out) < 3200, f"prompt length is sane ({len(out)})")
+        user = os.environ.get("USER", "") or os.environ.get("LOGNAME", "")
+        check("/home/" not in out and "/Users/" not in out and (len(user) < 3 or user not in out), "prompt has no home path and no user name")
+        check(run(d_pn, "--prompt").stdout == out, "--prompt gives the same text as prompt")
+        t = run(d_pn, "prompt", "--topic", "memory")
+        check(t.returncode == 0 and "## 专项：内存" in t.stdout and "| 磁盘 |" not in t.stdout, "prompt --topic memory")
+        for topic_name in ("disk", "cpu", "thermal", "power", "network"):
+            tr = run(d_pn, "prompt", "--topic", topic_name)
+            check(tr.returncode == 0 and "## 专项：" in tr.stdout, f"prompt --topic {topic_name}")
+        na = run(d_pn, "prompt", "--no-apps")
+        check(na.returncode == 0 and "已按设置隐藏 App 名称" in na.stdout and "Orchard" not in na.stdout, "prompt --no-apps hides names")
+        d_pf = tmp / "prompt-off"
+        write_samples(d_pf, now)
+        write_status_new(d_pf, now, now - timedelta(seconds=30), me, include_names=False)
+        check("Orchard" not in run(d_pf, "prompt").stdout, "prompt_prefs false hides names")
+        check("Orchard Browser" in run(d_pf, "prompt", "--apps").stdout, "--apps overrides prompt_prefs false")
+        check(snapshot(d_pn) == before, "prompt does not change the data directory")
+        # Old status.json without the new fields still gives a prompt.
+        po = run(d_fresh, "prompt")
+        check(po.returncode == 0 and "## 状态摘要" in po.stdout and "磁盘" in po.stdout, "prompt from an old status.json")
+        # Dead writer: exit 3 and the freshness line says so.
+        d_pd = tmp / "prompt-dead"
+        write_samples(d_pd, now)
+        write_status_new(d_pd, now, now - timedelta(seconds=30), dead_pid())
+        pd = run(d_pd, "prompt")
+        check(pd.returncode == 3 and "App 未运行" in pd.stdout and "压力严重" in pd.stdout, f"prompt with a dead writer: exit 3 ({pd.returncode})")
+        # Nothing at all.
+        pn = run(d_none, "prompt")
+        check(pn.returncode == 4 and "尚未运行过" in pn.stdout and not d_none.exists(), "prompt with no record: exit 4")
+        # Argument errors.
+        for bad in (["prompt", "--topic", "foo"], ["prompt", "--topic"], ["prompt", "--apps", "--no-apps"], ["--topic", "disk"],
+                    ["--apps"], ["--status", "prompt"], ["prompt", "--status"], ["prompt", "--days", "3"], ["prompt", "extra"]):
+            r = run(d_none, *bad)
+            check(r.returncode == 2 and r.stdout == "" and "用法" in r.stderr, f"bad prompt args {bad} exit 2")
+        check("prompt" in run(d_none, "--help").stdout, "--help lists prompt")
+        check("top_apps" in json.loads(run(d_none, "--schema").stdout)["top_level_fields"], "--schema describes top_apps")
+        # --status keeps the new fields and carries them over when the data is recomputed.
+        rs = json.loads(run(d_pd, "--status").stdout)
+        check(rs["recomputed"] is True and rs["items"]["memory"]["pressure"] == "critical", "recomputed status carries the new items")
+        check(rs["top_apps"]["apps"][0]["name"] == "Orchard Browser" and rs["prompt_prefs"]["include_app_names"] is True, "recomputed status carries top_apps and prefs")
+        check(any(a["type"] == "memory_pressure" for a in rs["active_alerts"]) and rs["overall"]["level"] == "red", "recomputed status keeps non-disk alerts")
 
         # 9. Timing: 50 runs of --status --brief and --status on the fresh directory.
         for label, args in (("--status", ["--status"]), ("--status --brief", ["--status", "--brief"]),
