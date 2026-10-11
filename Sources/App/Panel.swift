@@ -63,7 +63,7 @@ struct Panel: View {
     private var smooth: Animation? { reduceMotion ? nil : .smooth(duration: 0.35) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             staged(0) { header }
             staged(1) {
                 DiskCard(status: status, series: diskSeries, trigger: diskTrigger, entrance: entrance)
@@ -71,16 +71,15 @@ struct Panel: View {
             }
             staged(2) { LiveCard(live: live) }
             staged(3) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     trafficBlock
                     alertsBlock
                     authorizationBlock
-                    Divider().opacity(0.6)
                     footer
                 }
             }
         }
-        .padding(12)
+        .padding(10)
         .frame(width: 340, alignment: .leading)
         .onAppear { shown = true }
     }
@@ -152,16 +151,18 @@ struct Panel: View {
             .accessibilityIdentifier("block.alerts")
         } else {
             let tint = PanelFormat.color(alerts.map { $0.level }.max { $0.severity < $1.severity } ?? .unknown)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("提醒").font(.caption.weight(.semibold))
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(0..<min(alerts.count, 2), id: \.self) { index in
                     alertRow(alerts[index])
                 }
             }
-            .padding(10)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(tint.opacity(0.10)))
             .animation(smooth, value: alerts.count)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("提醒")
             .accessibilityIdentifier("block.alerts")
         }
     }
@@ -172,6 +173,7 @@ struct Panel: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(alert.message)
                     .font(.caption)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("开始于 \(PanelFormat.dateTime(alert.since))")
                     .font(.caption2)
@@ -221,12 +223,10 @@ struct Panel: View {
 
     private var footer: some View {
         HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("命令行读取状态").font(.caption2).foregroundStyle(.secondary)
-                Text(verbatim: "molemonitor-cli --status --brief")
-                    .font(.system(.caption, design: .monospaced))
-            }
-            .accessibilityElement(children: .combine)
+            Text(verbatim: "molemonitor-cli --status --brief")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("命令行读取状态：molemonitor-cli --status --brief")
             Spacer()
             Button(action: onQuit) { Text("退出") }
                 .buttonStyle(PillButtonStyle())
@@ -334,7 +334,7 @@ private struct DiskCard: View, Equatable {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             topRow
-            DiskTrendChart(series: series, trigger: trigger, level: level, entrance: entrance)
+            DiskTrendChart(series: series, trigger: trigger, level: level, totalBytes: disk?.total.value, entrance: entrance)
             HStack(spacing: 0) {
                 ForEach(PanelFormat.windows) { window in
                     growthColumn(window)
@@ -364,7 +364,7 @@ private struct DiskCard: View, Equatable {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("已用 \(parts.value) \(parts.unit)")
             Spacer(minLength: 4)
-            VStack(alignment: .trailing, spacing: 3) {
+            HStack(alignment: .center, spacing: 6) {
                 Text("共 \(PanelFormat.bytes(disk?.total))")
                     .font(.caption)
                     .monospacedDigit()
@@ -408,6 +408,8 @@ private struct DiskTrendChart: View {
     var series: [DiskPoint]
     var trigger: DiskTrigger?
     var level: HealthLevel
+    /// Capacity of the volume. The vertical range is never narrower than 6% of it, so small noise stays small.
+    var totalBytes: Int64?
     var entrance: PanelEntrance
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -415,6 +417,11 @@ private struct DiskTrendChart: View {
     @State private var drawn = false
 
     private var now: Date { series.last?.t ?? Date() }
+    /// Points under the blue area: all of them, or only those before the trigger start (the segment has its own area).
+    private var baseArea: [DiskPoint] {
+        guard let trigger else { return series }
+        return series.filter { $0.t <= trigger.from } + [DiskPoint(t: trigger.from, used: trigger.fromUsed)]
+    }
     private var segment: [DiskPoint] {
         guard let trigger else { return [] }
         return DiskSeries.triggerPoints(series: series, trigger: trigger)
@@ -432,15 +439,26 @@ private struct DiskTrendChart: View {
         if let trigger { values.append(Double(trigger.fromUsed) / 1e9) }
         guard let lo = values.min(), let hi = values.max() else { return 0...1 }
         let pad = max((hi - lo) * 0.18, 0.5)
-        return (lo - pad)...(hi + pad)
+        var low = lo - pad
+        var high = hi + pad
+        if let totalBytes, totalBytes > 0 {
+            let minSpan = Double(totalBytes) / 1e9 * 0.06
+            if high - low < minSpan {
+                let mid = (high + low) / 2
+                low = max(0, mid - minSpan / 2)
+                high = low + minSpan
+            }
+        }
+        return low...high
     }
 
     var body: some View {
         let yRange = domainY
         let tint = PanelFormat.color(trigger?.level ?? level)
         Chart {
-            ForEach(series) { p in
-                AreaMark(x: .value("时间", p.t), yStart: .value("基线", yRange.lowerBound), yEnd: .value("已用", p.gb))
+            ForEach(baseArea) { p in
+                AreaMark(x: .value("时间", p.t), yStart: .value("基线", yRange.lowerBound), yEnd: .value("已用", p.gb),
+                         series: .value("区", "base"))
                     .interpolationMethod(.catmullRom)
                     .foregroundStyle(LinearGradient(colors: [Color.accentColor.opacity(0.32), Color.accentColor.opacity(0.02)],
                                                     startPoint: .top, endPoint: .bottom))
@@ -507,7 +525,7 @@ private struct DiskTrendChart: View {
                     }
             }
         }
-        .frame(height: 62)
+        .frame(height: 54)
         .mask(alignment: .leading) {
             Rectangle().scaleEffect(x: isDrawn ? 1 : 0.001, anchor: .leading)
         }
@@ -564,11 +582,12 @@ private struct LiveCard: View {
     private var domainX: ClosedRange<Date> { windowEnd.addingTimeInterval(-LiveSnapshot.windowSeconds)...windowEnd }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             netRow
             cpuRow
         }
-        .padding(10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardBackground()
         .accessibilityElement(children: .contain)
@@ -580,8 +599,7 @@ private struct LiveCard: View {
 
     private var netRow: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("网速").font(.caption2).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 0) {
                 rateLine(symbol: "arrow.down", color: Self.downColor, value: live.rx, name: "下行")
                 rateLine(symbol: "arrow.up", color: Self.upColor, value: live.tx, name: "上行")
             }
@@ -637,7 +655,7 @@ private struct LiveCard: View {
         .chartYAxis(.hidden)
         .chartLegend(.hidden)
         .chartPlotStyle { plot in plotLook(plot) }
-        .frame(height: 40)
+        .frame(height: 34)
         .overlay { if live.net.count < 2 { waiting } }
         .animation(scroll, value: live.net.last?.t)
         .accessibilityIdentifier("chart.net")
@@ -649,10 +667,10 @@ private struct LiveCard: View {
 
     private var cpuRow: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("CPU").font(.caption2).foregroundStyle(.secondary)
                 Text(RateText.percent(live.cpuPercent))
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .contentTransition(.numericText())
                     .animation(smooth, value: RateText.percent(live.cpuPercent))
@@ -684,7 +702,7 @@ private struct LiveCard: View {
         .chartYAxis(.hidden)
         .chartLegend(.hidden)
         .chartPlotStyle { plot in plotLook(plot) }
-        .frame(height: 40)
+        .frame(height: 34)
         .overlay { if live.cpu.count < 2 { waiting } }
         .animation(scroll, value: live.cpu.last?.t)
         .accessibilityIdentifier("chart.cpu")
