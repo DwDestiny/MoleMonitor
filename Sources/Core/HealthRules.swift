@@ -120,8 +120,10 @@ enum CPUHealth {
     static let appExit = 50.0
     static let appWindow: TimeInterval = 1800
 
+    /// `appDataAvailable` tells whether the process scans cover the app windows. Without it, a non-empty
+    /// `apps` list stands for available data. An empty list with available data means no app is busy.
     static func evaluate(points: [TrendPoint], apps: [AppWindowStat], now: Date,
-                         state: inout RuleMemory) -> ItemVerdict {
+                         state: inout RuleMemory, appDataAvailable: Bool? = nil) -> ItemVerdict {
         let run = TrendMath.run(points, now: now)
         let cpu: (TrendPoint) -> Double? = { $0.cpu }
 
@@ -149,7 +151,7 @@ enum CPUHealth {
         }
 
         // One app that keeps one core busy (PROJECT.md 3.2). The window start stands for the problem start.
-        if !apps.isEmpty {
+        if appDataAvailable ?? !apps.isEmpty {
             var hot: AppWindowStat?
             for a in apps {
                 guard let m = a.mean30m, m >= CPUHealth.appEnter else { continue }

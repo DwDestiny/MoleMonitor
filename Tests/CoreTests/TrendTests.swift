@@ -173,6 +173,80 @@ func runTrendTests() {
     runAppRankingTests()
 }
 
+private func proc(_ pid: Int32, _ name: String, key: String? = nil, cpuMs: UInt64, fp: UInt64? = nil, rss: UInt64? = nil,
+                  start: UInt64 = 1, system: Bool = false, display: String? = nil) -> ProcessSample {
+    ProcessSample(pid: pid, startAbs: start, name: name, appKey: key ?? "proc:" + name, displayName: display ?? name,
+                  bundleID: key, cpuTimeNs: cpuMs * 1_000_000, footprint: fp, rss: rss, isSystem: system)
+}
+
 func runAppRankingTests() {
-    // Filled in with the AppRanking implementation.
+    section("AppRanking")
+    let prev = [proc(10, "Render", key: "com.example.render", cpuMs: 1000, fp: 800_000_000, display: "Render"),
+                proc(11, "RenderHelper", key: "com.example.render", cpuMs: 500, fp: 200_000_000, display: "Render"),
+                proc(20, "Mail", key: "com.example.mail", cpuMs: 100, fp: 300_000_000, display: "Mail"),
+                proc(30, "mdworker_shared", cpuMs: 100, fp: 60_000_000, system: true),
+                proc(40, "idle", cpuMs: 10, fp: 1_000_000)]
+    let cur = [proc(10, "Render", key: "com.example.render", cpuMs: 11_000, fp: 900_000_000, display: "Render"),   // +10 s in 10 s: 100 %
+               proc(11, "RenderHelper", key: "com.example.render", cpuMs: 5_500, fp: 300_000_000, display: "Render"), // +5 s: 50 %
+               proc(20, "Mail", key: "com.example.mail", cpuMs: 150, fp: 310_000_000, display: "Mail"),            // +50 ms: 0.5 %
+               proc(30, "mdworker_shared", cpuMs: 9_000, fp: 60_000_000, system: true),                            // ignored
+               proc(40, "idle", cpuMs: 10, fp: 1_000_000),
+               proc(50, "NewTool", cpuMs: 2_000, rss: 120_000_000)]                                               // new: 2 s in 10 s
+    let usage = AppRanking.usage(previous: prev, current: cur, seconds: 10, ignore: AppRanking.defaultIgnore)
+    let byKey = Dictionary(uniqueKeysWithValues: usage.map { ($0.key, $0) })
+    expect(byKey["com.example.render"]?.cpuPercent == 150, "processes of one app add up (can exceed 100 %), got \(String(describing: byKey["com.example.render"]?.cpuPercent))")
+    expect(byKey["com.example.render"]?.memoryBytes == 1_200_000_000 && byKey["com.example.render"]?.processCount == 2, "memory adds footprints")
+    expect(byKey["com.example.render"]?.memoryBasis == "footprint" && byKey["com.example.render"]?.name == "Render", "footprint basis and bundle display name")
+    expect(abs((byKey["com.example.mail"]?.cpuPercent ?? 0) - 0.5) < 0.0001, "0.5 % is measured")
+    expect(byKey["proc:mdworker_shared"] == nil, "ignored processes are not listed")
+    expect(abs((byKey["proc:NewTool"]?.cpuPercent ?? 0) - 20) < 0.0001, "a new process counts its CPU time")
+    expect(byKey["proc:NewTool"]?.memoryBasis == "rss" && byKey["proc:NewTool"]?.memoryBytes == 120_000_000, "rss is the fallback basis")
+    expect(byKey["proc:NewTool"]?.isSystem == false && byKey["com.example.render"]?.isSystem == false, "isSystem needs every process to be a system process")
+
+    let reused = AppRanking.usage(previous: [proc(10, "Old", cpuMs: 5_000, start: 1)], current: [proc(10, "New", cpuMs: 1_000, start: 2)], seconds: 10, ignore: [])
+    expect(abs((reused.first?.cpuPercent ?? 0) - 10) < 0.0001, "a reused pid with a new start time is a new process")
+    let backwards = AppRanking.usage(previous: [proc(10, "A", cpuMs: 5_000)], current: [proc(10, "A", cpuMs: 1_000)], seconds: 10, ignore: [])
+    expect(backwards.first?.cpuPercent == 0, "a smaller CPU time gives 0, not a negative value")
+    let first = AppRanking.usage(previous: [], current: cur, seconds: 10, ignore: [])
+    expect(first.allSatisfy { $0.cpuPercent == nil } && first.contains { $0.memoryBytes != nil }, "the first scan has memory but no CPU")
+    expect(AppRanking.usage(previous: prev, current: cur, seconds: 0, ignore: []).allSatisfy { $0.cpuPercent == nil }, "zero seconds gives no CPU")
+    expect(AppRanking.isIgnored("XProtectService", ignore: AppRanking.defaultIgnore) && AppRanking.isIgnored("mdworker", ignore: AppRanking.defaultIgnore)
+           && !AppRanking.isIgnored("MoleMonitor", ignore: AppRanking.defaultIgnore), "the ignore list matches by name prefix and keeps MoleMonitor")
+
+    let topCPU = AppRanking.top(usage, by: .cpu)
+    expect(topCPU.map { $0.key } == ["com.example.render", "proc:NewTool", "com.example.mail"], "CPU order, rows below both minimums left out: \(topCPU.map { $0.key })")
+    let topMem = AppRanking.top(usage, by: .memory)
+    expect(topMem.first?.key == "com.example.render" && topMem.map { $0.key }.contains("proc:idle") == false, "memory order")
+    expect(AppRanking.top(usage, by: .cpu, count: 1).count == 1, "count limits the rows")
+    let tie = [AppUsage(key: "b", name: "B", bundleID: nil, cpuPercent: 5, memoryBytes: 100_000_000, memoryBasis: "footprint", processCount: 1, isSystem: false),
+               AppUsage(key: "a", name: "A", bundleID: nil, cpuPercent: 5, memoryBytes: 100_000_000, memoryBasis: "footprint", processCount: 1, isSystem: false)]
+    expect(AppRanking.top(tie, by: .cpu).map { $0.key } == ["a", "b"], "equal rows sort by name")
+
+    section("AppCPUTracker")
+    func scan(_ cpu: Double, key: String = "com.example.render") -> [AppUsage] {
+        [AppUsage(key: key, name: "Render", bundleID: key, cpuPercent: cpu, memoryBytes: nil, memoryBasis: "footprint", processCount: 1, isSystem: false)]
+    }
+    var tracker = AppCPUTracker()
+    for i in 0..<10 { tracker.add(at: now.addingTimeInterval(Double(i) * 60), seconds: 60, usage: scan(95)) }
+    let t10 = now.addingTimeInterval(9 * 60)
+    var stats = tracker.stats(now: t10)
+    expect(stats.count == 1 && stats[0].mean30m == nil, "10 minutes of scans cannot give a 30 minute mean")
+    expect(stats.first?.mean10m != nil && abs((stats.first?.mean10m ?? 0) - 95) < 0.01, "10 minute mean is 95 %")
+    expect(tracker.hasCoverage(now: t10), "10 minutes of scans cover the 10 minute window")
+    for i in 10..<35 { tracker.add(at: now.addingTimeInterval(Double(i) * 60), seconds: 60, usage: scan(95)) }
+    stats = tracker.stats(now: now.addingTimeInterval(34 * 60))
+    expect(abs((stats.first?.mean30m ?? 0) - 95) < 0.01, "30 minute mean after 35 minutes is 95 %, got \(String(describing: stats.first?.mean30m))")
+    for i in 35..<45 { tracker.add(at: now.addingTimeInterval(Double(i) * 60), seconds: 60, usage: scan(5)) }
+    stats = tracker.stats(now: now.addingTimeInterval(44 * 60))
+    expect((stats.first?.mean10m ?? 100) < 50, "10 minute mean drops below 50 % after a calm period")
+    expect((stats.first?.mean30m ?? 0) > 60 && (stats.first?.mean30m ?? 100) < 80, "30 minute mean falls slowly")
+    var sleepy = AppCPUTracker()
+    sleepy.add(at: now, seconds: 60, usage: scan(95))
+    sleepy.add(at: now.addingTimeInterval(7200), seconds: 7200, usage: scan(1))
+    expect(!sleepy.hasCoverage(now: now.addingTimeInterval(7200)), "an interval longer than 10 minutes is a sleep and is not counted")
+    var memory = AppCPUTracker()
+    for i in 0..<500 { memory.add(at: now.addingTimeInterval(Double(i) * 4), seconds: 4, usage: scan(50)) }
+    expect(memory.stats(now: now.addingTimeInterval(1996)).count == 1, "many 4 second scans stay in few buckets")
+    memory.reset()
+    expect(memory.stats(now: now).isEmpty && !memory.hasCoverage(now: now), "reset clears the tracker")
 }
