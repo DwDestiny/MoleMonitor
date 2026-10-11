@@ -31,18 +31,25 @@ final class DogPathCache {
     }
 }
 
-/// Color tokens of DESIGN.md 4.2, light and dark.
+/// Color tokens of DESIGN.md 4.2, light and dark. `muted` is the gray dog of collecting and stale (DESIGN.md 4.7):
+/// neutral grays without warmth, a light gray outline and mid gray eyes. It stays calmer than the normal dog (no near black
+/// ink, no pink) but its outline is far enough from the card surface to read at 72 x 54 pt (I2 stage 2, I3 request 6).
 struct DogPalette {
     var dark: Bool
+    var muted = false
 
     private static func rgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
         let r = CGFloat((hex >> 16) & 0xFF) / 255, g = CGFloat((hex >> 8) & 0xFF) / 255, b = CGFloat(hex & 0xFF) / 255
         return CGColor(srgbRed: r, green: g, blue: b, alpha: alpha)
     }
 
-    var outline: CGColor { dark ? CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.2) : DogPalette.rgb(0xD8D2C8) }
+    var outline: CGColor {
+        if muted { return dark ? CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.25) : DogPalette.rgb(0xC2C2C6) }
+        return dark ? CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.2) : DogPalette.rgb(0xD8D2C8)
+    }
 
     func color(_ role: DogPartRole) -> CGColor {
+        if muted { return mutedColor(role) }
         switch role {
         case .fur, .bubble: return dark ? DogPalette.rgb(0xF5F2ED) : DogPalette.rgb(0xFFFFFF)
         case .shade: return dark ? DogPalette.rgb(0xD9D4CC) : DogPalette.rgb(0xECE7DF)
@@ -58,8 +65,24 @@ struct DogPalette {
         }
     }
 
+    private func mutedColor(_ role: DogPartRole) -> CGColor {
+        switch role {
+        case .fur, .bubble: return dark ? DogPalette.rgb(0x8A8A8E) : DogPalette.rgb(0xF2F2F3)
+        case .shade: return dark ? DogPalette.rgb(0x7A7A7E) : DogPalette.rgb(0xE3E3E6)
+        case .ear: return dark ? DogPalette.rgb(0x808084) : DogPalette.rgb(0xE9E9EC)
+        case .ink, .cutout: return dark ? DogPalette.rgb(0x2C2C2E) : DogPalette.rgb(0x9A9A9F)
+        case .tongue: return dark ? DogPalette.rgb(0x9A9A9E) : DogPalette.rgb(0xC7C7CC)
+        case .tongueLine: return dark ? DogPalette.rgb(0x6C6C70) : DogPalette.rgb(0xAEAEB2)
+        case .blush: return CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0)
+        case .highlight: return dark ? DogPalette.rgb(0x9C9CA0) : DogPalette.rgb(0xFFFFFF)
+        case .shadow: return CGColor(srgbRed: 0, green: 0, blue: 0, alpha: dark ? 0.25 : 0.06)
+        case .effect: return dark ? DogPalette.rgb(0x8E8E93, 0.5) : DogPalette.rgb(0xAEAEB2, 0.55)
+        }
+    }
+
     /// Bubble glyph color: the level text token (DESIGN.md 2.6).
     func glyph(_ level: HealthLevel) -> CGColor {
+        if muted { return dark ? DogPalette.rgb(0x2C2C2E) : DogPalette.rgb(0x9A9A9F) }
         if level == .red { return dark ? DogPalette.rgb(0xFF7A72) : DogPalette.rgb(0xB3261E) }
         return dark ? DogPalette.rgb(0xFFB340) : DogPalette.rgb(0x8F4D00)
     }
@@ -136,7 +159,7 @@ enum DogRenderer {
     /// so the dog never turns see-through. Both use the same blended pose.
     static func drawFrame(_ frame: DogFrame, input: DogInput, dark: Bool, in rect: CGRect, ctx: CGContext) {
         let glyph = (frame.pose.bubble > 0) ? input.worstProblem.map { DogArt.badge($0) } : nil
-        let palette = DogPalette(dark: dark)
+        let palette = DogPalette(dark: dark, muted: input.isStatic)
         ctx.saveGState()
         ctx.translateBy(x: rect.minX, y: rect.minY)
         ctx.scaleBy(x: rect.width / CGFloat(DogArt.designSize.w), y: rect.height / CGFloat(DogArt.designSize.h))
@@ -164,7 +187,7 @@ enum DogRenderer {
         ctx.saveGState()
         ctx.translateBy(x: rect.minX, y: rect.minY)
         ctx.scaleBy(x: rect.width / CGFloat(DogArt.designSize.w), y: rect.height / CGFloat(DogArt.designSize.h))
-        draw(layers, opacity: pose.opacity, palette: DogPalette(dark: dark), level: input.worstLevel, in: ctx)
+        draw(layers, opacity: pose.opacity, palette: DogPalette(dark: dark, muted: input.isStatic), level: input.worstLevel, in: ctx)
         ctx.restoreGState()
     }
 }

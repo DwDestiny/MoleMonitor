@@ -179,6 +179,9 @@ enum IconText {
 /// the last frame. The frames come from MenuMotion (DogRig) and the same MenuIconRenderer, made once per switch and
 /// cached. Reduce Motion, a locked screen, a sleeping display, a hidden icon or the 5 minute throttle switch directly.
 /// No timer exists between plays; the icon never moves on its own.
+/// The button shows the image only (`imagePosition = .imageOnly`, no title text, DESIGN.md 3). Every frame of a play is
+/// a template image of the same 24 x 18 pt size as the still images, so the menu bar tints it the same way and the
+/// item width never changes during a play. The tooltip and the VoiceOver text change at once, not per frame.
 @MainActor
 final class StatusIconController {
     private weak var statusItem: NSStatusItem?
@@ -208,6 +211,9 @@ final class StatusIconController {
     init(statusItem: NSStatusItem?) {
         self.statusItem = statusItem
     }
+
+    /// The state last given to `apply` (the target of a play that is still running). Read only (I3 request 3).
+    var currentState: MenuIconState? { current?.state }
 
     /// Timers the controller owns now: 1 while a switch plays, else 0.
     var timerCount: Int { timer == nil ? 0 : 1 }
@@ -240,7 +246,7 @@ final class StatusIconController {
         stopPlay()
         let now = clock()
         guard let item = MenuMotion.play(from: previous, to: state, lastPlayed: lastPlayed, now: now,
-                                         conditions: conditionsOverride?() ?? currentConditions()),
+                                         conditions: motionConditions()),
               let previous else {
             button.image = image(for: state)
             onImage?(0)
@@ -298,6 +304,27 @@ final class StatusIconController {
         c.displayAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
         return c
     }
+
+    /// The conditions read at a switch. In the UITEST build, `DogFrameProbe.forceReduceMotion` (or the environment
+    /// variable MOLEMONITOR_REDUCE_MOTION) replaces Reduce Motion. A controller without `conditionsOverride` (the app's
+    /// own icon) switches directly there unless `uiTestMotion` is true, so the UI regression (A, M14) reads the still
+    /// image of each state at once. The dog checks set `conditionsOverride` and test the motion.
+    private func motionConditions() -> MenuMotionConditions {
+        var c = conditionsOverride?() ?? currentConditions()
+#if UITEST
+        if let forced = DogFrameProbe.forceReduceMotion {
+            c.reduceMotion = forced
+        } else if conditionsOverride == nil, !StatusIconController.uiTestMotion {
+            c.reduceMotion = true
+        }
+#endif
+        return c
+    }
+
+#if UITEST
+    /// Test only: true lets the app's own icon play switches in the UI test build (see `motionConditions`).
+    static var uiTestMotion = false
+#endif
 
     /// The conditions of this controller's button (adds the visibility of the icon).
     func currentConditions() -> MenuMotionConditions {

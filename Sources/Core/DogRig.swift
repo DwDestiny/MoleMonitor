@@ -209,12 +209,17 @@ struct DogMotor {
 
     /// Static pose. The default phase pi / 2 is the key frame for Reduce Motion and the card.
     /// The gallery also asks for phase 0 and pi (frames A and B of one stride).
+    /// Group opacity of the gray dog (collecting, stale). The renderer also uses the muted gray palette for it.
+    /// Stage 2: 0.45 with the normal palette was too faint in light mode (0.9 % ink in the M19 gate), so the gray look
+    /// now comes from the palette and the opacity only softens it.
+    static let grayOpacity = 0.85
+
     static func staticPose(gait: DogGait, input: DogInput, phase: Double = Double.pi / 2) -> DogPose {
         if input.isStatic {
             var pose = gaitPose(.stand, phase: Double.pi / 2, time: 0)
             pose.tailAngle = 0
             pose.breath = 0
-            pose.opacity = 0.45
+            pose.opacity = DogMotor.grayOpacity
             return pose
         }
         var pose = gaitPose(gait, phase: phase, time: 0)
@@ -293,8 +298,17 @@ struct DogMotor {
             p.headTilt = 8
             p.bubble = 1
         }
+        // Memory red (stage 2, I3 request 2): the plume droops and wags less, the dog looks loaded. It also shows when
+        // another item is the worst problem and owns the bubble (the multi case), so memory red is never silent.
+        if input.memoryLevel == .red {
+            p.tailAngle = DogMotor.memoryTailWag * p.tailAngle + DogMotor.memoryTailDrop
+        }
         return p
     }
+
+    /// Memory red: tail angle = wag x tail + drop (degrees; negative lowers the plume).
+    static let memoryTailWag = 0.4
+    static let memoryTailDrop = -12.0
 
     static func blend(_ a: DogPose, _ b: DogPose, _ k: Double) -> DogPose {
         func m(_ x: Double, _ y: Double) -> Double { x + (y - x) * k }

@@ -27,14 +27,25 @@ enum DogFrameProbe {
         var drawNs: UInt64
     }
 
-    /// Non-nil replaces the system Reduce Motion setting of DogView.
-    static var forceReduceMotion: Bool?
+    /// Non-nil replaces the system Reduce Motion setting of DogView and of the menu bar switch: the injection point of the
+    /// gates (I3 request 5). The environment variable MOLEMONITOR_REDUCE_MOTION=1 (or 0) sets it at launch, so a UI test
+    /// run can force Reduce Motion without the system setting. Only the UITEST build reads it.
+    static var forceReduceMotion: Bool? = {
+        switch ProcessInfo.processInfo.environment["MOLEMONITOR_REDUCE_MOTION"] {
+        case "1": return true
+        case "0": return false
+        default: return nil
+        }
+    }()
+    /// Frames are recorded only while this is true (the dog checks), so the UI regression run does not grow the list.
+    static var recording = false
     private(set) static var entries = [Entry]()
     private(set) static var redraws = 0
 
     static func clock() -> UInt64 { clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) }
 
     static func record(date: Date, frame: DogFrame, stepNs: UInt64, drawNs: UInt64) {
+        guard recording else { return }
         if let last = entries.last, last.date == date {
             redraws += 1
             return
@@ -160,6 +171,7 @@ final class UITestDogChecks {
     // MARK: Checks
 
     private func runAll() async {
+        DogFrameProbe.recording = true
         setUpWindow()
         await sleep(0.5)
         info["screenMaxFPS"] = String(NSScreen.main?.maximumFramesPerSecond ?? 0)
@@ -296,17 +308,18 @@ final class UITestDogChecks {
         await sleep(3)
         let frames = DogFrameProbe.entries.count + DogFrameProbe.redraws
         close()
-        DogFrameProbe.forceReduceMotion = nil
 
+        // The menu: every other condition allows motion, only the injected Reduce Motion forbids it.
         let controller = StatusIconController(statusItem: nil)
         controller.fallbackButton = iconButton
-        controller.conditionsOverride = { MenuMotionConditions(reduceMotion: true) }
+        controller.conditionsOverride = { MenuMotionConditions() }
         var events = [Int]()
         controller.onImage = { events.append($0) }
         controller.apply(MenuIconState(posture: .relaxed, badge: nil), text: "a")
         controller.apply(MenuIconState(posture: .raised, badge: MenuBadge(item: .disk)), text: "b")
         let timerNow = controller.timerCount
         await sleep(0.8)
+        DogFrameProbe.forceReduceMotion = nil
         let ok = frames == 0 && events == [0, 0] && timerNow == 0 && controller.timerCount == 0
         record("DE", "Reduce Motion: no frames, no timer", ok,
                "card animated frames \(frames), menu images \(events), timers \(timerNow)/\(controller.timerCount)",

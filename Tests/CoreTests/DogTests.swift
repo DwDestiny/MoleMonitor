@@ -444,13 +444,15 @@ func runDogTests() {
     let sprintLayers = DogRig.layers(gait: .sprint, pose: sprint)
     expect(!sprintLayers.contains { $0.part.name.hasPrefix("speed") }, "sprint has no speed lines")
     let gray = DogMotor.staticPose(gait: .trot, input: dogInput(cpu: 8, isStatic: true))
-    expect(gray.opacity == 0.45 && gray.bubble == 0 && gray.legAngle == [0, 0, 0, 0], "collecting or stale: still, gray stand")
+    expect(gray.opacity == DogMotor.grayOpacity && DogMotor.grayOpacity == 0.85 && gray.bubble == 0 && gray.legAngle == [0, 0, 0, 0], "collecting or stale: still, gray stand")
     let hot = DogMotor.staticPose(gait: .lie, input: dogInput(cpu: 5, thermal: .serious))
     expect(hot.mouthOpen == 1 && hot.tongue == 8, "thermal serious: pant with the static tongue")
     expect(DogRig.head(for: .lie, pose: hot) == .pant, "pant replaces the head")
-    // Round 3: no bundle. Memory red alone does not change the dog; the bubble and the menu alarm disc show it.
-    let heavy = DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 20, memory: .red))
-    expect(heavy == walk, "memory red alone: the same walk, no bundle, no slower steps")
+    // Round 3: no bundle. Stage 2: memory red alone only droops the tail; the gait and the steps stay the same.
+    var heavy = DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 20, memory: .red))
+    expect(heavy.tailAngle < walk.tailAngle, "memory red alone: the tail droops")
+    heavy.tailAngle = walk.tailAngle
+    expect(heavy == walk, "memory red alone: otherwise the same walk, no bundle, no slower steps")
     let heavyLayers = DogRig.layers(gait: .walk, pose: DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 20, memory: .red, worst: .memory, level: .red)),
                                     glyph: DogArt.badge(.memory))
     expect(!heavyLayers.contains { $0.part.name.hasPrefix("bundle") } && heavyLayers.contains { $0.part.name == "bubble.main" },
@@ -585,7 +587,7 @@ func runDogTests() {
     var ms = DogMotor(initialCPU: 25)
     let staticIn = DogInput(cpuPercent: 25, thermal: .nominal, memoryLevel: .green, worstProblem: nil, worstLevel: .green, isStatic: true)
     let sf = ms.frame(dt: 0.04, input: staticIn)
-    expect(sf.gait == .stand && sf.pose.opacity == 0.45 && sf.fadeFrom == nil, "collecting or stale: the gray standing frame")
+    expect(sf.gait == .stand && sf.pose.opacity == DogMotor.grayOpacity && sf.fadeFrom == nil, "collecting or stale: the gray standing frame")
 
     section("Menu bar switch frames (stage 2)")
     let relaxed = MenuIconState(posture: .relaxed, badge: nil)
@@ -659,6 +661,22 @@ func runDogTests() {
         expect(MenuMotion.play(from: relaxed, to: raisedCpu, lastPlayed: [:], now: t0, conditions: c) == nil, "\(name): direct switch")
     }
     expect(MenuMotion.play(from: hollowState, to: relaxed, lastPlayed: [:], now: t0, conditions: free) == nil, "collecting -> normal: direct switch")
+
+    section("Dog memory red and gray (stage 2)")
+    let walkGreen = DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 25))
+    let walkMemRed = DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 25, memory: .red, worst: .disk, level: .red))
+    expect(abs(walkMemRed.tailAngle - (0.4 * walkGreen.tailAngle - 12)) < 1e-9, "memory red droops the tail")
+    expect(walkMemRed.bubble == 1 && walkMemRed.legAngle == walkGreen.legAngle, "memory red keeps the gait and the bubble of the worst item")
+    let walkMemYellow = DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 25, memory: .yellow))
+    expect(walkMemYellow.tailAngle == walkGreen.tailAngle, "memory yellow: no droop")
+    var memMotor = DogMotor(initialCPU: 25)
+    var memWorst = -Double.infinity
+    for _ in 0..<240 {
+        let p = memMotor.step(dt: 1.0 / 24, input: dogInput(cpu: 25, memory: .red))
+        memWorst = max(memWorst, p.tailAngle)
+    }
+    expect(memWorst < -5, "animated memory red: the plume stays low (\(memWorst))")
+    expect(DogMotor.staticPose(gait: .walk, input: dogInput(cpu: nil, isStatic: true)).tailAngle == 0, "gray dog: no droop, no motion")
 
     section("Dog affine")
     let r = DogAffine.rotate(90, about: (0, 0)).apply(1, 0)

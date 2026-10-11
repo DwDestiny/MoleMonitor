@@ -117,6 +117,7 @@ enum DogGallery {
         sheetTimeline()
         sheetMenuSwitch(choice)
         checkMenuSwitchFrames(choice)
+        checkGrayInk()
         writeJSON(["files": manifest, "glyphStyle": choice.rawValue], "manifest.json")
         checkDistinct()
         return failures.isEmpty ? nil : failures.joined(separator: "\n")
@@ -744,6 +745,69 @@ enum DogGallery {
     }
 
     /// Largest difference of the alpha bytes of two images of the same size (255 when the sizes differ).
+    /// The gray dog (collecting, stale) against card-like surfaces, measured like the M19 gate of the UI regression:
+    /// pixels whose color differs from the dominant color by more than 30 (RGB distance) count as ink. Writes
+    /// gray-dog.json. The light gray dog must reach 1.5 % at 72 x 54 and 104 x 78 (I3 request 6), and it must stay
+    /// paler than the normal dog (its darkest pixel is lighter).
+    private static func checkGrayInk() {
+        var rows = [[String: Any]]()
+        let gray = input(cpu: nil, isStatic: true)
+        let normal = input(cpu: 5)
+        for size in [CGSize(width: 72, height: 54), CGSize(width: 104, height: 78)] {
+            for (dark, surfaces) in [(false, [0xFFFFFF, 0xF2F2F2, 0xECECEC, 0xE4E4E4]), (true, [0x1E1E1E, 0x282828, 0x323232])] {
+                for surface in surfaces {
+                    func measure(_ dogInput: DogInput) -> (share: Double, darkest: Double) {
+                        guard let image = draw(size, scale: 2, background: UInt32(surface), { ctx in
+                            DogRenderer.drawStatic(dogInput, gait: .stand, dark: dark, in: DogView.fit(size), ctx: ctx)
+                        }) else { return (0, 0) }
+                        return inkShare(image)
+                    }
+                    let g = measure(gray), n = measure(normal)
+                    let paler = dark ? true : g.darkest > n.darkest
+                    if !dark && g.share < 0.015 {
+                        failures.append("gray dog \(Int(size.width)) light on \(String(surface, radix: 16)): ink \(g.share) < 1.5 %")
+                    }
+                    if !paler { failures.append("gray dog \(Int(size.width)) is not paler than the normal dog") }
+                    rows.append(["size": "\(Int(size.width))x\(Int(size.height))", "dark": dark, "surface": String(format: "%06lX", surface),
+                                 "grayInkPercent": rounded(g.share * 100), "normalInkPercent": rounded(n.share * 100),
+                                 "grayDarkestLuma": rounded(g.darkest), "normalDarkestLuma": rounded(n.darkest)])
+                }
+            }
+        }
+        writeJSON(["rows": rows, "rule": "ink = RGB distance to the dominant color > 30 (M19); light gray >= 1.5 %"], "gray-dog.json")
+    }
+
+    /// Ink share of an opaque image (the M19 rule) and the luma of its darkest pixel (0 to 255).
+    static func inkShare(_ image: CGImage) -> (share: Double, darkest: Double) {
+        let w = image.width, h = image.height
+        var data = [UInt8](repeating: 0, count: w * h * 4)
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return (0, 0) }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var counts = [Int: Int]()
+        for i in stride(from: 0, to: data.count, by: 4) {
+            let key = (Int(data[i]) >> 4) << 8 | (Int(data[i + 1]) >> 4) << 4 | (Int(data[i + 2]) >> 4)
+            counts[key, default: 0] += 1
+        }
+        guard let top = counts.max(by: { $0.value < $1.value })?.key else { return (0, 0) }
+        var sum = (0.0, 0.0, 0.0), n = 0.0
+        for i in stride(from: 0, to: data.count, by: 4) {
+            let key = (Int(data[i]) >> 4) << 8 | (Int(data[i + 1]) >> 4) << 4 | (Int(data[i + 2]) >> 4)
+            if key == top { sum.0 += Double(data[i]); sum.1 += Double(data[i + 1]); sum.2 += Double(data[i + 2]); n += 1 }
+        }
+        let bg = (sum.0 / n, sum.1 / n, sum.2 / n)
+        var ink = 0
+        var darkest = 255.0
+        for i in stride(from: 0, to: data.count, by: 4) {
+            let r = Double(data[i]), g = Double(data[i + 1]), b = Double(data[i + 2])
+            let d = (r - bg.0) * (r - bg.0) + (g - bg.1) * (g - bg.1) + (b - bg.2) * (b - bg.2)
+            if d > 900 { ink += 1 }
+            darkest = min(darkest, 0.2126 * r + 0.7152 * g + 0.0722 * b)
+        }
+        return (Double(ink) / Double(w * h), darkest)
+    }
+
     static func maxAlphaDifference(_ a: CGImage, _ b: CGImage) -> Int {
         guard a.width == b.width, a.height == b.height,
               let da = a.dataProvider?.data, let db = b.dataProvider?.data,
