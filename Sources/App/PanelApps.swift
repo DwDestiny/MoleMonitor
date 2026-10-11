@@ -171,12 +171,24 @@ struct AppEvidence: View {
 struct DisclosureRow: View {
     let title: String
     let preview: String
+    /// Shown when the full preview does not fit in one line. Nil keeps the full text with a tail ellipsis.
+    var shortPreview: String? = nil
     let expanded: Bool
     let compact: Bool
     let id: String
     let action: () -> Void
     @Environment(\.tok) private var tok
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private func previewText(_ text: String, fixed: Bool) -> some View {
+        Text(text)
+            .font(PanelFont.footnote)
+            .monospacedDigit()
+            .foregroundStyle(tok.textSecondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: fixed, vertical: false)
+    }
 
     var body: some View {
         Button(action: action) {
@@ -187,14 +199,13 @@ struct DisclosureRow: View {
                     .lineLimit(1)
                     .frame(width: 56, alignment: .leading)
                     .uiTestFrame("txt.disclosure.title." + id)
-                Text(preview)
-                    .font(PanelFont.footnote)
-                    .monospacedDigit()
-                    .foregroundStyle(tok.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .uiTestFrame("txt.disclosure.preview." + id)
+                ViewThatFits(in: .horizontal) {
+                    previewText(preview, fixed: true)
+                    if let short = shortPreview { previewText(short, fixed: true) }
+                    previewText(shortPreview ?? preview, fixed: false)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .uiTestFrame("txt.disclosure.preview." + id)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(tok.textSecondary)
@@ -227,9 +238,15 @@ struct AppsDisclosure: View {
         return top.map { $0.name + " " + PanelFormat.appCPU($0.cpuPercent) }.joined(separator: " · ")
     }
 
+    /// The top app alone, for when two apps do not fit.
+    private var shortPreview: String? {
+        guard let first = model.topApps(by: .cpu, count: 1).first else { return nil }
+        return first.name + " " + PanelFormat.appCPU(first.cpuPercent)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            DisclosureRow(title: "占用 App", preview: preview, expanded: expanded, compact: compact, id: "apps") {
+            DisclosureRow(title: "占用 App", preview: preview, shortPreview: shortPreview, expanded: expanded, compact: compact, id: "apps") {
                 model.setApps(expanded: !expanded)
             }
             if expanded {

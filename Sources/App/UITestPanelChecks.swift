@@ -248,6 +248,11 @@ extension UITestRunner {
             resetAppearance()
             await sleepMs(300)
 
+            // M13 (part): the copy action on the fixture model. It runs before M4, which scrolls the CTA away.
+            if c == .diskRed {
+                await stepCopy(model: model, hv: hv, box: copyBox)
+            }
+
             // M4: a stable size (the real popover, fixture data)
             if c == .multi || c == .cpuYellow || c == .diskRed {
                 let h0 = Double(hv.bounds.height)
@@ -277,10 +282,6 @@ extension UITestRunner {
                 if changes > 0 { stableProblems.append("\(name): the height changed \(changes) time(s)") }
             }
 
-            // M13 (part): the copy action on the fixture model
-            if c == .diskRed {
-                await stepCopy(model: model, hv: hv, box: copyBox)
-            }
             await closeFixture()
         }
 

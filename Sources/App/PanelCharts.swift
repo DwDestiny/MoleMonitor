@@ -335,7 +335,7 @@ private struct CoarseLayer: View, Equatable {
                 RuleMark(y: .value("阈值", th))
                     .foregroundStyle(tok.textSecondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .annotation(position: .top, alignment: .leading, spacing: 0) {
+                    .annotation(position: .bottom, alignment: .leading, spacing: 0) {
                         Text(String(format: "%.0f", th))
                             .font(PanelFont.caption)
                             .foregroundStyle(tok.textSecondary)
