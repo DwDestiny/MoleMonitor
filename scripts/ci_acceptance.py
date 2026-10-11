@@ -180,6 +180,19 @@ if report:
 release_bytes = main_bin.read_bytes()
 for marker in (b"UITestHarness", b"--ui-test"):
     check(marker not in release_bytes, f"release binary does not contain {marker.decode()}")
+# Source audit of Panel.swift. The runtime accessibility tree of SwiftUI is not always readable on a VM, so this is a separate, weaker check:
+# every Button in the panel needs an accessibilityIdentifier and a Chinese accessibilityLabel within the next 8 lines.
+panel_lines = (root / "Sources/App/Panel.swift").read_text(encoding="utf-8").splitlines()
+button_lines = [i for i, line in enumerate(panel_lines) if re.search(r"\bButton\(", line)]
+bad_buttons = []
+for i in button_lines:
+    block = "\n".join(panel_lines[i:i + 9])
+    has_id = re.search(r'accessibilityIdentifier\("btn\.[A-Za-z]+"\)', block)
+    has_label = re.search(r'accessibilityLabel\("[^"]*[\u4e00-\u9fff][^"]*"\)', block)
+    if not (has_id and has_label):
+        bad_buttons.append(i + 1)
+check(len(button_lines) >= 2 and not bad_buttons, "source audit: every Button in Panel.swift has an identifier and a Chinese label",
+      f"buttons found {len(button_lines)}, lines without both: {bad_buttons}")
 ui_app = root / "dist-uitest/MoleMonitor.app"
 ui_bin = ui_app / "Contents/MacOS/MoleMonitor"
 skipped_ui = []

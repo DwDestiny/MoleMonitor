@@ -92,21 +92,22 @@ final class UITestTimeBox: @unchecked Sendable {
 // MARK: - Main thread probe
 
 /// A 120 Hz timer on the main queue. A long block of the main thread shows up as a long gap between two calls.
+/// Time the harness itself keeps the main thread busy (rendering captures, writing PNG files) is recorded as a busy window,
+/// so the statistics can leave it out.
 final class UITestMainThreadProbe {
     private var timer: DispatchSourceTimer?
-    private var last = 0.0
-    private(set) var intervalsMs = [Double]()
+    /// Fire times, one list per start/stop pair, so a pause never counts as a gap.
+    private(set) var segments = [[Double]]()
+    var busyWindows = [(start: Double, end: Double)]()
 
     func start() {
         guard timer == nil else { return }
-        last = CACurrentMediaTime()
+        segments.append([CACurrentMediaTime()])
         let source = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
         source.schedule(deadline: .now(), repeating: .nanoseconds(8_333_333), leeway: .nanoseconds(0))
         source.setEventHandler { [weak self] in
-            guard let self else { return }
-            let now = CACurrentMediaTime()
-            self.intervalsMs.append((now - self.last) * 1000)
-            self.last = now
+            guard let self, !self.segments.isEmpty else { return }
+            self.segments[self.segments.count - 1].append(CACurrentMediaTime())
         }
         source.resume()
         timer = source
@@ -115,6 +116,32 @@ final class UITestMainThreadProbe {
     func stop() {
         timer?.cancel()
         timer = nil
+    }
+
+    /// All gaps in ms, and the gaps that do not overlap a harness busy window.
+    func gaps() -> (all: [Double], app: [Double], harness: Int) {
+        var all = [Double](), app = [Double]()
+        for segment in segments {
+            for (a, b) in zip(segment, segment.dropFirst()) {
+                let ms = (b - a) * 1000
+                all.append(ms)
+                if busyWindows.contains(where: { $0.start < b && $0.end > a }) { continue }
+                app.append(ms)
+            }
+        }
+        return (all, app, all.count - app.count)
+    }
+
+    /// Largest gap in ms inside a time range that does not overlap a busy window.
+    func maxAppGap(from t0: Double, to t1: Double) -> Double {
+        var best = 0.0
+        for segment in segments {
+            for (a, b) in zip(segment, segment.dropFirst()) where b > t0 && a < t1 {
+                if busyWindows.contains(where: { $0.start < b && $0.end > a }) { continue }
+                best = Swift.max(best, (b - a) * 1000)
+            }
+        }
+        return best
     }
 }
 
@@ -221,7 +248,7 @@ struct UITestAXNode {
 }
 
 enum UITestAX {
-    static func nodes(root: NSView) -> [UITestAXNode] {
+    static func nodes(root: NSObject) -> [UITestAXNode] {
         var out = [UITestAXNode]()
         var budget = 800
         // Key-value coding on the accessibility getters: the Swift spelling of these members differs between the protocol and NSView.
@@ -371,7 +398,18 @@ final class UITestRunner {
         }
     }
 
+    /// Marks a stretch of main-thread work done by the harness itself.
+    func busy<T>(_ body: () -> T) -> T {
+        let start = now()
+        defer { probe.busyWindows.append((start, now())) }
+        return body()
+    }
+
     func capture(_ view: NSView) -> UITestShot? {
+        busy { captureUnmarked(view) }
+    }
+
+    func captureUnmarked(_ view: NSView) -> UITestShot? {
         let t = now()
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
@@ -380,27 +418,15 @@ final class UITestRunner {
         return image
     }
 
-    /// Second capture path: render the presentation layer, which includes running Core Animation values.
-    func capturePresentation(_ view: NSView) -> UITestShot? {
-        guard let layer = view.layer, let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        let scale = view.window?.backingScaleFactor ?? 1
-        let w = Int(view.bounds.width * scale), h = Int(view.bounds.height * scale)
-        guard w > 0, h > 0,
-              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        ctx.scaleBy(x: scale, y: scale)
-        (layer.presentation() ?? layer).render(in: ctx)
-        guard let image = ctx.makeImage() else { return nil }
-        return UITestPixels.shot(from: image, pointWidth: view.bounds.width)
-    }
-
     func save(_ shot: UITestShot, _ name: String, dark: Bool = false) {
-        guard let data = UITestPixels.png(shot, dark: dark) else { return }
-        do {
-            try data.write(to: outDir.appendingPathComponent(name))
-            frameFiles.append(name)
-        } catch {
-            log("Cannot write \(name).")
+        busy {
+            guard let data = UITestPixels.png(shot, dark: dark) else { return }
+            do {
+                try data.write(to: outDir.appendingPathComponent(name))
+                frameFiles.append(name)
+            } catch {
+                log("Cannot write \(name).")
+            }
         }
     }
 
@@ -452,9 +478,21 @@ final class UITestRunner {
     func axNodes() -> [UITestAXNode] {
         if let axCache { return axCache }
         guard let hv = hostView else { return [] }
-        let nodes = UITestAX.nodes(root: hv)
-        axCache = nodes
-        return nodes
+        return busy { () -> [UITestAXNode] in
+            var best = UITestAX.nodes(root: hv)
+            var source = "hosting view"
+            if best.count <= 1, let window = hv.window {
+                let more = UITestAX.nodes(root: window)
+                if more.count > best.count { best = more; source = "popover window" }
+            }
+            if best.count <= 1 {
+                let more = UITestAX.nodes(root: NSApp)
+                if more.count > best.count { best = more; source = "application" }
+            }
+            info["axSource"] = source
+            axCache = best
+            return best
+        }
     }
 
     /// Accessibility tree first; the layout registry when the tree has no such element or disagrees.
@@ -540,15 +578,47 @@ final class UITestRunner {
         }
     }
 
-    /// Mouse down, a short hold, mouse up at a hosting-view point.
-    func click(at point: CGPoint) async -> Bool {
-        guard let hv = hostView, let window = hv.window else { return false }
-        let p = windowPoint(point, in: hv)
-        guard let down = mouse(.leftMouseDown, at: p, window: window), let up = mouse(.leftMouseUp, at: p, window: window) else { return false }
-        window.sendEvent(down)
-        await sleepMs(80)
-        window.sendEvent(up)
-        return true
+    func screenPoint(forViewPoint p: CGPoint) -> CGPoint? {
+        guard let hv = hostView, let window = hv.window, let height = NSScreen.screens.first?.frame.height else { return nil }
+        let s = window.convertPoint(toScreen: windowPoint(p, in: hv))
+        return CGPoint(x: s.x, y: height - s.y)
+    }
+
+    func cgMouse(_ type: CGEventType, at point: CGPoint) {
+        guard let e = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else { return }
+        if type == .leftMouseDown || type == .leftMouseUp { e.setIntegerValueField(.mouseEventClickState, value: 1) }
+        e.post(tap: .cghidEventTap)
+    }
+
+    enum ClickMethod: String {
+        case appKitEvent = "NSEvent through window.sendEvent"
+        case systemEvent = "CGEvent through the system"
+    }
+
+    func press(at point: CGPoint, method: ClickMethod) {
+        switch method {
+        case .appKitEvent:
+            guard let hv = hostView, let window = hv.window,
+                  let down = mouse(.leftMouseDown, at: windowPoint(point, in: hv), window: window) else { return }
+            window.sendEvent(down)
+        case .systemEvent:
+            guard let cg = screenPoint(forViewPoint: point) else { return }
+            CGWarpMouseCursorPosition(cg)
+            cgMouse(.mouseMoved, at: cg)
+            cgMouse(.leftMouseDown, at: cg)
+        }
+    }
+
+    func release(at point: CGPoint, method: ClickMethod) {
+        switch method {
+        case .appKitEvent:
+            guard let hv = hostView, let window = hv.window,
+                  let up = mouse(.leftMouseUp, at: windowPoint(point, in: hv), window: window) else { return }
+            window.sendEvent(up)
+        case .systemEvent:
+            guard let cg = screenPoint(forViewPoint: point) else { return }
+            cgMouse(.leftMouseUp, at: cg)
+        }
     }
 
     // MARK: Open and close
@@ -558,13 +628,21 @@ final class UITestRunner {
         var showAtMs: Double
         var liveSeenMs: Double?
         var shots: [(offset: Double, shot: UITestShot)]
-        var presentation: [(offset: Double, shot: UITestShot)]
         var timersWhileOpen: Int
         var refTime: Double
+        var beforeTime: Double
     }
 
-    /// Opens the panel by a click on the status item button (or the fallback anchor) and captures frames at the given offsets.
-    func openPanel(offsets: [Double], useStatusButton: Bool, prefix: String) async -> OpenResult? {
+    enum OpenVia: String {
+        /// The real click, with the simulated highlight delay of NSButton.
+        case performClick
+        /// The same action message the click sends, without the highlight delay: frames can start at 0 ms.
+        case sendAction
+    }
+
+    /// Opens the panel through the status item button (or the fallback anchor), captures frames at the offsets,
+    /// then waits until `holdMs` after the open.
+    func openPanel(offsets: [Double], via: OpenVia, holdMs: Double, prefix: String) async -> OpenResult? {
         axCache = nil
         UITestFrameStore.shared.reset()
         let box = UITestTimeBox()
@@ -572,8 +650,15 @@ final class UITestRunner {
             box.value = CACurrentMediaTime()
         }
         let before = now()
-        if useStatusButton, let button = delegate.statusItem?.button {
-            button.performClick(nil)
+        if let button = delegate.statusItem?.button, button.window != nil {
+            switch via {
+            case .performClick:
+                button.performClick(nil)
+                // The highlight delay before the action is simulated by AppKit. It is not app work.
+                probe.busyWindows.append((before, box.value ?? now()))
+            case .sendAction:
+                if let action = button.action { _ = NSApp.sendAction(action, to: button.target, from: button) }
+            }
         } else {
             delegate.showPanel()
         }
@@ -584,23 +669,29 @@ final class UITestRunner {
         let ref = box.value ?? before
         var live: Double?
         var shots = [(offset: Double, shot: UITestShot)]()
-        var presentation = [(offset: Double, shot: UITestShot)]()
         for offset in offsets {
             await sleepUntil(ref + offset / 1000)
             if live == nil, engine.isLiveSampling { live = (now() - ref) * 1000 }
             let at = (now() - ref) * 1000
             if let s = capture(hv) { shots.append((at, s)) }
-            if let p = capturePresentation(hv) { presentation.append((at, p)) }
         }
         if live == nil {
             let spent = (now() - ref) * 1000
             if let waited = await waitFor(timeoutMs: Swift.max(0, 1500 - spent), { engine.isLiveSampling }) { live = spent + waited }
         }
+        await sleepUntil(ref + holdMs / 1000)
         for (i, entry) in shots.enumerated() {
             save(entry.shot, "ui-\(prefix)-\(i)-t\(Int(entry.offset.rounded())).png")
         }
         return OpenResult(clickMs: (after - before) * 1000, showAtMs: (ref - before) * 1000, liveSeenMs: live,
-                          shots: shots, presentation: presentation, timersWhileOpen: engine.activeTimerCount, refTime: ref)
+                          shots: shots, timersWhileOpen: engine.activeTimerCount, refTime: ref, beforeTime: before)
+    }
+
+    /// Closes through the API and waits until the popover and its content are gone. Used between steps, not as a test.
+    func closePanelQuietly() async {
+        popover.performClose(nil)
+        _ = await waitFor(timeoutMs: 2000) { !self.popover.isShown && self.popover.contentViewController == nil }
+        await sleepMs(150)
     }
 
     func sendEscape() {
@@ -623,21 +714,30 @@ final class UITestRunner {
         info["macOS"] = ProcessInfo.processInfo.operatingSystemVersionString
         info["screens"] = String(NSScreen.screens.count)
 
-        let hasButton = await stepA()
+        _ = await stepA()
         probe.start()
-        guard let first = await stepB(useStatusButton: hasButton) else {
+        // Open 1: the real click, no captures. It measures the natural cost of the first open.
+        guard await stepB() != nil else {
             finish(abort: "The panel did not open; the remaining steps cannot run.")
             return
         }
-        stepC(first)
-        await stepD(ref: first)
+        await closePanelQuietly()
+        // Open 2: the full entrance again, with frame captures.
+        PanelEntranceGate.resetForTest()
+        guard let second = await openPanel(offsets: [0, 60, 120, 200, 300, 450], via: .sendAction, holdMs: 600, prefix: "open1") else {
+            record("C", "入场动画在推进", false, since: now(), "The panel did not open the second time.")
+            finish(abort: "The panel did not reopen for the frame captures.")
+            return
+        }
+        stepC(second)
+        await stepD(ref: second)
         await stepF()
         await stepG()
         await stepH()
         probe.stop()
         await stepL()
         probe.start()
-        await stepIJ(first: first, useStatusButton: hasButton)
+        await stepIJ(first: second)
         probe.stop()
         stepE()
         info["totalSeconds"] = String(format: "%.1f", now() - tStart)
@@ -659,7 +759,10 @@ final class UITestRunner {
             delegate.testAnchor = anchor
             return false
         }
-        _ = await waitFor(timeoutMs: 8000) { self.engine.diskLevel == .red && button.image != nil }
+        // The icon follows the engine one main-queue hop later, so wait for the icon itself.
+        _ = await waitFor(timeoutMs: 8000) {
+            self.engine.diskLevel == .red && button.image?.isTemplate == false && (button.accessibilityLabel() ?? "").contains("磁盘")
+        }
         let label = button.accessibilityLabel() ?? ""
         let hasImage = button.image != nil
         let templateFlag = button.image?.isTemplate
@@ -670,20 +773,22 @@ final class UITestRunner {
         return true
     }
 
-    // B: open
-    func stepB(useStatusButton: Bool) async -> OpenResult? {
+    // B: open with the real click
+    func stepB() async -> OpenResult? {
         let t0 = now()
-        guard let result = await openPanel(offsets: [0, 60, 120, 200, 300, 450], useStatusButton: useStatusButton, prefix: "open1") else {
+        guard let result = await openPanel(offsets: [], via: .performClick, holdMs: 1500, prefix: "open0") else {
             record("B", "打开", false, since: t0, "popover.isShown is false after the click.")
             return nil
         }
+        if let hv = hostView, let shot = capture(hv) { save(shot, "ui-open-first.png") }
         let visible = hostView?.window?.isVisible == true
         let liveOk = (result.liveSeenMs ?? .infinity) <= 1500
+        let gap = probe.maxAppGap(from: result.refTime - 0.05, to: result.refTime + 1.5)
         let ok = popover.isShown && visible && liveOk && result.timersWhileOpen == 2
         record("B", "打开", ok, since: t0,
-               "isShown=\(popover.isShown) windowVisible=\(visible) liveSampling=\(result.liveSeenMs.map { String(format: "%.0f ms", $0) } ?? "never") timers=\(result.timersWhileOpen) via \(useStatusButton ? "performClick" : "test anchor")",
-               ["performClickMs": result.clickMs, "willShowAfterMs": result.showAtMs, "liveSeenMs": result.liveSeenMs ?? -1,
-                "timersWhileOpen": Double(result.timersWhileOpen)])
+               "isShown=\(popover.isShown) windowVisible=\(visible) liveSampling=\(result.liveSeenMs.map { String(format: "%.0f ms", $0) } ?? "never") timers=\(result.timersWhileOpen); performClick call \(String(format: "%.0f", result.clickMs)) ms (includes the simulated highlight); longest main-thread gap during the first 1.5 s after the open, no harness work in it: \(String(format: "%.1f", gap)) ms",
+               ["performClickMs": result.clickMs, "liveSeenMs": result.liveSeenMs ?? -1,
+                "timersWhileOpen": Double(result.timersWhileOpen), "firstOpenMaxGapMs": gap])
         return result
     }
 
@@ -702,18 +807,13 @@ final class UITestRunner {
             return (moving, settled, total, fractions)
         }
         let primary = analyse(open.shots)
-        let alt = analyse(open.presentation)
         let primaryOk = primary.moving >= 2 && primary.settled && primary.total > 0.01
-        let altOk = alt.moving >= 2 && alt.settled && alt.total > 0.01
         let offsets = open.shots.map { Int($0.offset.rounded()) }
-        var values: [String: Double] = ["movingTransitions": Double(primary.moving), "firstToLast": primary.total,
-                                        "altMovingTransitions": Double(alt.moving), "altFirstToLast": alt.total]
+        var values: [String: Double] = ["movingTransitions": Double(primary.moving), "firstToLast": primary.total]
         for (i, f) in primary.fractions.enumerated() { values["changedFraction_\(i)_\(i + 1)"] = f }
-        let how = primaryOk ? "cacheDisplay" : (altOk ? "presentation layer" : "none")
-        record("C", "入场动画在推进", primaryOk || altOk, since: t0,
-               "frames at \(offsets) ms; changed-pixel share per step \(primary.fractions.map { String(format: "%.3f", $0) }); motion seen by \(how)",
+        record("C", "入场动画在推进", primaryOk, since: t0,
+               "frames at \(offsets) ms (open call \(String(format: "%.0f", open.clickMs)) ms); changed-pixel share per step \(primary.fractions.map { String(format: "%.3f", $0) }); steps that moved \(primary.moving) of 4, settled at the end=\(primary.settled)",
                values)
-        // Keep the frame times for the report.
         info["entranceFrameOffsetsMs"] = offsets.map(String.init).joined(separator: ",")
     }
 
@@ -805,8 +905,8 @@ final class UITestRunner {
             record("F", "悬停交互", nil, since: t0, "\(located); no synthetic pointer method changed the chart; tried \(tried). Not proof of a product defect.",
                    ["changedShare": best.fraction])
         }
-        hover(to: away, method: .windowSendEvent)
-        await sleepMs(150)
+        hover(to: away, method: worked ?? .windowSendEvent)
+        await sleepMs(200)
     }
 
     // G: authorization row and accessibility audit
@@ -825,14 +925,29 @@ final class UITestRunner {
             record("G", "按钮交互与降级文案", enable == nil && note != nil && textOk, since: t0,
                    "authorization=unavailable; enable button shown=\(enable != nil); fallback text shown=\(note != nil) (\(how))")
         case "not_determined":
-            if let enable {
+            if let enable, let hv = hostView, let before = capture(hv) {
                 let r = enable.rect
-                let clicked = await click(at: CGPoint(x: r.midX, y: r.midY))
-                await sleepMs(300)
-                record("G", "按钮交互与降级文案", clicked && popover.isShown, since: t0,
-                       "authorization=not_determined; clicked 开启通知 via \(enable.source); popover still shown=\(popover.isShown); authorization now \(engine.authorization)")
+                let center = CGPoint(x: r.midX, y: r.midY)
+                // The button must show its pressed look while the pointer is down. Try the AppKit event first, then the system event.
+                var worked: ClickMethod?
+                var shares = [String]()
+                for method in [ClickMethod.appKitEvent, ClickMethod.systemEvent] {
+                    press(at: center, method: method)
+                    await sleepMs(180)
+                    if let during = capture(hv) {
+                        let d = UITestPixels.compare(before, during, region: r, threshold: 10).fraction
+                        shares.append("\(method.rawValue): \(String(format: "%.3f", d))")
+                        if d > 0.02 { worked = method }
+                        if worked != nil { save(during, "ui-button-pressed.png") }
+                    }
+                    release(at: center, method: method)
+                    await sleepMs(250)
+                    if worked != nil { break }
+                }
+                record("G", "按钮交互与降级文案", worked != nil && popover.isShown, since: t0,
+                       "authorization=not_determined; 开启通知 located by \(enable.source); pressed look seen by \(worked?.rawValue ?? "no method"); changed share in the button \(shares); popover still shown=\(popover.isShown); authorization now \(engine.authorization)")
             } else {
-                record("G", "按钮交互与降级文案", false, since: t0, "authorization=not_determined but the enable button has no frame.")
+                record("G", "按钮交互与降级文案", false, since: t0, "authorization=not_determined but the enable button has no frame or the view cannot be captured.")
             }
         default:
             record("G", "按钮交互与降级文案", nil, since: t0, "authorization=\(auth): neither the enable button nor the fallback text applies.")
@@ -912,9 +1027,9 @@ final class UITestRunner {
     }
 
     // I: reopen, J: appearance
-    func stepIJ(first: OpenResult, useStatusButton: Bool) async {
+    func stepIJ(first: OpenResult) async {
         let t0 = now()
-        guard let again = await openPanel(offsets: [0, 60, 120, 200, 300, 450], useStatusButton: useStatusButton, prefix: "open2") else {
+        guard let again = await openPanel(offsets: [0, 60, 120, 200, 300, 450], via: .sendAction, holdMs: 600, prefix: "open2") else {
             record("I", "再次打开", false, since: t0, "popover.isShown is false after the second click.")
             record("J", "深浅色", nil, since: now(), "The panel did not reopen.")
             return
@@ -934,20 +1049,24 @@ final class UITestRunner {
         let liveOk = (again.liveSeenMs ?? .infinity) <= 1500
         func fmt(_ v: Double?) -> String { v.map { String(format: "%.0f", $0) } ?? "never" }
         record("I", "再次打开", openOk && shorter && liveOk && again.timersWhileOpen == 2, since: t0,
-               "open call \(String(format: "%.1f", again.clickMs)) ms (first \(String(format: "%.1f", first.clickMs)) ms); settled at \(fmt(secondSettle)) ms (first open \(fmt(firstSettle)) ms); settled within 120 ms=\(settledBy120 == 1); liveSampling at \(fmt(again.liveSeenMs)) ms",
+               "open call \(String(format: "%.1f", again.clickMs)) ms (earlier open with the full entrance \(String(format: "%.1f", first.clickMs)) ms); settled at \(fmt(secondSettle)) ms (first open \(fmt(firstSettle)) ms); settled within 120 ms=\(settledBy120 == 1); liveSampling at \(fmt(again.liveSeenMs)) ms",
                ["openCallMs": again.clickMs, "firstOpenCallMs": first.clickMs, "settledMs": secondSettle ?? -1,
                 "firstSettledMs": firstSettle ?? -1, "settledWithin120ms": settledBy120])
 
         // J: light and dark
         let t1 = now()
         guard let hv = hostView else { record("J", "深浅色", false, since: t1, "no hosting view"); return }
+        // The popover takes its look from its own appearance, so set both the app and the popover.
         NSApp.appearance = NSAppearance(named: .aqua)
-        await sleepMs(500)
+        popover.appearance = NSAppearance(named: .aqua)
+        await sleepMs(600)
         let light = capture(hv)
         NSApp.appearance = NSAppearance(named: .darkAqua)
-        await sleepMs(500)
+        popover.appearance = NSAppearance(named: .darkAqua)
+        await sleepMs(600)
         let dark = capture(hv)
         NSApp.appearance = nil
+        popover.appearance = nil
         guard let light, let dark else { record("J", "深浅色", false, since: t1, "cannot capture"); return }
         save(light, "ui-open-light.png", dark: false)
         save(dark, "ui-open-dark.png", dark: true)
@@ -962,14 +1081,15 @@ final class UITestRunner {
     // E: main thread
     func stepE() {
         let t0 = now()
-        // Drop the first interval of each start: it spans a harness pause, not an app block.
-        let intervals = probe.intervalsMs
-        let stats = UITestStats(intervals)
+        let gaps = probe.gaps()
+        let all = UITestStats(gaps.all)
+        let app = UITestStats(gaps.app)
         let render = UITestStats(renderMs)
-        let ok = stats.count > 500 && stats.max < 250 && stats.p95 < 40
+        let ok = app.count > 500 && app.max < 250 && app.p95 < 40
         record("E", "主线程流畅度（回归门禁）", ok, since: t0,
-               "timer 120 Hz, \(stats.count) intervals: p50 \(String(format: "%.1f", stats.p50)) ms p95 \(String(format: "%.1f", stats.p95)) ms max \(String(format: "%.1f", stats.max)) ms; cacheDisplay render \(render.count) frames: p50 \(String(format: "%.1f", render.p50)) ms max \(String(format: "%.1f", render.max)) ms. This shows no long main-thread block in a VM. It is not a GPU frame rate.",
-               ["p50": stats.p50, "p95": stats.p95, "max": stats.max, "intervals": Double(stats.count),
+               "timer 120 Hz, \(app.count) gaps outside harness work (\(gaps.harness) gaps overlapped harness captures and are left out): p50 \(String(format: "%.1f", app.p50)) ms p95 \(String(format: "%.1f", app.p95)) ms max \(String(format: "%.1f", app.max)) ms; all gaps incl. harness work: p95 \(String(format: "%.1f", all.p95)) ms max \(String(format: "%.1f", all.max)) ms; cacheDisplay render \(render.count) frames: p50 \(String(format: "%.1f", render.p50)) ms max \(String(format: "%.1f", render.max)) ms. This shows no long main-thread block in a VM. It is not a GPU frame rate.",
+               ["p50": app.p50, "p95": app.p95, "max": app.max, "intervals": Double(app.count),
+                "allP95": all.p95, "allMax": all.max,
                 "renderP50": render.p50, "renderP95": render.p95, "renderMax": render.max])
     }
 
@@ -988,15 +1108,21 @@ final class UITestRunner {
         record("K", "退出", nil, since: t0, "Clicking 退出 (\(loc.source)). The acceptance script checks the exit code 0 and that status.json was written at exit.", pending: true)
         info["footprintOpenMB"] = footprintMB().map { String(format: "%.1f", $0) } ?? "n/a"
         writeReport()
-        let r = loc.rect
-        let clicked = await click(at: CGPoint(x: r.midX, y: r.midY))
-        // terminate(_:) exits the process. If we are still here after 3 s, the click did not reach the button.
-        await sleepMs(3000)
+        let center = CGPoint(x: loc.rect.midX, y: loc.rect.midY)
+        // terminate(_:) ends the process. Still here after a click means that click did not reach the button.
+        var tried = [String]()
+        for method in [ClickMethod.appKitEvent, ClickMethod.systemEvent] {
+            tried.append(method.rawValue)
+            press(at: center, method: method)
+            await sleepMs(120)
+            release(at: center, method: method)
+            await sleepMs(2000)
+        }
         if let index = items.firstIndex(where: { $0.id == "K" }) {
             items[index].status = "fail"
-            items[index].note = "The click on 退出 (sent=\(clicked)) did not end the process within 3 s."
+            items[index].note = "The click on 退出 did not end the process; tried \(tried)."
         }
-        log("[FAIL] K the process is still running after the click.")
+        log("[FAIL] K the process is still running after the clicks.")
         finish(abort: nil, exitCode: 1)
     }
 

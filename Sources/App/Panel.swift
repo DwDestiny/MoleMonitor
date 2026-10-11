@@ -22,6 +22,11 @@ enum PanelEntranceGate {
         played = true
         return .full
     }
+
+#if UITEST
+    /// Test only: lets the UI regression play the full entrance a second time in one process.
+    static func resetForTest() { played = false }
+#endif
 }
 
 /// Binds the engine to the pure `Panel`. Created on each popover open and released on close.
