@@ -6,11 +6,15 @@ last_updated: 2026-10-11
 
 # MoleMonitor
 
+> **方向调整（2026-10-11）**：MoleMonitor 的目标改为轻量的状态监测与预警工具，菜单栏以"小狗加两个点"显示 CPU、内存、温度的健康等级，并提供 CLI 读取状态。目标设计见 [docs/PROJECT.md](docs/PROJECT.md)，尚未实现。本页其余内容描述当前代码（第一版）。
+
 MoleMonitor 是一个只读的 macOS 菜单栏监控工具，以 Swift/AppKit 和 SwiftUI 构建，复用 [Mole](https://github.com/tw93/Mole) 的状态采集器，并补充电池、内存压力、温度和风扇信息。
 
 它只负责查看系统状态。清理可另行通过 Mole CLI 执行；应用没有清理入口、自动删除、风扇控制或特权 helper，也不需要 sudo。
 
 ## 功能
+
+以下是第一版实现。
 
 | 位置 | 内容 |
 |---|---|
