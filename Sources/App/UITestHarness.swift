@@ -224,21 +224,21 @@ enum UITestAX {
     static func nodes(root: NSView) -> [UITestAXNode] {
         var out = [UITestAXNode]()
         var budget = 800
+        // Key-value coding on the accessibility getters: the Swift spelling of these members differs between the protocol and NSView.
+        func read(_ object: NSObject, _ key: String) -> Any? {
+            guard object.responds(to: Selector(key)) else { return nil }
+            return object.value(forKey: key)
+        }
         func walk(_ object: Any, depth: Int) {
-            guard depth < 16, budget > 0, let e = object as? NSAccessibilityProtocol else { return }
+            guard depth < 16, budget > 0, let e = object as? NSObject else { return }
             budget -= 1
-            let identifier: Any? = e.accessibilityIdentifier?()
-            let roleAny: Any? = e.accessibilityRole?()
-            let labelAny: Any? = e.accessibilityLabel?()
-            let valueAny: Any? = e.accessibilityValue?()
-            let frameAny: Any? = e.accessibilityFrame?()
-            let role = (roleAny as? NSAccessibility.Role)?.rawValue ?? ""
-            out.append(UITestAXNode(id: (identifier as? String) ?? "", role: role,
-                                    label: (labelAny as? String) ?? "",
-                                    value: valueAny.map { "\($0)" } ?? "",
-                                    frame: (frameAny as? NSRect) ?? .zero))
-            let children: Any? = e.accessibilityChildren?()
-            for child in (children as? [Any]) ?? [] { walk(child, depth: depth + 1) }
+            let role = (read(e, "accessibilityRole") as? String) ?? ""
+            let frame = (read(e, "accessibilityFrame") as? NSValue)?.rectValue ?? .zero
+            out.append(UITestAXNode(id: (read(e, "accessibilityIdentifier") as? String) ?? "", role: role,
+                                    label: (read(e, "accessibilityLabel") as? String) ?? "",
+                                    value: read(e, "accessibilityValue").map { "\($0)" } ?? "",
+                                    frame: frame))
+            for child in (read(e, "accessibilityChildren") as? [Any]) ?? [] { walk(child, depth: depth + 1) }
         }
         walk(root, depth: 0)
         return out
