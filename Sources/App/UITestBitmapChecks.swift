@@ -509,6 +509,7 @@ extension UITestRunner {
         var note = notes.joined(separator: "; ")
         if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
         record("M21", "问题模式比熊：框不小于 64 pt，气泡离比熊 ≥4 pt，顶部不裁切", problems.isEmpty && notes.count == 4, since: t0, note, values)
+        UITestSpriteChecks.dump(self)
     }
 
     /// M22: the multi card in both schemes. The three collapsed rows have a gray fill (no hue, near the panel color) and a 3 pt bar in
@@ -630,6 +631,7 @@ extension UITestRunner {
         record("M20", "面板里比熊随数据点变化", problems.isEmpty, since: t0, note,
                ["idleBodies": Double(idleBodies), "idleDraws": Double(idleDraws), "steps": Double(UITestSpriteChecks.steps.count),
                 "matched": Double(mapping.latencies.count)])
+        UITestSpriteChecks.dump(self)
     }
 }
 #endif

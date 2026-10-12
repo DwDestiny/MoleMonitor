@@ -3,7 +3,8 @@
 // Input: The UI regression runner (UITestHarness.swift), the real panel with fixture models, an own test window for the hero alone,
 //        DogSpriteProbe and DogSpriteLibrary (docs/DESIGN_V2.md 4, 11, 13.3).
 // Output: W04 action mapping, W11 strips at run time, W12 bubble and dog gap (with the screenshots ui-w12-*.png), W14 main thread work,
-//         W15 Reduce Motion, W17 CPU while open, W18 sprite memory. M20 and M21 (UITestBitmapChecks.swift) reuse the helpers here.
+//         W15 Reduce Motion, W17 CPU while open (measured in the W14 window), W18 sprite memory, and ui-wpd-items.json (all items so
+//         far, rewritten after each check). M20 and M21 (UITestBitmapChecks.swift) reuse the helpers here; W04 reuses the M20 mapping.
 // Pos: Test code. It exists only in the UITEST build. Owner WP-D. The gates are pending in scripts/ci_acceptance.py until WP-F
 //      activates them, so their results are information. The motion checks force Reduce Motion off (the CI VM reports it on),
 //      the RM check forces it on; every check restores the switches and leaves the panel closed.
@@ -84,6 +85,34 @@ enum UITestSpriteChecks {
         var variant: DogVariant
     }
 
+    /// Writes every item recorded so far to ui-wpd-items.json (overwritten after each WP-D check), so the results stay in the
+    /// artifact also when the runner stops before ui-report.json.
+    @MainActor
+    static func dump(_ r: UITestRunner) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(r.items) else { return }
+        try? data.write(to: r.outDir.appendingPathComponent("ui-wpd-items.json"))
+    }
+
+    /// "layer:key" of every animation in the layer tree of the window of a view (W15 names them).
+    @MainActor
+    static func animationKeys(_ view: NSView) -> [String] {
+        guard let root = view.window?.contentView?.superview?.layer ?? view.layer else { return [] }
+        var out = [String]()
+        func walk(_ layer: CALayer, _ depth: Int) {
+            guard out.count < 50, depth < 40 else { return }
+            let name = layer.name ?? String(describing: type(of: layer))
+            out += (layer.animationKeys() ?? []).map { "\(name):\($0)" }
+            for sub in layer.sublayers ?? [] { walk(sub, depth + 1) }
+        }
+        walk(root, 0)
+        return out
+    }
+
+    /// The last result of runMapping. M20 and W04 run the same 10 points; the second one reuses the first result.
+    @MainActor static var lastMapping: (problems: [String], notes: [String], latencies: [Double])?
+
     /// The 10 data points of W04 (1) and their expected base action and variant (DESIGN_V2.md 4.4).
     static let steps: [Step] = [
         Step(name: "cpu 5", cpu: 5, action: .lieIdle, variant: .normal),
@@ -121,6 +150,7 @@ enum UITestSpriteChecks {
             await r.sleepMs(250)
         }
         PanelHero.nightOverride = false
+        lastMapping = (problems, notes, latencies)
         return (problems, notes, latencies)
     }
 
@@ -129,18 +159,26 @@ enum UITestSpriteChecks {
     @MainActor
     static func w04(_ r: UITestRunner) async {
         let t0 = r.now()
-        await r.closePanelQuietly()
-        motion(true)
-        defer { restore() }
-        let copyBox = UITestTextBox()
-        guard let model = await r.openFixture(.allGreen, copyBox: copyBox) else {
-            r.record("W04", "动作映射与速度连续", false, since: t0, "the panel did not open")
-            return
+        defer { dump(r) }
+        let reused = lastMapping != nil
+        let result: (problems: [String], notes: [String], latencies: [Double])
+        if let last = lastMapping {
+            result = last
+        } else {
+            await r.closePanelQuietly()
+            motion(true)
+            defer { restore() }
+            let copyBox = UITestTextBox()
+            guard let model = await r.openFixture(.allGreen, copyBox: copyBox) else {
+                r.record("W04", "动作映射与速度连续", false, since: t0, "the panel did not open")
+                return
+            }
+            await r.sleepMs(600)
+            result = await runMapping(r, model)
+            await r.closeFixture()
         }
-        await r.sleepMs(600)
-        let result = await runMapping(r, model)
-        await r.closeFixture()
-        var note = "(1) 10 data points, Reduce Motion forced off: " + result.notes.joined(separator: "; ")
+        var note = "(1) 10 data points, Reduce Motion forced off" + (reused ? " (the run of M20 in the real panel)" : "") + ": "
+        note += result.notes.joined(separator: "; ")
         note += ". (2) the 60 s CPU ramp is the Core test DogActionTests (W04 part 2)."
         note += " Hand-overs so far: \(DogSpriteProbe.delegateSteps) by animationDidStop, \(DogSpriteProbe.guardSteps) by the guard."
         if !result.problems.isEmpty { note += " Failures: " + result.problems.joined(separator: "; ") }
@@ -189,6 +227,7 @@ enum UITestSpriteChecks {
         if !problems.isEmpty { note += " Failures: " + problems.joined(separator: "; ") }
         r.record("W11", "比熊条带（运行时部分）", problems.isEmpty, since: t0, note,
                  ["frames": Double(frames), "decodedKB": Double(bytes / 1024), "stillFallbacks": Double(stills)])
+        dump(r)
     }
 
     // MARK: W12
@@ -238,7 +277,7 @@ enum UITestSpriteChecks {
         let t0 = r.now()
         await r.closePanelQuietly()
         motion(false)
-        defer { restore() }
+        defer { restore(); dump(r) }
         let ink = inkUnion()
         var problems = [String]()
         var notes = [String]()
@@ -263,7 +302,7 @@ enum UITestSpriteChecks {
                 window.contentView = host
                 window.setContentSize(host.fittingSize)
                 window.orderFrontRegardless()
-                await r.sleepMs(450)
+                await r.sleepMs(250)
                 let key = name + (dark ? ".dark" : ".light")
                 guard let stage = UITestFrameStore.shared.get("hero.stage"), let bubble = UITestFrameStore.shared.get("bubble"),
                       let text = UITestFrameStore.shared.get("txt.hero.title") else {
@@ -356,25 +395,31 @@ enum UITestSpriteChecks {
         return i
     }
 
+    /// W17 is measured in the W14 window (one 10 s run at the highest step rate); W17 records this result.
+    @MainActor static var lastCpu: (share: Double, action: String)?
+
     @MainActor
     static func w14(_ r: UITestRunner) async {
         let t0 = r.now()
         await r.closePanelQuietly()
         motion(true)
-        defer { restore() }
+        defer { restore(); dump(r) }
         let copyBox = UITestTextBox()
         guard let model = await r.openFixture(.allGreen, copyBox: copyBox) else {
             r.record("W14", "主线程每帧工作", false, since: t0, "the panel did not open")
             return
         }
-        let base = point(model.data, cpu: 60, seconds: 0)
+        let base = point(model.data, cpu: 95, seconds: 0)
         model.replace(base)
         await r.sleepMs(1500)
         DogSpriteProbe.reset()
-        let samples = await feed(r, model, base: base, cpu: 60, seconds: 10)
+        let cpu0 = r.cpuSeconds(), wall0 = r.now()
+        let samples = await feed(r, model, base: base, cpu: 95, seconds: 10)
+        let share = (r.cpuSeconds() - cpu0) / max(0.001, r.now() - wall0) * 100
         let bodies = DogSpriteProbe.heroBodies
         let draws = DogSpriteProbe.updateLayers
         let action = DogSpriteProbe.currentAction?.rawValue ?? "nil"
+        lastCpu = (share, action)
         await r.closeFixture()
         // "at most one body evaluation per 2 s, with the live samples" (13.3): at most one per data point.
         let ok = bodies <= samples && draws == 0
@@ -388,26 +433,33 @@ enum UITestSpriteChecks {
     @MainActor
     static func w17(_ r: UITestRunner) async {
         let t0 = r.now()
+        defer { dump(r) }
+        if lastCpu == nil { await w14Window(r) }
+        guard let cpu = lastCpu else {
+            r.record("W17", "打开时 CPU", false, since: t0, "the panel did not open")
+            return
+        }
+        r.record("W17", "打开时 CPU", cpu.share <= 3, since: t0,
+                 "10 s steady state with the panel open (the W14 window), \(cpu.action) at the highest step rate, a data point every 2 s: "
+                     + "process CPU " + String(format: "%.2f", cpu.share) + " % (limit 3 %). VM numbers do not prove the real Mac (11.4).",
+                 ["processCpuPercent": (cpu.share * 100).rounded() / 100])
+    }
+
+    /// The W14 window without a W14 record, for a run that has W17 without W14.
+    @MainActor
+    private static func w14Window(_ r: UITestRunner) async {
         await r.closePanelQuietly()
         motion(true)
         defer { restore() }
         let copyBox = UITestTextBox()
-        guard let model = await r.openFixture(.allGreen, copyBox: copyBox) else {
-            r.record("W17", "打开时 CPU", false, since: t0, "the panel did not open")
-            return
-        }
+        guard let model = await r.openFixture(.allGreen, copyBox: copyBox) else { return }
         let base = point(model.data, cpu: 95, seconds: 0)
         model.replace(base)
-        await r.sleepMs(2000)
+        await r.sleepMs(1500)
         let cpu0 = r.cpuSeconds(), wall0 = r.now()
         await feed(r, model, base: base, cpu: 95, seconds: 10)
-        let share = (r.cpuSeconds() - cpu0) / max(0.001, r.now() - wall0) * 100
-        let action = DogSpriteProbe.currentAction?.rawValue ?? "nil"
+        lastCpu = ((r.cpuSeconds() - cpu0) / max(0.001, r.now() - wall0) * 100, DogSpriteProbe.currentAction?.rawValue ?? "nil")
         await r.closeFixture()
-        r.record("W17", "打开时 CPU", share <= 3, since: t0,
-                 "10 s steady state with the panel open, \(action) at the highest step rate, a data point every 2 s: process CPU "
-                     + String(format: "%.2f", share) + " % (limit 3 %). VM numbers do not prove the real Mac (11.4).",
-                 ["processCpuPercent": (share * 100).rounded() / 100])
     }
 
     // MARK: W15
@@ -416,8 +468,9 @@ enum UITestSpriteChecks {
     static func w15(_ r: UITestRunner) async {
         let t0 = r.now()
         await r.closePanelQuietly()
-        defer { restore() }
+        defer { restore(); dump(r) }
         var counts = [Bool: (dog: Int, panel: Int)]()
+        var rmKeys = [String]()
         for reduce in [true, false] {
             motion(!reduce)
             let copyBox = UITestTextBox()
@@ -426,15 +479,18 @@ enum UITestSpriteChecks {
             await r.sleepMs(1500)
             let dog = DogSpriteProbe.view?.animationCount ?? -1
             let panel = r.hostView.map { r.layerSignature($0).animated } ?? -1
+            if reduce, let host = r.hostView { rmKeys = animationKeys(host) }
             counts[reduce] = (dog, panel)
             await r.closeFixture()
         }
         let still = counts[true], moving = counts[false]
+        let left: String = rmKeys.isEmpty ? "" : " Animations left under RM: " + rmKeys.joined(separator: ", ")
         let ok = still?.dog == 0 && still?.panel == 0 && (moving?.dog ?? 0) > 0
         r.record("W15", "RM", ok, since: t0,
                  "trot with sweat, steady state after 1.5 s. Reduce Motion forced on: \(still?.dog ?? -1) animations on the dog layers, "
                      + "\(still?.panel ?? -1) in the whole panel window (limit 0). Control, motion on: \(moving?.dog ?? -1) on the dog, "
-                     + "\(moving?.panel ?? -1) in the panel (needs > 0). The bubble pop is a SwiftUI keyframe with a fixed trigger under RM.",
+                     + "\(moving?.panel ?? -1) in the panel (needs > 0). The bubble pop is a SwiftUI keyframe with a fixed trigger under RM."
+                     + left,
                  ["rmDog": Double(still?.dog ?? -1), "rmPanel": Double(still?.panel ?? -1), "motionDog": Double(moving?.dog ?? -1),
                   "motionPanel": Double(moving?.panel ?? -1)])
     }
@@ -446,7 +502,7 @@ enum UITestSpriteChecks {
         let t0 = r.now()
         await r.closePanelQuietly()
         motion(true)
-        defer { restore() }
+        defer { restore(); dump(r) }
         let copyBox = UITestTextBox()
         guard let model = await r.openFixture(.allGreen, copyBox: copyBox) else {
             r.record("W18", "精灵内存", false, since: t0, "the panel did not open")
@@ -464,24 +520,25 @@ enum UITestSpriteChecks {
                 await r.sleepMs(40)
             }
         }
-        let plan: [(String, PanelData?)] = [
-            ("lie", point(base, cpu: 5, seconds: 45)),
-            ("walk", point(base, cpu: 25, seconds: 90)),
-            ("trot", point(base, cpu: 60, seconds: 135)),
-            ("sprint", point(base, cpu: 95, seconds: 180)),
-            ("notice", point(base, cpu: 95, [.disk: .yellow], seconds: 225)),
-            ("wag", nil),
-            ("pant", point(base, cpu: 95, [.disk: .yellow, .thermal: .red], seconds: 270)),
-            ("sniff", point(base, cpu: nil, state: .collecting, seconds: 315)),
-            ("gray", point(base, cpu: nil, state: .stale(Date().addingTimeInterval(-900)), seconds: 360)),
+        // The wait of each step covers the end of the previous loop (lie_idle 1.5 s, walk 1 s) and the one-shot before it.
+        let plan: [(String, PanelData?, Double)] = [
+            ("lie", point(base, cpu: 5, seconds: 45), 600),
+            ("walk", point(base, cpu: 25, seconds: 90), 2200),
+            ("trot", point(base, cpu: 60, seconds: 135), 1300),
+            ("sprint", point(base, cpu: 95, seconds: 180), 1000),
+            ("notice", point(base, cpu: 95, [.disk: .yellow], seconds: 225), 1600),
+            ("wag", nil, 1200),
+            ("pant", point(base, cpu: 95, [.disk: .yellow, .thermal: .red], seconds: 270), 1600),
+            ("sniff", point(base, cpu: nil, state: .collecting, seconds: 315), 1300),
+            ("gray", point(base, cpu: nil, state: .stale(Date().addingTimeInterval(-900)), seconds: 360), 1300),
         ]
-        for (name, data) in plan {
+        for (name, data, wait) in plan {
             if let data {
                 model.replace(data)
             } else {
                 DogSpriteProbe.view?.onTap?()
             }
-            await watch(name == "walk" || name == "pant" ? 2200 : 1600)
+            await watch(wait)
             log.append("\(name) \(DogSpriteLibrary.shared.cachedBytes / 1024) KB")
         }
         let final = DogSpriteLibrary.shared.cachedBytes

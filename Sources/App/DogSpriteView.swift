@@ -100,7 +100,8 @@ enum DogStageGeometry {
     static let tailSize = CGSize(width: 8, height: 6)
     /// The tail tip stays this far left of the right edge of the bubble, so the bubble box keeps its width.
     static let tailInset: CGFloat = 8
-    static let subOrigin = CGPoint(x: 16, y: 70)
+    /// The subline starts at this x and sits 2 pt below the bubble tail (it follows the bubble height).
+    static let subX: CGFloat = 16
     static let subFont: CGFloat = 11
 
     /// Bed prop: 192 x 112 px with its base line at 108 px, so it stands on the ground line.
@@ -138,6 +139,17 @@ enum DogStageGeometry {
             return stagePoint(px: f[0] + f[2] / 2, f[1] - 14)
         }
         return CGPoint(x: dogBox.minX + 60, y: dogBox.minY + 30)
+    }
+
+    /// Top of the fur above the face of an action (middle of the face box, top of the rest frame ink), in stage points.
+    /// The "z" and the hearts start here, so they never sit on the white fur, where a light mark would vanish.
+    static func crown(_ action: DogAction, manifest: DogSpriteManifest?) -> CGPoint {
+        if let a = manifest?.action(action), let boxes = a.faceBoxes, a.restFrame < boxes.count, boxes[a.restFrame].count == 4,
+           let ink = a.restInkBox, ink.count == 4 {
+            let f = boxes[a.restFrame]
+            return stagePoint(px: f[0] + f[2] / 2, ink[1])
+        }
+        return CGPoint(x: dogBox.minX + 60, y: dogBox.minY + 20)
     }
 }
 
@@ -268,16 +280,19 @@ final class DogSpriteLibrary: @unchecked Sendable {
         order.append(action)
     }
 
+    /// Adds a decoded strip and keeps the whole cache (strips, props, stills) within the budget. The least recently used strip that
+    /// is not pinned goes first; the new strip is the most recent, so a prefetch that does not fit drops itself, never a pinned strip.
     private func insert(_ action: DogAction, _ image: CGImage) {
         lock.lock()
         defer { lock.unlock() }
         strips[action] = image
         touch(action)
-        var bytes = strips.values.reduce(0) { $0 + $1.bytesPerRow * $1.height }
+        let extra = (Array(props.values) + Array(stills.values)).reduce(0) { $0 + $1.bytesPerRow * $1.height }
+        var bytes = extra + strips.values.reduce(0) { $0 + $1.bytesPerRow * $1.height }
         var index = 0
         while bytes > Self.budgetBytes, index < order.count {
             let victim = order[index]
-            if pinned.contains(victim) || victim == action {
+            if pinned.contains(victim) {
                 index += 1
                 continue
             }
@@ -502,6 +517,8 @@ final class DogSpriteNSView: NSView {
         stage.cornerRadius = DogStageGeometry.cornerRadius
         root.addSublayer(stage)
         for l in [ground, shadowLayer, body, sweat, zLayer, marker] { stage.addSublayer(l) }
+        for (l, name) in [(stage, "stage"), (ground, "ground"), (shadowLayer, "shadow"), (body, "body"), (frameLayer, "frame"),
+                          (sweat, "sweat"), (zLayer, "z"), (marker, "marker")] { l.name = name }
         body.addSublayer(frameLayer)
 
         let size = DogStageGeometry.size
@@ -716,16 +733,23 @@ final class DogSpriteNSView: NSView {
 
     private func entry(_ a: DogAction) -> DogSpriteManifest.Action? { library.manifest?.action(a) }
 
+    /// Pins the strips that the screen shows or is about to show, so the LRU cache never drops them.
+    private func pinVisible(_ next: DogAction? = nil) {
+        library.pin(Set([screen, next, base?.action, pendingOneShot?.action, .standUp].compactMap { $0 }))
+    }
+
     private func advance() {
-        guard !busy, let target = base else { return }
-        library.pin(Set([screen, target.action, pendingOneShot?.action, .standUp].compactMap { $0 }))
+        guard !busy, base != nil else { return }
+        pinVisible()
+        guard let target = base else { return }
         guard let current = screen else {
             show(target, fade: nil)
             return
         }
         if reduceMotion {
+            // Reduce Motion: the new picture replaces the old one without a fade (BB, W15).
             pendingOneShot = nil
-            if current != target.action { show(target, fade: 0.16) } else { tween(target) }
+            if current != target.action { show(target, fade: nil) } else { tween(target) }
             return
         }
         if let one = pendingOneShot {
@@ -789,6 +813,7 @@ final class DogSpriteNSView: NSView {
         generation += 1
         let action = plan.action
         let e = entry(action)
+        pinVisible(action)
         let image = library.strip(action)
         noActions {
             if let fade, fade > 0 { addFade(fade) }
@@ -914,6 +939,7 @@ final class DogSpriteNSView: NSView {
     }
 
     private func addFade(_ seconds: Double) {
+        guard !reduceMotion else { return }
         let t = CATransition()
         t.type = .fade
         t.duration = seconds
@@ -927,6 +953,7 @@ final class DogSpriteNSView: NSView {
     /// Plays a strip once (or `repeats` times), backwards for lie_down, then holds the last frame `hold` seconds and calls `done`.
     private func playOnce(_ action: DogAction, repeats: Int, reverse: Bool, hold: Double, fade: Double = 0,
                           done: @escaping () -> Void) {
+        pinVisible(action)
         guard let e = entry(action), let image = library.strip(action) else {
             // No strip: skip the one-shot (level 1 has no picture sequence for it).
             if action == .standUp {
@@ -1085,7 +1112,8 @@ final class DogSpriteNSView: NSView {
             let showsZ = plan.showsZ && shownAction == .lieIdle
             zLayer.isHidden = !showsZ
             if showsZ {
-                zLayer.position = CGPoint(x: head.x - 2, y: y(head.y - 6, 0))
+                let crown = DogStageGeometry.crown(shownAction, manifest: library.manifest)
+                zLayer.position = CGPoint(x: crown.x + 6, y: y(crown.y - 9, 0))
                 if reduceMotion {
                     zLayer.removeAllAnimations()
                     zLayer.opacity = 1
@@ -1114,13 +1142,13 @@ final class DogSpriteNSView: NSView {
 
     /// Hearts rise 24 pt from the head and fade in 0.9 s (4.8). The model opacity stays 0, so nothing is left after the animation.
     private func playHearts(_ count: Int) {
-        let head = DogStageGeometry.head(screen ?? base?.action ?? .lieIdle, manifest: library.manifest)
+        let head = DogStageGeometry.crown(screen ?? base?.action ?? .lieIdle, manifest: library.manifest)
         let offsets: [CGFloat] = [0, -10, 10, -18, 18]
         noActions {
             for (i, h) in hearts.prefix(max(0, min(count, hearts.count))).enumerated() {
                 h.removeAllAnimations()
                 h.opacity = 0
-                h.position = CGPoint(x: head.x + offsets[i], y: y(head.y - 2, 0))
+                h.position = CGPoint(x: head.x + offsets[i], y: y(head.y - 6, 0))
                 let rise = CABasicAnimation(keyPath: "transform.translation.y")
                 rise.fromValue = 0
                 rise.toValue = 24
@@ -1186,9 +1214,14 @@ final class DogSpriteNSView: NSView {
 
 #if UITEST
     /// Number of animations attached to the stage layers now (W15).
-    var animationCount: Int {
-        func count(_ l: CALayer) -> Int { (l.animationKeys()?.count ?? 0) + (l.sublayers ?? []).reduce(0) { $0 + count($1) } }
-        return count(stage)
+    var animationCount: Int { animationKeys.count }
+
+    /// "layer:key" of every animation on the stage layers now (the W15 note names them).
+    var animationKeys: [String] {
+        func keys(_ l: CALayer) -> [String] {
+            (l.animationKeys() ?? []).map { "\(l.name ?? "?"):\($0)" } + (l.sublayers ?? []).flatMap { keys($0) }
+        }
+        return keys(stage)
     }
 
     var screenAction: DogAction? { screen }

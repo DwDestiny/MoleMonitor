@@ -215,32 +215,34 @@ struct PanelHero: View {
                     .accessibilityHidden(true)
             }
             dog(plan: plan, scale: s, dark: dark, tokens: tokens, reduceMotion: rm)
-            HStack(spacing: 0) {
-                HeroBubble(text: text, scale: s, tokens: tokens)
-                    .keyframeAnimator(initialValue: CGFloat(1), trigger: rm ? 0 : model.popToken) { content, value in
-                        content.scaleEffect(value, anchor: .bottomTrailing)
-                    } keyframes: { _ in
-                        KeyframeTrack {
-                            MoveKeyframe(CGFloat(0.85))
-                            SpringKeyframe(CGFloat(1), duration: 0.45, spring: Spring(response: 0.32, dampingRatio: 0.72))
+            // The subline follows the bubble 2 pt below it, so the gap stays the same for a 1-line and a 2-line bubble.
+            VStack(alignment: .leading, spacing: 2 * s) {
+                HStack(spacing: 0) {
+                    HeroBubble(text: text, scale: s, tokens: tokens)
+                        .keyframeAnimator(initialValue: CGFloat(1), trigger: rm ? 0 : model.popToken) { content, value in
+                            content.scaleEffect(value, anchor: .bottomTrailing)
+                        } keyframes: { _ in
+                            KeyframeTrack {
+                                MoveKeyframe(CGFloat(0.85))
+                                SpringKeyframe(CGFloat(1), duration: 0.45, spring: Spring(response: 0.32, dampingRatio: 0.72))
+                            }
                         }
-                    }
-                    .uiTestFrame("bubble")
-                Spacer(minLength: 0)
+                        .uiTestFrame("bubble")
+                    Spacer(minLength: 0)
+                }
+                if let sub = text.sub {
+                    Text(sub)
+                        .font(.system(size: DogStageGeometry.subFont * s))
+                        .monospacedDigit()
+                        .foregroundStyle(tok.textSecondary)
+                        .lineLimit(1)
+                        .padding(.leading, (DogStageGeometry.subX - DogStageGeometry.bubbleOrigin.x) * s)
+                        .uiTestFrame("txt.hero.subtitle")
+                }
             }
             .frame(width: DogStageGeometry.bubbleMaxWidth * s, alignment: .leading)
             .padding(.leading, DogStageGeometry.bubbleOrigin.x * s)
             .padding(.top, DogStageGeometry.bubbleOrigin.y * s)
-            if let sub = text.sub {
-                Text(sub)
-                    .font(.system(size: DogStageGeometry.subFont * s))
-                    .monospacedDigit()
-                    .foregroundStyle(tok.textSecondary)
-                    .lineLimit(1)
-                    .uiTestFrame("txt.hero.subtitle")
-                    .padding(.leading, DogStageGeometry.subOrigin.x * s)
-                    .padding(.top, DogStageGeometry.subOrigin.y * s)
-            }
             Color.clear
                 .frame(width: DogStageGeometry.dogBox.width * s, height: DogStageGeometry.dogBox.height * s)
                 .uiTestFrame("dog")
@@ -485,10 +487,11 @@ private struct HeroStillDog: View {
                 }
             }
             if plan.showsZ {
+                let crown = g.crown(action, manifest: library.manifest)
                 Text("z")
                     .font(.system(size: 11 * s, weight: .semibold))
                     .foregroundStyle(tokens.z)
-                    .position(x: (head.x - 2) * s, y: (head.y - 12) * s)
+                    .position(x: (crown.x + 6) * s, y: (crown.y - 9) * s)
             }
         }
         .frame(width: g.size.width * s, height: g.size.height * s, alignment: .topLeading)
