@@ -973,7 +973,7 @@ v2.1 加入后，素材增加 46 帧，合计 103 帧。缓存与资源上限在
 1. 证据数字（带计量单位的数值，例如“+314 GB”“压力 64%”“94%”）只在分项行出现。
 2. 异常条第 2 行只写原因词。原因词可以含时间窗（“5 天”“30 分钟”），不含计量值。
 3. 时长与时刻（“3 小时 12 分”“开始 10:52”）只在异常条出现，分项行不写。
-4. 门禁 W02 检查：同一个计量值字符串不在分项行与异常条中同时出现。
+4. 门禁 W02 检查：同一个计量值字符串不在分项行与异常条中同时出现。时间窗（天、分钟、小时）不算计量值，与规则 2 一致。
 
 原因词表：
 
@@ -1534,7 +1534,7 @@ WP-E 确认遗留代码没有调用方后删除它。
 3. 收起：672 → 352 pt，180 ms，cubic(0.4, 0, 1, 1)。
 4. 侧栏内容在展开开始后 60 ms 淡入，120 ms。
 
-结论：选用方案 A。只在以下任一情况发生时，WP-B 改用方案 B，并在 `docs/VERIFICATION.md` 记录原因：W05 在 CI 上连续 2 次失败（主列 x 变化 >0.5 pt 或展开 >250 ms），或用户真机冒烟 R-04 看到主列抖动。两个方案不同时保留。
+结论：选用方案 A。只在以下任一情况发生时，WP-B 改用方案 B，并在报告中写明原因（由协调者或 WP-F 落到 `docs/VERIFICATION.md`）：W05 在 CI 上连续 2 次失败（主列 x 变化 >0.5 pt 或展开 >250 ms），或用户真机冒烟 R-04 看到主列抖动。两个方案不同时保留。
 
 方案 B（备选）：
 
@@ -1693,7 +1693,7 @@ RM 时：窗口直接改宽，侧栏内容淡入 150 ms。门禁 W05 检查展�
 | 相邻帧差异 | alpha XOR 在 0.02–0.25 之间（太小说明没动，太大说明跳变） |
 | 循环缝合 | 循环动作的末帧到首帧 XOR 也在 0.02–0.25 之间 |
 | 面部 | manifest 标注的面部区域内有 3 个暗斑（两眼一鼻） |
-| 动作可区分 | 首版 10 个动作的静止帧两两 XOR ≥0.20（v2.1 动作在 v2.1 时加入比较） |
+| 动作可区分 | 首版 10 个动作的代表帧两两 XOR ≥0.20（v2.1 动作在 v2.1 时加入比较）。`manifest.json` 为每个动作指定一个代表帧，默认取静止帧，走路类动作取腾空相位帧。阈值不降，只指定比较对象 |
 | 色彩数量 | 主体色相簇 ≤6，防止出现杂色 |
 | 人工盲测 | 联系表交给 Fable 或人工审阅，确认“同一只狗” |
 
@@ -2006,6 +2006,8 @@ A1 契约骨架包含：
 | `DogArtSelector` | 位于 `Sources/Core/DogArtPose.swift`，归 WP-D。步态阈值与迟滞（4.5）由 WP-D 维护 |
 | `StatusIconController` 与 `MenuIconRenderer` | 分别位于 `Sources/App/StatusIcon.swift` 与 `Sources/App/DogShapes.swift`，两者都归 WP-E |
 | `DogShapes.swift` 中的矢量比熊路径 | 归 WP-E。WP-D 的 `DogView.swift`（降级第 3 级）只调用，不修改。需要修改时由协调者转给 WP-E |
+
+`Sources/Core/` 中上表未列出的文件归 WP-A，包括 `RingSeries.swift`、`DiskGrowth.swift`、`DiskHealth.swift`、`HealthAlerts.swift`、`Levels.swift`、`LiveSnapshot.swift`、`StatusReport.swift`、`NetworkFilter.swift`、`CPULoad.swift`、`AppInfo.swift`。`Sources/Core/NotificationPlanner.swift` 归 WP-B（R-14）。
 
 `Tests/CoreTests/main.swift` 只由 WP-A 修改。其他包需要登记新测试时，在报告中写明函数名，由 WP-A 或协调者在合并时登记。A1 已为 14.3 表中的全部新测试文件预先登记。
 
