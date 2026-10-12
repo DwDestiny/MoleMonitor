@@ -417,7 +417,7 @@ private struct RecordsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(Text(row.title + "，" + row.evidence + "，" + row.span + "，" + row.duration))
+                    .accessibilityLabel(Text("异常记录 " + row.title + "，" + row.evidence + "，" + row.span + "，" + row.duration))
                     .accessibilityIdentifier("btn.record." + row.id)
                 }
             }
