@@ -4,7 +4,8 @@
 // Output: Menu bar app, or --self-test, --diagnose (headless), --preview (28 static PNG files) and --dog-gallery (PNG gallery) modes.
 // Pos: Entry point and app lifecycle; no cleanup or privileged commands, no Go collector.
 //      The menu bar icon is `StatusIconController` (I2) driven by `MenuIconModel`; the status item has no title text.
-//      The status card is hosted here: PanelModel + PanelRoot in an NSPopover. AppKit sets the popover height (three tiers).
+//      The status card is hosted here: PanelModel + PanelRoot in a PanelWindow (custom NSPanel, docs/DESIGN_V2.md 10). The window
+//      sets its own height from the layout plan. No NSPopover in the release build.
 import AppKit
 import Combine
 import Foundation
@@ -13,16 +14,22 @@ import SwiftUI
 // MARK: - App lifecycle
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let firstPanelShownKey = "MoleMonitor.firstPanelShown"
 
     // Internal (not private) so the UI regression harness can drive the real objects; no behavior change.
     let engine = MonitorEngine()
-    let popover = NSPopover()
+    /// The open status card. Nil when the card is closed. It stays set while the close motion runs.
+    private(set) var panelWindow: PanelWindow?
     private(set) var statusItem: NSStatusItem?
 #if UITEST
-    /// Test only: anchor for the popover when the environment gives the status item no button.
+    /// Test only: anchor for the panel when the environment gives the status item no button.
     var testAnchor: NSView?
+    /// Test only: answers the questions that the old UI regression asks an NSPopover (isShown, contentViewController, appearance,
+    /// performClose) from the PanelWindow. Not a window path: the build has no NSPopover window, see UITestWindowChecks.swift.
+    lazy var popover: NSPopover = UITestPopoverAdapter(delegate: self)
+    /// Test only: the entrance of the next open. Nil follows PanelEntranceGate.
+    var testEntrance: PanelEntrance?
 #endif
     private var cancellables = Set<AnyCancellable>()
     /// The last icon state given to the controller (posture and badge). The UI regression reads it.
@@ -52,8 +59,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.action = #selector(togglePanel(_:))
             button.imagePosition = .imageOnly
         }
-        popover.behavior = .transient
-        popover.delegate = self
 
         // Hollow icon until the first evaluation.
         applyMenuIcon(verdicts: [], dataState: .collecting)
@@ -64,13 +69,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self?.applyMenuIcon(verdicts: verdicts, dataState: dataState)
             }
             .store(in: &cancellables)
-        // A tapped notification opens the card and expands the item of the notification.
-        engine.openCardHandler = { [weak self] item in self?.openPanel(expanding: item) }
+        // A tapped notification opens the card and pins the sidebar of the item of the notification (R-14).
+        engine.openCardHandler = { [weak self] item in self?.openPanel(pinning: item) }
 
         engine.start()
 
         if showFirstPanel {
-            // Wait a moment so the status item has a window to anchor the popover.
+            // Wait a moment so the status item has a window to anchor the panel.
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 600_000_000)
                 guard let self else { return }
@@ -101,17 +106,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: Panel
 
     @objc private func togglePanel(_ sender: Any?) {
-        if popover.isShown {
-            popover.performClose(sender)
+        if let window = panelWindow {
+            // A click during the close motion is ignored: the panel is already going away.
+            if !window.isClosing { window.closePanel() }
         } else {
             showPanel()
         }
     }
 
-    /// Opens the card, or keeps it open, and expands one problem item. Called when the user taps a notification.
-    func openPanel(expanding item: HealthItem?) {
-        if !popover.isShown { showPanel() }
-        panelModel?.expand(item)
+    /// Opens the card, or keeps it open, and pins the sidebar of one item. Called when the user taps a notification (R-14).
+    /// The model of the content gets `PanelPinning.pinSidebar` through the window.
+    func openPanel(pinning item: HealthItem?) {
+        if panelWindow == nil { showPanel() }
+        if let side = NotificationPlanner.sidebarItem(for: item) { panelWindow?.openAndPin(side) }
     }
 
     func showPanel() {
@@ -120,30 +127,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 #else
         let anchor = statusItem?.button
 #endif
-        guard !popover.isShown, let button = anchor else { return }
+        guard panelWindow == nil, let button = anchor else { return }
         let model = makePanelModel(for: button)
         panelModel = model
-        let host = NSHostingController(rootView: PanelRoot(model: model, entrance: PanelEntranceGate.next()))
-        // SwiftUI never sizes the popover. AppKit sets the height from the layout plan (three tiers).
-        host.sizingOptions = []
-        popover.animates = true
-        popover.contentViewController = host
-        popover.contentSize = NSSize(width: PanelMetrics.width, height: model.layoutPlan.height)
+#if UITEST
+        let entrance = testEntrance ?? PanelEntranceGate.next()
+#else
+        let entrance = PanelEntranceGate.next()
+#endif
+        let root = AnyView(PanelRoot(model: model, entrance: entrance))
+        let spot = PanelWindow.makePlacement(anchor: button, height: model.layoutPlan.height)
+        // The sidebar content of WP-C goes into the `sidebar:` argument (for example AnyView(PanelSidebar(model: model))).
+        let window = PanelWindow(placement: spot.placement, visibleMinY: spot.visibleMinY, main: root, sidebar: nil)
+        window.statusItemWindow = button.window
+        // The model of the content serves the window as PanelPinning once WP-C implements it. Until then the cast gives nil.
+        window.pinning = (model as AnyObject) as? PanelPinning
+        window.onClosed = { [weak self] in self?.panelDidClose() }
+        panelWindow = window
         planObserver = model.$layoutPlan
             .map { $0.height }
             .removeDuplicates()
             .dropFirst()
-            .sink { [weak self] height in
-                self?.popover.contentSize = NSSize(width: PanelMetrics.width, height: height)
-            }
+            .sink { [weak window] height in window?.setContentHeight(height, animated: true) }
         engine.panelOpened()
-        // UNVERIFIED-ON-MAC: a .transient popover of an .accessory app should close on outside clicks without app activation.
-        // Alternative: call NSApplication.shared.activate(ignoringOtherApps: true) before show.
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        // No button takes the first-responder role, so no focus ring shows around the quit button (docs/DESIGN.md 2.10).
-        DispatchQueue.main.async { [weak self] in
-            self?.popover.contentViewController?.view.window?.makeFirstResponder(nil)
-        }
+#if UITEST
+        NotificationCenter.default.post(name: NSPopover.willShowNotification, object: popover)
+#endif
+        window.present()
     }
 
     private func makePanelModel(for button: NSView) -> PanelModel {
@@ -171,12 +181,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         return created
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        // Release the hosting controller and the SwiftUI tree; nothing renders while the card is closed.
+    /// The window has closed and released its content. Release the model and tell the engine: nothing renders while the card is closed.
+    private func panelDidClose() {
         planObserver = nil
         panelModel?.detach()
         panelModel = nil
-        popover.contentViewController = nil
+        panelWindow = nil
         engine.panelClosed()
     }
 }
