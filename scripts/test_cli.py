@@ -308,23 +308,23 @@ def main():
         r = run(d_pn, "prompt")
         check(r.returncode == 0, f"prompt fresh exit 0 (got {r.returncode}, {r.stderr})")
         out = r.stdout
-        check(out.startswith("# MoleMonitor 排查请求\n"), "prompt starts with the title")
+        check(out.startswith("# 请帮我排查这台 Mac："), "prompt starts with the title")
         check(out.endswith("\n") and not out.endswith("\n\n"), "prompt ends with exactly one newline")
-        check("## 状态摘要" in out and "## 排查规则" in out, "prompt has the summary and the rules")
-        check("| 内存 | 红 | 压力严重，swap 9.8 GB ↑↑ | " in out, "prompt memory row from status.json")
-        check("## 专项：" in out and "内存压力严重" in out, "prompt has an auto topic and the alert")
+        check("## 1. 现在的问题" in out and "## 4. 安全规则（必须遵守）" in out, "prompt has the problems and the rules")
+        check("| 内存 | 红 | 压力档位：严重，swap 9.8 GB" in out, "prompt memory row from status.json")
+        check("## 3. 排查步骤" in out and "内存" in out.split("## 3. 排查步骤")[1], "prompt has the steps of the first problem")
         check("Orchard Browser（com.example.orchard）" in out and "采样于" in out, "prompt has apps from top_apps with the scan time")
         check(len(out) < 3200, f"prompt length is sane ({len(out)})")
         user = os.environ.get("USER", "") or os.environ.get("LOGNAME", "")
         check("/home/" not in out and "/Users/" not in out and (len(user) < 3 or user not in out), "prompt has no home path and no user name")
         check(run(d_pn, "--prompt").stdout == out, "--prompt gives the same text as prompt")
         t = run(d_pn, "prompt", "--topic", "memory")
-        check(t.returncode == 0 and "## 专项：内存" in t.stdout and "| 磁盘 |" not in t.stdout, "prompt --topic memory")
+        check(t.returncode == 0 and "### 3.1 内存" in t.stdout and "| 磁盘 |" not in t.stdout, "prompt --topic memory")
         for topic_name in ("disk", "cpu", "thermal", "power", "network"):
             tr = run(d_pn, "prompt", "--topic", topic_name)
-            check(tr.returncode == 0 and "## 专项：" in tr.stdout, f"prompt --topic {topic_name}")
+            check(tr.returncode == 0 and "## 3. 排查步骤" in tr.stdout, f"prompt --topic {topic_name}")
         na = run(d_pn, "prompt", "--no-apps")
-        check(na.returncode == 0 and "已按设置隐藏 App 名称" in na.stdout and "Orchard" not in na.stdout, "prompt --no-apps hides names")
+        check(na.returncode == 0 and "Orchard" not in na.stdout, "prompt --no-apps hides names")
         d_pf = tmp / "prompt-off"
         write_samples(d_pf, now)
         write_status_new(d_pf, now, now - timedelta(seconds=30), me, include_names=False)
@@ -333,13 +333,13 @@ def main():
         check(snapshot(d_pn) == before, "prompt does not change the data directory")
         # Old status.json without the new fields still gives a prompt.
         po = run(d_fresh, "prompt")
-        check(po.returncode == 0 and "## 状态摘要" in po.stdout and "磁盘" in po.stdout, "prompt from an old status.json")
+        check(po.returncode == 0 and "## 1. 现在的问题" in po.stdout and "磁盘" in po.stdout, "prompt from an old status.json")
         # Dead writer: exit 3 and the freshness line says so.
         d_pd = tmp / "prompt-dead"
         write_samples(d_pd, now)
         write_status_new(d_pd, now, now - timedelta(seconds=30), dead_pid())
         pd = run(d_pd, "prompt")
-        check(pd.returncode == 3 and "App 未运行" in pd.stdout and "压力严重" in pd.stdout, f"prompt with a dead writer: exit 3 ({pd.returncode})")
+        check(pd.returncode == 3 and "App 未运行" in pd.stdout and "压力档位：严重" in pd.stdout, f"prompt with a dead writer: exit 3 ({pd.returncode})")
         # Nothing at all.
         pn = run(d_none, "prompt")
         check(pn.returncode == 4 and "尚未运行过" in pn.stdout and not d_none.exists(), "prompt with no record: exit 4")
@@ -355,6 +355,30 @@ def main():
         check(rs["recomputed"] is True and rs["items"]["memory"]["pressure"] == "critical", "recomputed status carries the new items")
         check(rs["top_apps"]["apps"][0]["name"] == "Orchard Browser" and rs["prompt_prefs"]["include_app_names"] is True, "recomputed status carries top_apps and prefs")
         check(any(a["type"] == "memory_pressure" for a in rs["active_alerts"]) and rs["overall"]["level"] == "red", "recomputed status keeps non-disk alerts")
+
+        # 8c. --events and the event line of the prompt (DESIGN_V2.md D8).
+        d_ev = tmp / "events"
+        write_samples(d_ev, now)
+        write_status_new(d_ev, now, now - timedelta(seconds=30), me)
+        eviso = lambda t: t.strftime("%Y-%m-%dT%H:%M:%SZ")
+        rec = lambda item, peak, start, end: {"v": 1, "item": item, "first": peak, "peak": peak, "reason": "x", "start": eviso(start),
+                                              "end": eviso(end) if end else None, "peakValue": None, "unit": None, "app": None, "endEstimated": False}
+        (d_ev / "events.json").write_text(json.dumps([
+            rec("cpu", "yellow", now - timedelta(days=2), now - timedelta(days=2) + timedelta(minutes=30)),
+            rec("disk", "red", now - timedelta(days=20), now - timedelta(days=20) + timedelta(hours=1)),
+            rec("memory", "red", now - timedelta(minutes=20), None)]))
+        ev = run(d_ev, "--events")
+        evj = json.loads(ev.stdout) if ev.returncode == 0 else None
+        check(ev.returncode == 0 and isinstance(evj, list) and [e["item"] for e in evj] == ["memory", "cpu"], f"--events default 7 days, newest first ({[e['item'] for e in (evj or [])]})")
+        check(evj is not None and evj[0]["end"] is None and evj[1]["end"] is not None, "--events keeps the open record as end null")
+        ev30 = run(d_ev, "--events", "--days", "30")
+        check(ev30.returncode == 0 and len(json.loads(ev30.stdout)) == 3, "--events --days 30 reads the older record")
+        check(json.loads(run(d_none, "--events").stdout) == [] and not d_none.exists(), "--events without a file gives [] and writes nothing")
+        pe = run(d_ev, "prompt")
+        check("近 7 天异常记录" in pe.stdout and "内存 红 1 次" in pe.stdout, "prompt shows the event line from events.json")
+        for bad in (["--events", "--brief"], ["--events", "--status"], ["--events", "extra"]):
+            r = run(d_none, *bad)
+            check(r.returncode == 2 and r.stdout == "", f"bad events args {bad} exit 2")
 
         # 9. Timing: 50 runs of --status --brief and --status on the fresh directory.
         for label, args in (("--status", ["--status"]), ("--status --brief", ["--status", "--brief"]),

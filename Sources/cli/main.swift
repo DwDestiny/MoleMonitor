@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Command-line arguments; MOLEMONITOR_DATA_DIR; status.json and disk NDJSON files in the data directory.
-// Output: JSON or one Chinese line on stdout; usage on stderr; exit code 0/2/3/4 (docs/PROJECT.md 8.4).
+// Output: JSON or one Chinese line on stdout; usage on stderr; exit code 0/2/3/4 (docs/PROJECT.md 8.4). `--events` prints the anomaly records.
 // Pos: molemonitor-cli, the read-only command-line client. Foundation and Sources/Core only; no AppKit, no threads, no writes.
 
 import Foundation
@@ -16,6 +16,7 @@ let usageText = """
   --status                 输出完整状态 JSON
   --status --brief         输出一行中文摘要
   --disk-history [--days N]  输出每天的磁盘真实已用与增长量 JSON（默认 30 天，最大 60 天）
+  --events [--days N]      输出最近的异常记录 JSON（默认 7 天，最大 30 天，最新在前）
   prompt [--topic T]       输出给 agent 的排查提示词（T 为 disk、memory、cpu、thermal、power、network）
   prompt --apps|--no-apps  强制包含或隐藏 App 名称（默认按 App 中的设置）
   --schema                 输出字段说明与口径说明 JSON
@@ -63,6 +64,7 @@ let schemaDocument: [String: Any] = [
         "active_alerts": "当前提醒，每项含 type、subject、level、since、message、agent_hint；不输出已恢复的提醒",
         "notifications": "通知授权状态",
     ] as [String: Any],
+    "events": "--events 输出异常记录数组，最新在前。键：v、item、first、peak、reason、start、end（null 表示仍在持续）、peakValue、unit、app、endEstimated。",
     "measured_fields": "{value, unit, status, sampled_at}。只有 status 为 ok 时 value 才有意义，其他情况 value 为 null。测得的 0 与取不到的值不同。",
     "status_values": [
         "ok": "测得的值，可以是 0",
@@ -94,7 +96,7 @@ func schemaText() -> String {
 
 // MARK: - Argument parsing
 
-enum Command { case status, diskHistory, schema, version, help, prompt }
+enum Command { case status, diskHistory, events, schema, version, help, prompt }
 
 var command: Command?
 var brief = false
@@ -127,6 +129,7 @@ while i < args.count {
     case "--status": setCommand(.status, a)
     case "--brief": brief = true
     case "--disk-history": setCommand(.diskHistory, a)
+    case "--events": setCommand(.events, a)
     case "--days":
         i += 1
         guard i < args.count, let n = Int(args[i]), n >= 1 else { fail("--days 需要 1 到 60 的整数") }
@@ -141,7 +144,7 @@ while i < args.count {
 }
 guard let command else { fail("缺少命令") }
 if brief && command != .status { fail("--brief 只能与 --status 一起使用") }
-if daysGiven && command != .diskHistory { fail("--days 只能与 --disk-history 一起使用") }
+if daysGiven && command != .diskHistory && command != .events { fail("--days 只能与 --disk-history 或 --events 一起使用") }
 if (topic != nil || appsOverride != nil) && command != .prompt { fail("--topic、--apps、--no-apps 只能与 prompt 一起使用") }
 
 // MARK: - Run
@@ -188,10 +191,22 @@ case .prompt:
     let include: Bool = appsOverride ?? status.promptPrefs?.includeAppNames ?? true
     let options = PromptOptions.forCurrentUser(includeAppNames: include)
     let scope: PromptScope = topic.map { PromptScope.topic($0) } ?? PromptScope.overview
-    var text = PromptBuilder.build(input, scope: scope, options: options)
+    // The CLI cannot read disk writers, sleep blockers or the 2 hour pressure: they stay nil ("未读到").
+    var promptInput = input
+    if FileManager.default.fileExists(atPath: dir.appendingPathComponent(EventLog.fileName).path) {
+        promptInput.events = EventLog.read(dir: dir, days: 7, now: now)
+    }
+    var text = PromptBuilder.build(promptInput, scope: scope, options: options)
     while text.hasSuffix("\n") { text.removeLast() }
     emit(text)
     exit(result.exitCode)
+case .events:
+    let dir = MoleMonitorPaths.dataDir(environment: ProcessInfo.processInfo.environment)
+    let records = EventLog.read(dir: dir, days: daysGiven ? min(days, EventLog.maxDays) : 7, now: Date())
+    let objects = records.map { EventLog.object($0) }
+    let data = (try? JSONSerialization.data(withJSONObject: objects, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("[]".utf8)
+    emit(String(decoding: data, as: UTF8.self))
+    exit(0)
 case .diskHistory:
     let dir = MoleMonitorPaths.dataDir(environment: ProcessInfo.processInfo.environment)
     let now = Date()

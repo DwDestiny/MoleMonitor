@@ -979,16 +979,22 @@ final class UITestRunner {
         }
         // The icon follows the engine one main-queue hop later, so wait for the icon itself.
         _ = await waitFor(timeoutMs: 8000) {
-            self.delegate.menuIconState?.badge?.item == .disk && button.image?.isTemplate == true && (button.accessibilityLabel() ?? "").contains("磁盘")
+            self.delegate.menuIconState?.badge?.item == .disk && self.delegate.menuIconState?.kind == .alert
+                && button.image?.isTemplate == false && (button.accessibilityLabel() ?? "").contains("磁盘")
         }
         let label = button.accessibilityLabel() ?? ""
         let hasImage = button.image != nil
         let templateFlag = button.image?.isTemplate
         let badge = delegate.menuIconState?.badge?.item
-        let ok = hasImage && label.contains("磁盘") && engine.diskLevel == .red && templateFlag == true && badge == .disk
+        // DESIGN_V2.md 13.2.1 (A updated): the red level is a colored, non-template image with the panting head;
+        // the head ink equals labelColor under light and dark (each channel within 8 of 255).
+        let posture = delegate.menuIconState?.posture
+        let head = button.image.map { UITestIconChecks.headInkCheck($0) } ?? (ok: false, worst: 255, note: "no image")
+        let ok = hasImage && label.contains("磁盘") && engine.diskLevel == .red && templateFlag == false && badge == .disk
+            && posture == .pant && head.ok
         record("A", "状态栏与图标", ok, since: t0,
-               "image=\(hasImage) isTemplate=\(templateFlag.map { "\($0)" } ?? "nil") level=\(engine.diskLevel) badge=\(badge?.rawValue ?? "nil") posture=\(delegate.menuIconState?.posture.rawValue ?? "nil") label=\(label)",
-               ["buttonHasWindow": button.window != nil ? 1 : 0])
+               "image=\(hasImage) isTemplate=\(templateFlag.map { "\($0)" } ?? "nil") level=\(engine.diskLevel) badge=\(badge?.rawValue ?? "nil") posture=\(posture?.rawValue ?? "nil") headInk=\(head.note) label=\(label)",
+               ["buttonHasWindow": button.window != nil ? 1 : 0, "headInkWorst": head.worst])
         return true
     }
 
