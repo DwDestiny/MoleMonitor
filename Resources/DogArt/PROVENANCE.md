@@ -31,6 +31,13 @@ long tongue hanging out, one small blue sweat drop (used for `dog_pant.png`); si
 ears lifted, worried wide eyes, looking up (used for `dog_alert.png`); walking slowly with head lowered sniffing the ground,
 facing right (used for `dog_walk.png`, scaled to 0.80 of the stand height). A fourth pose (play bow) is not used.
 
+## Third pass (2026-10-12): alert
+
+The front-on alert pose was a different camera from the other 6 poses (G2 review, round 1). `dog_alert.png` was generated
+again: same reference, 4 candidates in one row, side view, body facing right, sitting upright, ears lifted, wide worried
+eyes, mouth closed, head turned slightly towards the viewer, no tongue, no sweat drop. The second candidate is used,
+scaled to 0.95 of the stand height.
+
 ## Prompt (first version of pose walk, replaced)
 
 Same dog, 3 separated poses in one row, relaxed slow walk with one front paw lifted, mouth closed, happy eyes,
