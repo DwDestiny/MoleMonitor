@@ -1571,4 +1571,181 @@ RM 时：窗口直接改宽，侧栏内容淡入 150 ms。门禁 W05 检查展�
 3. 图表实现 `AXChartDescriptor`，VoiceOver 可以朗读数据序列。
 4. 每个按钮有 `accessibilityIdentifier` 和中文标签（沿用现有源审计）。
 
+## 11. 动画引擎、性能预算与降级
+
+### 11.1 方案：混合动画
+
+| 层 | 内容 | 技术 |
+|---|---|---|
+| 序列帧 | 比熊的身体动作（第 4.3 节的 17 个动作） | AI 生成的位图条带，Core Animation 播放 |
+| 程序化补间 | 地面平移、呼吸缩放、汗珠、身体下沉、爱心、气泡、淡变 | `CABasicAnimation`、`CAKeyframeAnimation` |
+| 静态图层 | 舞台背景、窝、月亮与星 | `CALayer.contents` |
+
+理由：纯程序化比熊（矢量）表现不出毛茸茸的可爱感（U6）。纯位图视频体积大，速度无法随 CPU 连续变化。混合方案兼顾两者。
+
+### 11.2 播放机制
+
+1. 每个动作一张条带图（atlas），帧横向排列，每帧 320×240 px。
+2. 比熊图层的 `contents` 是条带图。`contentsRect` 选中一帧。
+3. 帧动画是 `CAKeyframeAnimation(keyPath: "contentsRect")`，`calculationMode = .discrete`，`repeatCount = .infinity`。动画由渲染服务器执行，主线程每帧没有工作。
+4. 步频用图层的 `speed` 控制。改变 `speed` 时，先用 `convertTime` 求当前本地时间，再设置 `timeOffset` 与 `beginTime`，使相位连续，不跳帧。
+5. 程序化补间设置 `preferredFrameRateRange`：最小 10 fps，最大 30 fps，优选 30 fps。帧动画的帧率由帧数和 `speed` 决定，上限 18 fps。
+6. 空闲小动作、一次性动作的衔接用 `CAAnimationDelegate.animationDidStop` 回调。不用 `Timer`、`TimelineView`、`CADisplayLink`。
+7. SwiftUI 只承载一个 `NSViewRepresentable` 宿主视图（`DogSpriteView`）。SwiftUI 不参与每帧绘制。
+
+### 11.3 解码与缓存
+
+| 项目 | 规定 |
+|---|---|
+| 首帧 | 打开面板时同步解码当前动作的第 1 帧，约 2–3 ms |
+| 其余帧 | 后台队列解码整张条带（`CGImageSourceCreateThumbnailAtIndex` 或 `kCGImageSourceShouldCacheImmediately`） |
+| 动画开始 | 打开后 ≤300 ms |
+| 预取 | 当前动作加最可能的下一个动作（相邻步态或 `stand_up`） |
+| 缓存 | LRU，≤16 MB（每帧约 300 KB，约 52 帧） |
+| 释放 | 关闭面板时清空缓存，移除全部图层动画 |
+| 资源包 | `Resources/DogSprites/`，PNG 条带，合计 ≤6 MB |
+
+### 11.4 性能预算
+
+| 指标 | 预算 | 测量方 |
+|---|---|---|
+| 面板打开（点击到首帧可见） | ≤150 ms | CI（W03）与真机 |
+| 面板打开 60 秒的进程 CPU 均值 | ≤3%（Apple Silicon 真机） | 真机。CI 在 VM 中用同一阈值测 10 秒稳态（W17） |
+| 面板关闭后 | 只有引擎 30 秒 tick，CA 动画 0 个，精灵缓存 0 字节 | CI（W16） |
+| 稳态主线程每帧工作 | 0（无每帧回调） | CI 源审计与运行计数（W14） |
+| 精灵内存 | ≤16 MB | CI（W18） |
+| 侧栏拖动读数 | 真机 60 fps。CI：≥95% 的移动事件有读数更新，每次处理 ≤8 ms | 真机与 CI（W07） |
+| 资源体积增加 | ≤6 MB | CI（`build.py` 统计） |
+| WindowServer CPU | 记录，不设门禁。真机另测 | 真机 |
+
+> **注意**：VM 使用软件渲染。CI 的帧率与 CPU 数字不能证明真机的流畅度。真机结果必须由用户在 Mac 上确认，见 15.3。
+
+### 11.5 美术流程与一致性验收
+
+流程（工作包 WP-D 执行，只在本机运行，按现有 image-gen 帧流程）：
+
+1. 用 `dog_stand` 作唯一参考图。
+2. 每个动作用一次生成得到一行 N 帧的条带（例：`edit --ref dog_stand --size 1536x1024`）。
+3. 用 `split_strip.py` 切帧，缩放到 320×240 px，对齐脚底线到 y = 230 px。
+4. 逐帧检查。不合格的条带重新生成，每个动作最多 3 次。
+5. 在白底、深色底、彩色底上预览。生成联系表。
+
+一致性门禁（W11，脚本检查 `Resources/DogSprites/manifest.json` 与图像）：
+
+| 检查 | 阈值 |
+|---|---|
+| 毛色 | 每帧主体平均 Lab 与参考图 ΔE ≤6 |
+| 站姿高度 | 站立类动作的主体高度与参考图相差 ≤6% |
+| 脚底线 | 着地帧的最低不透明像素 y = 230 ± 2 px |
+| 相邻帧差异 | alpha XOR 在 0.02–0.25 之间（太小说明没动，太大说明跳变） |
+| 循环缝合 | 循环动作的末帧到首帧 XOR 也在 0.02–0.25 之间 |
+| 面部 | manifest 标注的面部区域内有 3 个暗斑（两眼一鼻） |
+| 动作可区分 | 不同动作的静止帧两两 XOR ≥0.20 |
+| 色彩数量 | 主体色相簇 ≤6，防止出现杂色 |
+| 人工盲测 | 联系表交给 Fable 或人工审阅，确认“同一只狗” |
+
+### 11.6 降级链
+
+| 级 | 条件 | 表现 |
+|---|---|---|
+| 0 | 全部条带通过 W11 | 完整序列帧 + 程序化补间 |
+| 1 | 某个动作重生成 3 次仍不合格 | 该动作用现有 8 张静态位图中最接近的一张，加程序化补间（位移、缩放、地面平移） |
+| 2 | 条带整体不可用，或运行时解码失败 | 全部动作用 8 张静态位图 + 程序化补间 |
+| 3 | 位图资源缺失 | 矢量比熊（`DogView.useBitmapArt = false`） |
+
+`burdened_walk` 有单独风险：背上的杂物可能接近已删除的“驮包”方案。如果审阅认为它像背包，那么降级为 `walk` + 身体下沉 4 pt + 步频 × 0.6，不画杂物。
+
+## 12. 数据层
+
+### 12.1 现有数据（可直接用）
+
+| 数据 | 存储 | 时间范围 | 用于 |
+|---|---|---|---|
+| CPU、网络、swap、电量、压力档位、热状态、电源 | `TrendBuffer` 粗段 30 s × 240，`trend.json` | 2 小时 | 迷你曲线、侧栏 2 小时 |
+| 同上，2 s 细段 | 内存 150 点 | 5 分钟，关闭清空 | 迷你曲线末端、实时读数 |
+| 磁盘总容量、可用、真实已用、可清除 | `disk-YYYY-MM.ndjson` 每 15 分钟 | ≥30 天（本月加上月） | 磁盘迷你曲线、侧栏 24 小时 / 7 天 / 30 天、容量区 |
+| 网络累计计数 | 同上（`net_rx`、`net_tx`、`boot`） | ≥30 天 | 网络 24 小时 / 7 天流量柱、今天 / 昨天 / 近 30 天 |
+| 睡眠记录 | `sleeps.json` | 最多 8 条 / 7 天 | 电池侧栏 |
+| CPU、内存 App 排行 | `AppUsage` | 实时与 5 分钟 | 侧栏排行 |
+| 当前等级、原因代码、开始时刻 | `status.json` | 当前 | 异常区 |
+| 物理内存、swap 已用 | `CurrentReadings` | 当前 | 内存容量区、统计行 |
+
+### 12.2 需新增
+
+| 编号 | 数据 | 格式与位置 | 容量上限 | 写入时机 |
+|---|---|---|---|---|
+| D1 | 5 分钟汇总 | `rollup-YYYY-MM.ndjson`，一行一个 5 分钟窗口 | 约 110 B/行，32 KB/天，保留本月加上月，≤2 MB | 与 `status.json` 同一次 5 分钟写入，追加一行 |
+| D2 | 异常记录 | `events.json`，问题片段数组 | ≤200 条且 ≤30 天，≤50 KB | 只在等级转换时原子重写 |
+| D3 | 磁盘写入排行 | `AppUsage` 增加 `diskWrittenBytes`（`ri_diskio_byteswritten` 差值） | 内存中 | 每次进程采样 |
+| D4 | 阻止睡眠的 App | `IOPMCopyAssertionsByProcess`，只在电池侧栏打开时读 | 不存储 | 侧栏打开时每 10 s 读一次（一次性延迟链，不用 Timer） |
+| D5 | 内存压力百分比 | `CurrentReadings.memoryPressurePercent`、`TrendPoint.pressurePercent`（`pp`） | 随现有 2 小时缓冲 | 现有 30 s 与 2 s 采样 |
+| D6 | 内存分解 | `MemoryBreakdown { app, wired, compressed, total }` | 只存当前值 | 现有 30 s 与 2 s 采样 |
+| D7 | 磁盘容量三元组进入当前读数 | `CurrentReadings.diskTotal`、`diskUsed`、`diskPurgeable` | 当前值 | 由 `DiskItem` 填入 |
+| D8 | CLI 读取异常记录 | `molemonitor-cli --events --days N` | — | 按需 |
+
+D1 行格式：
+
+```json
+{"v":1,"t":"2026-10-12T05:05:00Z","n":10,"cpu":[23.4,97.0],"pp":[41,63],"sw":1288,"mp":"n","th":"f","bat":61,"ps":"b","rx":1200,"tx":80}
+```
+
+| 键 | 含义 |
+|---|---|
+| `v` | 格式版本 |
+| `t` | 窗口结束时刻（UTC） |
+| `n` | 窗口内粗段点数（满窗 10） |
+| `cpu` | [均值, 峰值]，% |
+| `pp` | 内存压力百分比 [均值, 峰值]。缺失时省略该键 |
+| `sw` | swap 已用，MB，窗口末值 |
+| `mp` | 窗口内最高压力档位：n 正常、w 警告、c 严重 |
+| `th` | 窗口内最高热状态：n、f（偏高）、s、c |
+| `bat` | 电量 %，窗口末值。无电池时省略 |
+| `ps` | 电源：a 接电源，b 电池 |
+| `rx`、`tx` | 窗口内平均速率，KB/s |
+
+D2 记录格式：
+
+```json
+{"v":1,"item":"disk","first":"yellow","peak":"red","reason":"disk_growth_5d","start":"2026-10-12T02:52:00Z","end":null,"peakValue":314,"unit":"GB","app":null,"endEstimated":false}
+```
+
+1. 应用启动时，如果有 `end` 为 null 的记录，而该分项现在是绿色，那么把 `end` 写为上次 `status.json` 的时刻，`endEstimated` 写 true。
+2. `app` 只存显示名，不存 bundle 路径和进程参数。“提示词包含 App 名称”关闭时不写 `app`。
+
+D1 与 D2 的共同规则：
+
+1. 文件权限 0600，目录沿用现有数据目录。
+2. 写入在后台队列，原子写或追加。损坏的行跳过并计数，与 `disk-*.ndjson` 相同。
+3. 侧栏打开时在后台读取并缓存。关闭面板时释放。
+4. 不记录完整进程参数、序列号、凭据。
+5. 新文件起始为空。侧栏的 24 小时 / 7 天范围在头几天显示“已记录 N 小时”。
+
+### 12.3 可选（不阻塞 v2）
+
+| 数据 | 来源 | 理由 |
+|---|---|---|
+| 电池健康：最大容量占设计容量的 %、循环次数 | IORegistry `AppleSmartBattery`（只读） | 电池侧栏的补充信息。键名未在 Mac 上核实，不读序列号 |
+
+### 12.4 放弃
+
+| 数据 | 理由 |
+|---|---|
+| 每 App 网络排行 | 没有公开接口。`nettop` 子进程成本高 |
+| 每应用耗电排行 | 红线 |
+| 以 CPU 估算耗电 | 红线 |
+| CPU、内存 30 天曲线 | 侧栏只给 7 天。D1 有 2 个月数据，但 30 天曲线对排查没有帮助 |
+| SMC 温度历史 | SMC 只作参考读数，不存历史 |
+
+### 12.5 侧栏范围与数据源
+
+| 分项 | 2 小时 | 24 小时 | 7 天 | 30 天 |
+|---|---|---|---|---|
+| CPU | TrendBuffer | D1 | D1 | — |
+| 内存 | TrendBuffer（压力 %、swap、档位） | D1 | D1 | — |
+| 磁盘 | — | disk NDJSON | disk NDJSON | disk NDJSON |
+| 网络 | TrendBuffer | disk NDJSON 计数器差值 | 同左 | — |
+| 电池 | TrendBuffer | D1 | D1 | — |
+| 温度 | TrendBuffer | D1 | D1 | — |
+| 异常记录 | — | — | D2 | D2 |
+
 <!-- NEXT -->
