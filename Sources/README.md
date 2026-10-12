@@ -56,6 +56,9 @@ last_updated: 2026-10-11
 | `DogArt.swift` | 比熊各部件、菜单栏头部和角标图形的贝塞尔路径数据，不含绘制 |
 | `DogRig.swift` | 比熊动画数学：每帧的部件变换参数与变换后的图层列表。`DogRig.bubbleLayers` 单独给出关注气泡的图层（位图比熊用） |
 | `DogArtPose.swift` | 位图比熊的选图：`DogArtPose`（8 个姿态）与 `DogArtSelector`（平滑、迟滞、最短保持 4 秒，无定时器，由调用方逐个数据点推进）。规则见 [DESIGN.md 4.9](../docs/DESIGN.md#49-位图阶段) |
+| `DogAction.swift` | 面板 v2 比熊的动作：`DogAction`（10 个动作）、`DogActionInput`、`DogStage`（4.4 优先级、叠加层、4.6 过渡、4.5 步频曲线）、`DogDirector`（CPU 平滑 tau 6 秒、步态迟滞、倍率每次最多变 0.25、帧率上限 18 fps），输出 `DogStagePlan`。规则见 [DESIGN_V2.md 4.4 至 4.6](../docs/DESIGN_V2.md) |
+| `BubbleCopy.swift` | 气泡文案的唯一来源：`BubbleInput` 到 `BubbleText`（主行、证据、等级、副行），`allTemplates` 列出每个模板的最长值（W12、W13） |
+| `HeroLogic.swift` | 英雄区的纯逻辑：`HeroFacts`（从判定与读数取动作输入和气泡证据）、`HeroBrain`（导演、文字 30 秒数字规则、摸狗、长按、复制反馈、打开时彩蛋）、`HeroMemory`（进程内计数） |
 
 ## App 文件
 
@@ -74,10 +77,12 @@ last_updated: 2026-10-11
 | `GlyphPaths.swift` | 类别角标路径，菜单栏角标、气泡和卡片类别图标共用 |
 | `DogGallery.swift` | `--dog-gallery` 导出所有静态姿态、菜单栏图标和角标的 PNG 图册。图册判矢量渲染器，渲染 `DogView` 时临时关闭位图开关 |
 | `UITestDogChecks.swift` | 比熊动画门禁（矢量路径：DA 至 DE），输出 `dog-report.json`。整个文件在 `#if UITEST` 内 |
-| `UITestBitmapChecks.swift` | 位图比熊门禁 BA 至 BF，面板门禁 M19V、M20、M21、M22，8 姿态联系表。整个文件在 `#if UITEST` 内 |
+| `UITestBitmapChecks.swift` | 位图比熊门禁 BA 至 BD（8 张静态位图），BE、BF（10 个序列帧动作的静止帧），面板门禁 M19V、M20、M21、M22，8 姿态联系表。整个文件在 `#if UITEST` 内 |
+| `UITestSpriteChecks.swift` | 序列帧比熊门禁 W04、W11（运行时部分）、W12、W14、W15、W17、W18，截图 `ui-w12-*.png`。整个文件在 `#if UITEST` 内 |
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
 | `PanelRoot.swift` | 状态卡根视图：固定的头部、滚动的中部、固定的底栏。按版面计划渲染，不排序。入场动画 |
-| `PanelHero.swift` | 头部：比熊、标题、灯列（安静模式与问题模式）。问题模式比熊框 72 × 54，框顶距头部顶 6 pt，向左拉出 12 pt |
+| `PanelHero.swift` | 英雄区舞台 320 × 152 pt：`HeroTokens`（舞台色、地面、气泡、夜空），`HeroModel`（数据点在 body 内同步给 `HeroBrain`，一个数据点一次 body 评估），`PanelHero(data:quiet:copyBubble:includeAppNames:lastNightClean:)`，`HeroBubble`（最多 2 行，弹出用 SwiftUI 关键帧，RM 时不缩放）。降级：序列帧、8 张静态位图、矢量比熊 |
+| `DogSpriteView.swift` | 序列帧比熊：`DogSpriteLibrary`（条带解码与 8 MB LRU 缓存，最后一个视图关闭时清空），`DogStageGeometry`（舞台尺寸、比熊框、气泡、阴影），`DogSpriteNSView`（Core Animation 离散关键帧播放条带，地面纹理、阴影、汗珠、z、爱心，按 alpha 命中测试）。无 `Timer`、`CADisplayLink`、`TimelineView` |
 | `PanelProblem.swift` | 问题卡、问题行、其余正常行、证据区。`ProblemRowButtonStyle`：折叠行在浅色与深色下都是灰底加 3 pt 等级色条 |
 | `PanelCharts.swift` | 图表：问题曲线（2 小时粗段加 5 分钟细段）、迷你线、磁盘 30 天图 |
 | `PanelApps.swift` | 占用 App 行、证据列表、折叠行 |
