@@ -11,6 +11,11 @@
 // BC  the eight files load as 320 x 240 px, a missing directory falls back without a crash.
 // BD  pairwise XOR of the non-background pixels at 72 x 54 pt 1x, 21 pairs of 7 poses, gate 0.20 (the values are all reported).
 // BE  the share of non-background pixels (the M19 rule): gray at least 1.5 %, every other pose at least 1 %.
+// BF  the ground shadow of each of the 8 poses: center y within 2 px of the lower edge of the dog (72 x 54 px), center x within 2 px
+//     of the dog center, width 0.7 to 0.8 of the dog width (sprint narrower and lighter).
+// M21 problem mode hero in the real panel: dog box at least 64 pt wide, at least 6 pt below the panel top, the bubble box and the
+//     dog ink box do not intersect (diskRed and multi, light and dark).
+// M22 light multi: the collapsed problem rows have a gray fill (no hue) and a 3 pt bar in the level color. The first card keeps a tint.
 
 #if UITEST
 import AppKit
@@ -96,6 +101,7 @@ extension UITestDogChecks {
         checkBitmapLoad()
         checkBitmapXor()
         checkBitmapShare()
+        checkBitmapShadow()
         await checkBitmapOpenClose()
         await checkBitmapReduceMotion()
         renderBitmapSheets()
@@ -212,6 +218,61 @@ extension UITestDogChecks {
         }
         record("BE", "bitmap poses: non-background share at 72 x 54 pt (gray >= 1.5 %, others >= 1 %)", problems.isEmpty && rows.count == 16,
                rows.joined(separator: ", ") + (problems.isEmpty ? "" : ". Problems: " + problems.joined(separator: "; ")), values)
+    }
+
+    // MARK: BF, the ground shadow follows each pose
+
+    /// The shadow of every pose, measured on the 72 x 54 px alpha grid (the 1x look of the problem-mode dog), against the ellipse that the
+    /// view draws (`DogBitmapView.shadowSpec`). The grid is read at alpha 0.5. The view reads the 320 x 240 file, so the two differ by
+    /// at most one pixel of the small grid.
+    private func checkBitmapShadow() {
+        let box = CGSize(width: 72, height: 54)
+        var rows = [String]()
+        var problems = [String]()
+        var values = [String: Double]()
+        var sprintOpacity = 1.0
+        var otherOpacity = 1.0
+        for pose in DogArtPose.allCases {
+            guard let grid = alphaGrid(pose) else {
+                problems.append("\(pose.rawValue): no picture")
+                continue
+            }
+            var left = 72, right = -1, bottom = -1
+            for y in 0..<54 {
+                for x in 0..<72 where grid[y][x] >= 0.5 {
+                    if x < left { left = x }
+                    if x > right { right = x }
+                    if y > bottom { bottom = y }
+                }
+            }
+            guard right >= left, bottom >= 0 else {
+                problems.append("\(pose.rawValue): no ink on the grid")
+                continue
+            }
+            let spec = DogBitmapView.shadowSpec(pose: pose, box: box, ink: DogArtLibrary.shared.inkBox(pose))
+            let bodyWidth = Double(right + 1 - left)
+            let bodyCenter = Double(left + right + 1) / 2 + DogBitmapView.shift(pose, box: box)
+            let dy = abs(spec.centerY - Double(bottom + 1))
+            let dx = abs(spec.centerX - bodyCenter)
+            let ratio = spec.width / bodyWidth
+            let dyText = String(format: "%.2f", dy), dxText = String(format: "%.2f", dx)
+            let ratioText = String(format: "%.2f", ratio), opacityText = String(format: "%.2f", spec.opacity)
+            rows.append(pose.rawValue + " dy " + dyText + " px, dx " + dxText + " px, width " + ratioText + ", opacity " + opacityText)
+            values[pose.rawValue + ".dy"] = (dy * 100).rounded() / 100
+            values[pose.rawValue + ".widthRatio"] = (ratio * 100).rounded() / 100
+            if dy > 2 { problems.append(pose.rawValue + ": center y is " + dyText + " px from the lower edge") }
+            if dx > 2 { problems.append(pose.rawValue + ": center x is " + dxText + " px from the dog center") }
+            if pose == .sprint {
+                sprintOpacity = spec.opacity
+                if ratio >= 0.65 { problems.append("sprint: width ratio " + ratioText + " is not narrower") }
+            } else {
+                otherOpacity = Swift.min(otherOpacity, spec.opacity)
+                if ratio < 0.68 || ratio > 0.82 { problems.append(pose.rawValue + ": width ratio " + ratioText + " is not near 0.75") }
+            }
+        }
+        if sprintOpacity >= otherOpacity { problems.append("sprint shadow is not lighter than the others") }
+        record("BF", "bitmap ground shadow follows the pose (center y within 2 px of the lower edge)", problems.isEmpty && rows.count == 8,
+               rows.joined(separator: "; ") + (problems.isEmpty ? "" : ". Problems: " + problems.joined(separator: "; ")), values)
     }
 
     // MARK: BA, no frame callbacks
@@ -360,6 +421,174 @@ extension UITestRunner {
         if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
         record("M19V", "面板里矢量比熊真实渲染（开关关闭，沿用 M19 门槛）", problems.isEmpty && notes.count >= 14, since: t0, note,
                ["problems": Double(problems.count), "measured": Double(notes.count)])
+    }
+
+    /// Mean color of a region of a screenshot over the surface color (the hosting view has no background of its own).
+    private func meanColor(_ shot: UITestShot, region: CGRect, surface: UITestContrast.RGB) -> UITestContrast.RGB? {
+        let box = UITestPixels.pixelRegion(region, of: shot)
+        guard box.x1 > box.x0, box.y1 > box.y0 else { return nil }
+        var sr = 0.0, sg = 0.0, sb = 0.0
+        var count = 0.0
+        for y in box.y0..<box.y1 {
+            for x in box.x0..<box.x1 {
+                let i = (y * shot.w + x) * 4
+                let behind = 1 - Double(shot.rgba[i + 3]) / 255
+                sr += Swift.min(255.0, Double(shot.rgba[i]) + surface.r * behind)
+                sg += Swift.min(255.0, Double(shot.rgba[i + 1]) + surface.g * behind)
+                sb += Swift.min(255.0, Double(shot.rgba[i + 2]) + surface.b * behind)
+                count += 1
+            }
+        }
+        return (sr / count, sg / count, sb / count)
+    }
+
+    private func srgb(_ color: Color) -> UITestContrast.RGB {
+        let c = NSColor(color).usingColorSpace(.sRGB) ?? NSColor.black
+        return (Double(c.redComponent) * 255, Double(c.greenComponent) * 255, Double(c.blueComponent) * 255)
+    }
+
+    /// M21: the hero of the problem mode in the real panel. The dog box is at least 64 pt wide and at least 6 pt below the panel top.
+    /// The bubble box and the dog ink box (both from the alpha of the pictures that the view draws) do not intersect, and the
+    /// highest ink (bubble or dog) is at least 6 pt below the panel top, so nothing is cut at the top.
+    func stepHeroDog() async {
+        let t0 = now()
+        DogView.useBitmapArt = true
+        var problems = [String]()
+        var notes = [String]()
+        var values = [String: Double]()
+        let copyBox = UITestTextBox()
+        let library = DogArtLibrary.shared
+        for c in [PreviewCase.diskRed, PreviewCase.multi] {
+            guard let model = await openFixture(c, copyBox: copyBox) else {
+                problems.append("\(c.rawValue): the panel did not open")
+                continue
+            }
+            await sleepMs(300)
+            let pose = DogBitmapProbe.lastPose
+            let input = model.data.dogInput
+            guard let rect = panelRect("dog"), let item = input.worstProblem,
+                  let dogInk = library.inkBox(.alert, minAlpha: 8) else {
+                problems.append("\(c.rawValue): no dog frame or no problem item")
+                await closeFixture()
+                continue
+            }
+            if pose != .alert { problems.append("\(c.rawValue): the dog pose is \(pose?.rawValue ?? "nil"), expected alert") }
+            if rect.width < 64 { problems.append("\(c.rawValue): dog box \(Int(rect.width)) pt wide, needs 64") }
+            if rect.minY < 6 { problems.append(c.rawValue + ": dog box top is " + String(format: "%.1f", Double(rect.minY)) + " pt below the panel top, needs 6") }
+            for dark in [false, true] {
+                let key = c.rawValue + (dark ? " dark" : " light")
+                let w = Int(rect.width * 4), h = Int(rect.height * 4)
+                guard let bubbleImage = library.bubble(item: item, level: input.worstLevel, dark: dark, width: w, height: h),
+                      let bubbleInk = DogInkBox.measure(bubbleImage, minAlpha: 8) else {
+                    problems.append("\(key): no bubble picture")
+                    continue
+                }
+                let dogRect = CGRect(x: dogInk.minX * Double(rect.width) + DogBitmapView.shift(.alert, box: rect.size), y: dogInk.minY * Double(rect.height),
+                                     width: dogInk.width * Double(rect.width), height: (dogInk.maxY - dogInk.minY) * Double(rect.height))
+                let bubbleRect = CGRect(x: bubbleInk.minX * Double(rect.width), y: bubbleInk.minY * Double(rect.height),
+                                        width: bubbleInk.width * Double(rect.width), height: (bubbleInk.maxY - bubbleInk.minY) * Double(rect.height))
+                let gap = bubbleRect.minX - dogRect.maxX
+                let topInk = rect.minY + Swift.min(dogRect.minY, bubbleRect.minY)
+                let gapText = String(format: "%.1f", Double(gap)), topText = String(format: "%.1f", Double(topInk))
+                var line = key + " box " + String(Int(rect.width)) + " x " + String(Int(rect.height))
+                line += " pt, dog ink " + String(Int(dogRect.width)) + " x " + String(Int(dogRect.height))
+                line += " pt, gap bubble to dog " + gapText + " pt, top ink " + topText + " pt below the panel top"
+                notes.append(line)
+                if dogRect.intersects(bubbleRect) { problems.append(key + ": the bubble box meets the dog ink box") }
+                if gap < 2 { problems.append(key + ": the bubble is " + gapText + " pt from the dog, needs 2") }
+                if topInk < 6 { problems.append(key + ": the highest ink is " + topText + " pt below the panel top, needs 6") }
+                values[key + ".gap"] = Double((gap * 10).rounded() / 10)
+                values[key + ".topInk"] = Double((topInk * 10).rounded() / 10)
+            }
+            values[c.rawValue + ".boxWidth"] = Double(rect.width)
+            values[c.rawValue + ".boxTop"] = Double(rect.minY)
+            values[c.rawValue + ".dogInkHeight"] = ((dogInk.maxY - dogInk.minY) * Double(rect.height) * 10).rounded() / 10
+            await closeFixture()
+        }
+        var note = notes.joined(separator: "; ")
+        if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
+        record("M21", "问题模式比熊：框不小于 64 pt，气泡不压身体，顶部不裁切", problems.isEmpty && notes.count == 4, since: t0, note, values)
+    }
+
+    /// M22: the light scheme multi card. The three collapsed rows have a gray fill (no hue, near the panel color) and a 3 pt bar in
+    /// the level color at the left edge. The first card keeps a light tint with a hue. The dark scheme is not asserted (it keeps the tint).
+    func stepCollapsedRows() async {
+        let t0 = now()
+        var problems = [String]()
+        var notes = [String]()
+        var values = [String: Double]()
+        let copyBox = UITestTextBox()
+        guard let model = await openFixture(.multi, copyBox: copyBox), let hv = hostView else {
+            record("M22", "浅色折叠问题卡无彩色底，左侧色条表示等级", false, since: t0, "the panel did not open")
+            return
+        }
+        await setAppearance(dark: false)
+        let surface = UITestContrast.lightSurface
+        let light = PanelTokens(scheme: .light)
+        let barColors: [HealthLevel: UITestContrast.RGB] = [.red: srgb(light.lampDanger), .yellow: srgb(light.lampWarning)]
+        guard let shot = capture(hv) else {
+            record("M22", "浅色折叠问题卡无彩色底，左侧色条表示等级", false, since: t0, "no screenshot")
+            await closeFixture()
+            return
+        }
+        var rows = [HealthItem]()
+        var cardItem: HealthItem?
+        for section in model.layoutPlan.sections {
+            if case .problemRow(let item, _) = section { rows.append(item) }
+            if case .problemCard(let item, _, _) = section { cardItem = item }
+        }
+        if rows.count != 3 { problems.append("expected 3 collapsed rows, found \(rows.count)") }
+        for item in rows {
+            guard let rect = panelRect("row." + item.rawValue), let verdict = model.data.verdict(item),
+                  let expectedBar = barColors[verdict.level] else {
+                problems.append("\(item.rawValue): no row frame or level")
+                continue
+            }
+            let fillRegion = CGRect(x: rect.minX + 5, y: rect.minY + 6, width: 4, height: rect.height - 12)
+            let barRegion = CGRect(x: rect.minX + 0.5, y: rect.minY + 8, width: 2, height: rect.height - 16)
+            guard let fill = meanColor(shot, region: fillRegion, surface: surface), let bar = meanColor(shot, region: barRegion, surface: surface) else {
+                problems.append("\(item.rawValue): no pixels")
+                continue
+            }
+            let fillShift = Swift.max(abs(fill.r - surface.r), abs(fill.g - surface.g), abs(fill.b - surface.b))
+            let fillChroma = Swift.max(fill.r, fill.g, fill.b) - Swift.min(fill.r, fill.g, fill.b)
+            let barShift = Swift.max(abs(bar.r - expectedBar.r), abs(bar.g - expectedBar.g), abs(bar.b - expectedBar.b))
+            let otherLevel: HealthLevel = verdict.level == .red ? .yellow : .red
+            var otherShift = 255.0
+            if let other = barColors[otherLevel] {
+                otherShift = Swift.max(abs(bar.r - other.r), abs(bar.g - other.g), abs(bar.b - other.b))
+            }
+            let key = item.rawValue + " " + verdict.level.rawValue
+            let shiftText = String(format: "%.1f", fillShift), chromaText = String(format: "%.1f", fillChroma)
+            let barText = String(format: "%.1f", barShift), otherText = String(format: "%.1f", otherShift)
+            notes.append(key + ": fill shift " + shiftText + ", chroma " + chromaText + "; bar shift to its level color " + barText + ", to the other level " + otherText)
+            values[key + ".fillShift"] = (fillShift * 10).rounded() / 10
+            values[key + ".fillChroma"] = (fillChroma * 10).rounded() / 10
+            values[key + ".barShift"] = (barShift * 10).rounded() / 10
+            if fillShift > 20 { problems.append(key + ": the fill differs from the panel color by " + shiftText + ", limit 20") }
+            if fillChroma > 4 { problems.append(key + ": the fill has a hue (chroma " + chromaText + ", limit 4)") }
+            if barShift > 30 { problems.append(key + ": the left bar is " + barText + " away from the level color, limit 30") }
+            if barShift >= otherShift { problems.append(key + ": the left bar is not closer to its own level color") }
+        }
+        if let item = cardItem, let rect = panelRect("card." + item.rawValue) {
+            let region = CGRect(x: rect.minX + 3, y: rect.minY + 30, width: 6, height: Swift.max(4, rect.height - 60))
+            if let fill = meanColor(shot, region: region, surface: surface) {
+                let chroma = Swift.max(fill.r, fill.g, fill.b) - Swift.min(fill.r, fill.g, fill.b)
+                notes.append("first card " + item.rawValue + ": chroma " + String(format: "%.1f", chroma) + " (needs at least 6)")
+                values["card.chroma"] = (chroma * 10).rounded() / 10
+                if chroma < 6 { problems.append("the first card has no tint (chroma " + String(format: "%.1f", chroma) + ", needs 6)") }
+            } else {
+                problems.append("no pixels in the first card")
+            }
+        } else {
+            problems.append("no first card frame")
+        }
+        resetAppearance()
+        await sleepMs(200)
+        await closeFixture()
+        var note = notes.joined(separator: "; ")
+        if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
+        record("M22", "浅色折叠问题卡无彩色底，左侧色条表示等级", problems.isEmpty && notes.count == 4, since: t0, note, values)
     }
 
     /// M20: the bitmap dog inside the real panel. No callback of the dog view while the data does not change, and the pose follows

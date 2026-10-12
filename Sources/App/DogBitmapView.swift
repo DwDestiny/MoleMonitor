@@ -2,7 +2,7 @@
 // Copyright (c) 2026 DwDestiny
 // Input: A DogInput and a size (docs/DESIGN.md 4.9). The eight bitmaps of Resources/DogArt, copied to Contents/Resources/DogArt by scripts/build.py.
 // Output: The bitmap Bichon of the status card: one still picture per pose, a 0.22 s crossfade when the pose changes,
-//         and the vector attention bubble on the alert picture.
+//         the vector attention bubble on the alert picture, and a ground shadow placed from the alpha of each picture.
 // Pos: Replaces the vector dog in the card (DogView routes here while `DogView.useBitmapArt` is true and all eight files load).
 //      No TimelineView, no Canvas, no timer, no frame callback: the view draws only when its input changes, so a card that
 //      stays open with the same data costs nothing. The vector dog (DogView, DogShapes) stays as the fallback.
@@ -10,6 +10,53 @@
 import AppKit
 import ImageIO
 import SwiftUI
+
+// MARK: - Ink box
+
+/// The box of the visible pixels of a picture, as shares of the picture (0 to 1, y downwards).
+/// `maxY` is the lower edge of the last row that has ink, so it is the line where the paws touch the ground.
+struct DogInkBox: Equatable {
+    var minX: Double
+    var minY: Double
+    var maxX: Double
+    var maxY: Double
+
+    var width: Double { maxX - minX }
+    var centerX: Double { (minX + maxX) / 2 }
+
+    /// Scans the alpha channel once. Nil for an empty picture or a picture without a pixel at `minAlpha`.
+    static func measure(_ image: CGImage, minAlpha: Int) -> DogInkBox? {
+        let w = image.width, h = image.height
+        guard w > 0, h > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let flat = ctx.makeImage(), let data = flat.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else { return nil }
+        let row = flat.bytesPerRow
+        var x0 = w, x1 = -1, y0 = h, y1 = -1
+        for y in 0..<h {
+            for x in 0..<w {
+                guard Int(bytes[y * row + x * 4 + 3]) >= minAlpha else { continue }
+                if x < x0 { x0 = x }
+                if x > x1 { x1 = x }
+                if y < y0 { y0 = y }
+                if y > y1 { y1 = y }
+            }
+        }
+        guard x1 >= x0, y1 >= y0 else { return nil }
+        return DogInkBox(minX: Double(x0) / Double(w), minY: Double(y0) / Double(h),
+                         maxX: Double(x1 + 1) / Double(w), maxY: Double(y1 + 1) / Double(h))
+    }
+}
+
+/// The ground shadow of one pose in points of the dog box: ellipse center, size and the opacity factor on the `shadow` token.
+struct DogShadowSpec: Equatable {
+    var centerX: Double
+    var centerY: Double
+    var width: Double
+    var height: Double
+    var opacity: Double
+}
 
 // MARK: - Library
 
@@ -37,8 +84,14 @@ final class DogArtLibrary {
         var height: Int
     }
 
+    private struct InkKey: Hashable {
+        var pose: DogArtPose
+        var minAlpha: Int
+    }
+
     private let lock = NSLock()
     private var originals = [DogArtPose: CGImage]()
+    private var inkBoxes = [InkKey: DogInkBox]()
     private var scaled = [ScaledKey: CGImage]()
     private var bubbles = [BubbleKey: CGImage]()
     private(set) var missing = [DogArtPose]()
@@ -61,6 +114,18 @@ final class DogArtLibrary {
 
     /// The decoded file, 320 x 240 px.
     func original(_ pose: DogArtPose) -> CGImage? { originals[pose] }
+
+    /// Where the dog is inside its 320 x 240 picture: the box of the pixels with alpha of at least `minAlpha` (cached per pose).
+    /// The ground shadow takes its place, width and height from it (docs/DESIGN.md 4.9.3).
+    func inkBox(_ pose: DogArtPose, minAlpha: Int = 128) -> DogInkBox? {
+        let key = InkKey(pose: pose, minAlpha: minAlpha)
+        lock.lock()
+        defer { lock.unlock() }
+        if let hit = inkBoxes[key] { return hit }
+        guard let source = originals[pose], let box = DogInkBox.measure(source, minAlpha: minAlpha) else { return nil }
+        inkBoxes[key] = box
+        return box
+    }
 
     /// The picture of a pose at an exact pixel size (high quality resample, cached).
     func image(_ pose: DogArtPose, width: Int, height: Int) -> CGImage? {
@@ -148,6 +213,14 @@ struct DogBitmapView: View {
     /// A soft ground shadow under the picture (the existing `shadow` token). On since the first CI sheets (docs/DESIGN.md 4.9):
     /// the white dog on the light card looked to float without it. In dark mode the token is black 35 %, which is nearly invisible.
     static var groundShadow = true
+    /// The alert picture sits this share of the box width to the left. The sitting dog ends at 73 % of the box width and the tail dot of
+    /// the bubble starts at 74 %, so without the shift the dot would touch the head (docs/DESIGN.md 4.9.2).
+    static let alertShift = 0.05
+
+    /// Horizontal shift of a pose in points of the box (negative is left). Picture and shadow use it, and so do the gates.
+    static func shift(_ pose: DogArtPose, box: CGSize) -> Double {
+        pose == .alert ? -alertShift * Double(box.width) : 0
+    }
 
     init(input: DogInput, size: CGSize) {
         self.input = input
@@ -177,12 +250,13 @@ struct DogBitmapView: View {
         let fade: Animation? = (reduceMotion || snapshot) ? nil : Animation.easeInOut(duration: DogBitmapView.fadeSeconds)
         ZStack {
             if DogBitmapView.groundShadow, let shade = DogBitmapView.shadowColor(dark: dark) {
-                DogBitmapView.shadowShape(box: box).fill(shade)
+                let spec = DogBitmapView.shadowSpec(pose: target, box: box, ink: DogArtLibrary.shared.inkBox(target))
+                Ellipse().fill(shade)
+                    .opacity(spec.opacity)
+                    .frame(width: CGFloat(spec.width), height: CGFloat(spec.height))
+                    .position(x: CGFloat(spec.centerX), y: CGFloat(spec.centerY))
                     .frame(width: box.width, height: box.height)
-                    // The dog shrinks while the bubble shows (DESIGN.md 4.4). The shadow shrinks about the same point.
-                    .scaleEffect(target == .alert ? CGFloat(DogArt.bubbleShrink) : CGFloat(1),
-                                 anchor: UnitPoint(x: CGFloat(DogArt.bubbleShrinkAnchor.x / DogArt.designSize.w),
-                                                   y: CGFloat(DogArt.bubbleShrinkAnchor.y / DogArt.designSize.h)))
+                    .animation(fade, value: target)
             }
             poseImage(slotA, box: box)
             poseImage(slotB, box: box)
@@ -206,10 +280,7 @@ struct DogBitmapView: View {
                     .resizable()
                     .interpolation(.high)
                     .frame(width: box.width, height: box.height)
-                    // While the bubble shows, the dog shrinks about a ground point at the tail side (DESIGN.md 4.4).
-                    .scaleEffect(pose == .alert ? CGFloat(DogArt.bubbleShrink) : CGFloat(1),
-                                 anchor: UnitPoint(x: CGFloat(DogArt.bubbleShrinkAnchor.x / DogArt.designSize.w),
-                                                   y: CGFloat(DogArt.bubbleShrinkAnchor.y / DogArt.designSize.h)))
+                    .offset(x: CGFloat(DogBitmapView.shift(pose, box: box)))
             } else {
                 Color.clear.frame(width: box.width, height: box.height)
             }
@@ -257,11 +328,20 @@ struct DogBitmapView: View {
         Color(cgColor: DogPalette(dark: dark).color(.shadow))
     }
 
-    /// The ellipse of DESIGN.md 4.2 (center (54, 83), rx 34, ry 3.5 in a 120 x 90 box), scaled to `box`.
-    static func shadowShape(box: CGSize) -> some Shape {
-        let kx = box.width / CGFloat(DogArt.designSize.w), ky = box.height / CGFloat(DogArt.designSize.h)
-        return Ellipse()
-            .path(in: CGRect(x: (54 - 34) * kx, y: (83 - 3.5) * ky, width: 68 * kx, height: 7 * ky))
+    /// The shadow ellipse of a pose (docs/DESIGN.md 4.9.3), in points of `box`. The center is the horizontal center of the dog and the
+    /// lower edge of its ink, so the shadow sits where the paws are. The width is 0.75 of the dog width. The sprint pose has the paws
+    /// in the air, so its shadow is narrower (0.55) and lighter (0.55). Without an ink box the old fixed ellipse of DESIGN.md 4.2 is used.
+    static func shadowSpec(pose: DogArtPose, box: CGSize, ink: DogInkBox?) -> DogShadowSpec {
+        let w = Double(box.width), h = Double(box.height)
+        let height = 9.0 / Double(DogArt.designSize.h) * h
+        guard let ink else {
+            return DogShadowSpec(centerX: 54.0 / Double(DogArt.designSize.w) * w, centerY: 83.0 / Double(DogArt.designSize.h) * h,
+                                 width: 68.0 / Double(DogArt.designSize.w) * w, height: 7.0 / Double(DogArt.designSize.h) * h, opacity: 1)
+        }
+        let airborne = (pose == .sprint)
+        let widthShare = airborne ? 0.55 : 0.75
+        return DogShadowSpec(centerX: ink.centerX * w + shift(pose, box: box), centerY: ink.maxY * h, width: ink.width * w * widthShare,
+                             height: airborne ? height * 0.8 : height, opacity: airborne ? 0.55 : 1)
     }
 }
 

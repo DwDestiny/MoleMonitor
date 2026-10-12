@@ -2,7 +2,7 @@
 // Copyright (c) 2026 DwDestiny
 // Input: PanelData and the mode (quiet or problem) from the layout plan.
 // Output: The hero block: the dog, the headline, the subtitle and the lamps.
-// Pos: First block of the status card (docs/DESIGN.md 2.2). Quiet mode: dog 104 x 78 and three lamp rows. Problem mode: dog 72 x 54, headline, lamp row.
+// Pos: First block of the status card (docs/DESIGN.md 2.2). Quiet mode: dog 104 x 78 and three lamp rows. Problem mode: dog 72 x 54 (no shrink, bubble outside the body), headline, lamp row.
 //      DogView is I2's view. `DogView.useBitmapArt` (default true) routes it to DogBitmapView, the bitmap Bichon (docs/DESIGN.md 4.9);
 //      false, or a missing bitmap file, keeps the vector dog. The gray collecting and stale looks come from `DogInput.isStatic` in both.
 
@@ -187,8 +187,11 @@ private struct ProblemHero: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
+                // 72 x 54 pt box, 6 pt below the hero top. The sitting dog fills the middle of its picture and the bubble takes the
+                // top right corner, so the box is pulled 12 pt to the left: only transparent pixels leave the content area.
                 HeroDog(data: data, size: CGSize(width: 72, height: 54))
-                    .padding(.top, 2)
+                    .padding(.top, 6)
+                    .padding(.leading, -12)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(HeroText.problemTitle(data))
                         .font(PanelFont.title)
@@ -208,14 +211,14 @@ private struct ProblemHero: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(height: 58, alignment: .top)
+            .frame(height: 60, alignment: .top)
             // The lamps run under the dog over the full width, so five lamps never wrap.
             FlowLayout(spacing: 12, lineSpacing: 4) {
                 ForEach(data.lamps, id: \.item) { v in
                     ProblemLamp(verdict: v)
                 }
             }
-            .padding(.top, 10)
+            .padding(.top, 8)
             .padding(.leading, 4)
         }
         .frame(height: PanelMetrics.heroProblem, alignment: .top)
