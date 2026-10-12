@@ -126,11 +126,14 @@ enum UITestWindowChecks {
         return (count > 0 ? sum / Double(count) : 0, Double(count) / total)
     }
 
-    private static func meanAlpha(_ shot: UITestShot) -> Double {
-        var sum = 0.0
-        var index = 3
-        while index < shot.rgba.count { sum += Double(shot.rgba[index]); index += 4 }
-        return sum / Double(Swift.max(1, shot.w * shot.h)) / 255
+    /// Alpha and on-screen state of a window as the window server reports them.
+    @MainActor
+    private static func serverAlpha(_ w: NSWindow) -> (alpha: Double, onscreen: Bool)? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(w.windowNumber)) as? [[String: Any]],
+              let info = list.first else { return nil }
+        let alpha: Double = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+        let onscreen: Bool = (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false
+        return (alpha, onscreen)
     }
 
     private static func fmt(_ v: Double?, _ digits: Int = 0) -> String {
@@ -159,28 +162,33 @@ enum UITestWindowChecks {
         let surface = window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? UITestContrast.darkSurface : UITestContrast.lightSurface
         var captureWorked = false
+        var serverAlphaAtFirst = 0.0
         while (r.now() - opened.before) * 1000 < 500 {
             let started = r.now()
             let elapsed = (started - opened.before) * 1000
+            // The first visible frame: the window server shows the window with an alpha above 0.02. The image of the window
+            // at that moment must be the finished content, not black and not white.
+            if firstVisibleMs == nil, let server = serverAlpha(window), server.onscreen, server.alpha > 0.02 {
+                firstVisibleMs = elapsed
+                serverAlphaAtFirst = server.alpha
+                if !r.windowCaptureUnavailable, let frame = r.windowFrame(host) {
+                    captureWorked = true
+                    let l = luma(frame)
+                    firstLuma = l.mean
+                    firstOpaqueShare = l.opaqueShare
+                }
+            }
+            let detected = (r.now() - opened.before) * 1000
             if dogReadyMs == nil, let dog = r.panelRect("dog"), dog.width > 1, let shot = r.capture(host) {
-                dogReadyMs = elapsed
+                dogReadyMs = detected
                 if let stats = UITestDogStats.measure(shot, region: dog, surface: surface), stats.area > 0 {
                     dogShare = Double(stats.ink) / Double(stats.area)
                 }
                 contentFirstLuma = luma(shot).mean
             }
-            if firstLuma == nil, !r.windowCaptureUnavailable, let frame = r.windowFrame(host) {
-                captureWorked = true
-                if firstVisibleMs == nil, meanAlpha(frame) > 0.02 { firstVisibleMs = elapsed }
-                let l = luma(frame)
-                if l.opaqueShare >= 0.3 {
-                    firstLuma = l.mean
-                    firstOpaqueShare = l.opaqueShare
-                }
-            }
             if firstLuma != nil && dogReadyMs != nil { break }
-            if r.windowCaptureUnavailable && dogReadyMs != nil { break }
-            await r.sleepMs(6)
+            if r.windowCaptureUnavailable && firstVisibleMs != nil && dogReadyMs != nil { break }
+            await r.sleepMs(3)
         }
         // Steady state one second after the click.
         await r.sleepUntil(opened.before + 1.0)
@@ -195,7 +203,7 @@ enum UITestWindowChecks {
         let dogOk = (dogShare ?? 0) >= 0.01 && (dogReadyMs ?? .infinity) <= 150
         let ok = speedOk && flashOk && dogOk
         r.record("W03", "open speed and no white flash", ok, since: t0,
-                 "click to first visible frame \(fmt(firstVisibleMs)) ms (limit 150; \(captureWorked ? "window server frame" : "window capture unavailable, call duration used")); call \(fmt(opened.callMs)) ms; first window brightness \(fmt(firstLuma, 1)) (opaque share \(fmt(firstOpaqueShare * 100)) %), steady \(fmt(steadyWindow, 1)), difference \(fmt(windowDiff, 1)) (limit 10); content brightness first \(fmt(contentFirstLuma, 1)), steady \(fmt(steadyContent, 1)), difference \(fmt(contentDiff, 1)); dog region ready \(fmt(dogReadyMs)) ms, non-background share \(fmt((dogShare ?? 0) * 100, 1)) % (limit 1 %)",
+                 "click to first visible frame \(fmt(firstVisibleMs)) ms at window alpha \(fmt(serverAlphaAtFirst, 2)) (limit 150; \(captureWorked ? "window server frame" : "window capture unavailable, call duration used")); call \(fmt(opened.callMs)) ms; first window brightness \(fmt(firstLuma, 1)) (opaque share \(fmt(firstOpaqueShare * 100)) %), steady \(fmt(steadyWindow, 1)), difference \(fmt(windowDiff, 1)) (limit 10); content brightness first \(fmt(contentFirstLuma, 1)), steady \(fmt(steadyContent, 1)), difference \(fmt(contentDiff, 1)); dog region ready \(fmt(dogReadyMs)) ms, non-background share \(fmt((dogShare ?? 0) * 100, 1)) % (limit 1 %)",
                  ["firstVisibleMs": firstVisibleMs ?? -1, "callMs": opened.callMs, "windowLumaDiff": windowDiff ?? -1,
                   "contentLumaDiff": contentDiff ?? -1, "dogSharePercent": (dogShare ?? 0) * 100, "dogReadyMs": dogReadyMs ?? -1])
         await r.closePanelQuietly()

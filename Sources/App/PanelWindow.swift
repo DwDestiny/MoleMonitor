@@ -133,6 +133,7 @@ final class PanelWindow: NSPanel, PanelChrome {
     private var localMonitor: Any?
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private var closeFallback: Task<Void, Never>?
+    private var motionTask: Task<Void, Never>?
 
     // Hover.
     private var intent = HoverIntent()
@@ -273,17 +274,15 @@ final class PanelWindow: NSPanel, PanelChrome {
         hoverTask = nil
         scheduledDeadline = nil
         if !isVisible || isReduceMotion {
+            motionTask?.cancel()
             finishClose()
             return
         }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = WindowMotion.closeDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            self.animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
-            MainActor.assumeIsolated { self?.finishClose() }
-        })
-        // The animation can end without a completion call (for example when the window is off screen).
+        // motion.close: the window fades out in 120 ms.
+        runMotion(duration: WindowMotion.closeDuration, curve: WindowMotion.closeCurve, to: frame, alpha: 0) { [weak self] in
+            self?.finishClose()
+        }
+        // The motion can end without a completion call (for example when the window is off screen).
         closeFallback = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 400_000_000)
             self?.finishClose()
@@ -331,19 +330,18 @@ final class PanelWindow: NSPanel, PanelChrome {
         orderFrontRegardless()
         makeKey()
         makeFirstResponder(nil)
+        // Draw the content while the window is still invisible, so the first visible frame is never blank or black.
+        displayIfNeeded()
+        CATransaction.flush()
         installMonitors()
         installObservers()
+        if reduce {
+            alphaValue = 1
+            return
+        }
         Task { @MainActor [weak self] in
             guard let self, !self.isClosing, !self.isFinished else { return }
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = WindowMotion.openDuration
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                context.allowsImplicitAnimation = true
-                self.animator().alphaValue = 1
-                if !reduce { self.animator().setFrame(final, display: true) }
-            }, completionHandler: { [weak self] in
-                MainActor.assumeIsolated { self?.invalidateShadow() }
-            })
+            self.runMotion(duration: WindowMotion.openDuration, curve: WindowMotion.openCurve, to: final, alpha: 1, done: nil)
         }
     }
 
@@ -381,20 +379,48 @@ final class PanelWindow: NSPanel, PanelChrome {
     }
 
     private func moveWindow(to target: PanelRect, duration: Double, curve: [Double]) {
-        let rect = target.ns
+        runMotion(duration: duration, curve: curve, to: target.ns, alpha: alphaValue, done: nil)
+    }
+
+    /// Moves the window frame and the alpha to the targets in `duration` seconds, in steps of about 6 ms on the main actor.
+    /// The frame animation of AppKit (`animator().setFrame`) did not play in the CI run, so the window steps by itself. The task
+    /// exists only while the motion runs (at most 220 ms), it is cancelled by a new motion and by the close. The views have a
+    /// fixed size, so a step only moves the window edges and the autoresizing masks place the views.
+    private func runMotion(duration: Double, curve: [Double], to target: NSRect, alpha targetAlpha: CGFloat, done: (() -> Void)?) {
+        motionTask?.cancel()
+        motionTask = nil
+        let from = frame
+        let fromAlpha = alphaValue
         if duration <= 0 {
-            setFrame(rect, display: true)
+            setFrame(target, display: true)
+            alphaValue = targetAlpha
             invalidateShadow()
+            done?()
             return
         }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(controlPoints: Float(curve[0]), Float(curve[1]), Float(curve[2]), Float(curve[3]))
-            context.allowsImplicitAnimation = true
-            self.animator().setFrame(rect, display: true)
-        }, completionHandler: { [weak self] in
-            MainActor.assumeIsolated { self?.invalidateShadow() }
-        })
+        let start = PanelWindow.clock()
+        motionTask = Task { @MainActor [weak self] in
+            var step = 0
+            while true {
+                guard let self, !Task.isCancelled, !self.isFinished else { return }
+                let t = (PanelWindow.clock() - start) / duration
+                if t >= 1 { break }
+                let p = CGFloat(WindowMotion.ease(t, curve: curve))
+                let rect = NSRect(x: from.minX + (target.minX - from.minX) * p, y: from.minY + (target.minY - from.minY) * p,
+                                  width: from.width + (target.width - from.width) * p, height: from.height + (target.height - from.height) * p)
+                if rect != self.frame { self.setFrame(rect, display: true) }
+                self.alphaValue = fromAlpha + (targetAlpha - fromAlpha) * p
+                step += 1
+                if step % 4 == 0 { self.invalidateShadow() }
+                try? await Task.sleep(nanoseconds: 6_000_000)
+            }
+            guard let self, !Task.isCancelled, !self.isFinished else { return }
+            if target != self.frame { self.setFrame(target, display: true) }
+            self.alphaValue = targetAlpha
+            self.invalidateShadow()
+            self.motionTask = nil
+            done?()
+        }
     }
 
     // MARK: Events
@@ -516,6 +542,8 @@ final class PanelWindow: NSPanel, PanelChrome {
         isFinished = true
         closeFallback?.cancel()
         closeFallback = nil
+        motionTask?.cancel()
+        motionTask = nil
         removeMonitors()
         removeObservers()
         hoverTask?.cancel()

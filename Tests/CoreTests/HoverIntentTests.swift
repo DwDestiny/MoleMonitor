@@ -581,6 +581,20 @@ private func runPanelWindowGeometryTests() {
     expect(WindowMotion.openDuration == 0.160 && WindowMotion.closeDuration == 0.120, "motion.open 160 ms, motion.close 120 ms")
     expect(WindowMotion.sideContentDelay == 0.060 && WindowMotion.sideContentFade == 0.120, "sidebar content fades in after 60 ms for 120 ms")
     expect(WindowMotion.sideOpenDuration <= 0.250, "the sidebar opens within the 250 ms of W05")
+    // Easing for the stepped window frame.
+    expect(WindowMotion.ease(0, curve: WindowMotion.sideOpenCurve) == 0 && WindowMotion.ease(1, curve: WindowMotion.sideOpenCurve) == 1, "ease: 0 gives 0 and 1 gives 1")
+    var monotonic = true
+    var last = -1.0
+    for step in 0...100 {
+        let v = WindowMotion.ease(Double(step) / 100, curve: WindowMotion.sideOpenCurve)
+        if v < last - 1e-9 { monotonic = false }
+        last = v
+    }
+    expect(monotonic, "ease: the sidebar open curve never goes back")
+    expect(WindowMotion.ease(0.25, curve: WindowMotion.sideOpenCurve) > 0.6, "ease: cubic(0.2,0.8,0.2,1) is fast at the start (value at 25 % above 0.6)")
+    expect(WindowMotion.ease(0.25, curve: WindowMotion.sideCloseCurve) < 0.15, "ease: cubic(0.4,0,1,1) is slow at the start (value at 25 % below 0.15)")
+    expect(abs(WindowMotion.ease(0.5, curve: [0.25, 0.25, 0.75, 0.75]) - 0.5) < 1e-5, "ease: the linear curve gives the identity")
+    expect(WindowMotion.ease(0.3, curve: []) == 0.3, "ease: a bad curve falls back to linear")
 
     // Click policy (10.7).
     expect(PanelClickPolicy.local(isPanelWindow: true, isChildOfPanel: false, isMenuWindow: false, isStatusItemWindow: false) == .keepOpen,

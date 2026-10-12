@@ -148,6 +148,33 @@ enum WindowMotion {
     static let sideOpenCurve: [Double] = [0.2, 0.8, 0.2, 1.0]
     static let sideCloseCurve: [Double] = [0.4, 0.0, 1.0, 1.0]
 
+    /// Curves of motion.open and motion.close of the window (ease out, ease in).
+    static let openCurve: [Double] = [0.0, 0.0, 0.58, 1.0]
+    static let closeCurve: [Double] = [0.42, 0.0, 1.0, 1.0]
+
+    /// Value of a CSS style cubic Bezier curve (0,0 to 1,1 with the control points x1, y1, x2, y2) at time `x` in 0...1.
+    /// The window steps its frame with it, because the frame animation of AppKit does not play in every case (see PanelWindow).
+    static func ease(_ x: Double, curve: [Double]) -> Double {
+        guard curve.count == 4 else { return x }
+        if x <= 0 { return 0 }
+        if x >= 1 { return 1 }
+        let x1 = curve[0], y1 = curve[1], x2 = curve[2], y2 = curve[3]
+        func bez(_ t: Double, _ a: Double, _ b: Double) -> Double {
+            let u = 1 - t
+            return 3 * u * u * t * a + 3 * u * t * t * b + t * t * t
+        }
+        // Bisection is slow but safe for any control points with x1, x2 in 0...1 (x(t) is monotonic).
+        var lo = 0.0, hi = 1.0
+        var t = x
+        for _ in 0..<40 {
+            let value = bez(t, x1, x2)
+            if abs(value - x) < 1e-7 { break }
+            if value < x { lo = t } else { hi = t }
+            t = (lo + hi) / 2
+        }
+        return bez(t, y1, y2)
+    }
+
     /// Duration of the window resize. Reduce Motion gives 0 (no animation).
     static func sideDuration(open: Bool, reduceMotion: Bool) -> Double {
         if reduceMotion { return 0 }
