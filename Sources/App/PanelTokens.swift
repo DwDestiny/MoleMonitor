@@ -47,8 +47,11 @@ struct PanelTokens {
     var chartNeutralFill: Color { pick(Color(.sRGB, white: 0, opacity: 0.08), Color(.sRGB, white: 1, opacity: 0.08)) }
 
     // Backgrounds
-    var tintDanger: Color { pick(Self.rgb(0xE5302A, 0.08), Self.rgb(0xFF453A, 0.10)) }
-    var tintWarning: Color { pick(Self.rgb(0xC26400, 0.08), Self.rgb(0xFF9F0A, 0.10)) }
+    // The light tint is 6 % (it was 8 %): only the first problem card has it (DESIGN.md 2.6). Dark stays at 10 %.
+    var tintDanger: Color { pick(Self.rgb(0xE5302A, 0.06), Self.rgb(0xFF453A, 0.10)) }
+    var tintWarning: Color { pick(Self.rgb(0xC26400, 0.06), Self.rgb(0xFF9F0A, 0.10)) }
+    /// Neutral gray of a collapsed problem row (black 5 % in light, white 5 % in dark). It has no hue; the level shows in `rowBar`.
+    var rowFill: Color { pick(Color(.sRGB, white: 0, opacity: 0.05), Color(.sRGB, white: 1, opacity: 0.05)) }
     var fillHover: Color { pick(Color(.sRGB, white: 0, opacity: 0.06), Color(.sRGB, white: 1, opacity: 0.08)) }
     var plotBackground: Color { pick(Color(.sRGB, white: 0, opacity: 0.04), Color(.sRGB, white: 1, opacity: 0.05)) }
     var separator: Color { pick(Color(.sRGB, white: 0, opacity: 0.10), Color(.sRGB, white: 1, opacity: 0.12)) }
@@ -89,6 +92,18 @@ struct PanelTokens {
         case .red: return tintDanger
         default: return Color.clear
         }
+    }
+
+    /// Background of a collapsed problem row: gray for a yellow or red row, no color, in both schemes.
+    func rowBackground(_ level: HealthLevel) -> Color {
+        guard level == .yellow || level == .red else { return Color.clear }
+        return rowFill
+    }
+
+    /// The 3 pt bar at the left edge of a collapsed problem row, in the lamp color of the level (both schemes). Nil when the row has no level.
+    func rowBar(_ level: HealthLevel) -> Color? {
+        guard level == .yellow || level == .red else { return nil }
+        return lamp(level)
     }
 
     /// Surface color assumed by the contrast tests and used behind static renders (DESIGN.md 2.6).
@@ -172,7 +187,7 @@ struct PanelSlot {
 }
 
 enum PanelSlots {
-    static let heroTextWidth = PanelSize.contentWidth - 72 - 12     // beside the problem-mode dog
+    static let heroTextWidth = PanelSize.contentWidth - 60 - 12     // beside the problem-mode dog (72 pt box, 12 pt pulled left)
     static let quietTextWidth = PanelSize.contentWidth - 104 - 12    // beside the quiet-mode dog
     static let cardInnerWidth = PanelSize.contentWidth - 2 * PanelSize.cardPadding
 

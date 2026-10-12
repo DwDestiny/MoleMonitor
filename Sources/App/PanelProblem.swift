@@ -392,7 +392,7 @@ struct ProblemRow: View {
                 .frame(width: PanelSize.contentWidth, height: height, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(PanelRowButtonStyle(level: verdict.level))
+            .buttonStyle(ProblemRowButtonStyle(level: verdict.level))
             .accessibilityIdentifier("row." + item.rawValue)
             .accessibilityLabel(Text(PanelFormat.titled(item, verdict.level) + "，" + verdict.headline + "，展开"))
 
@@ -409,6 +409,49 @@ struct ProblemRow: View {
         }
         .frame(width: PanelSize.contentWidth, height: height)
         .uiTestFrame("row." + item.rawValue)
+    }
+}
+
+/// The button style of a collapsed problem row. Both schemes: a gray fill and a 3 pt bar in the level color at the left edge (no tinted
+/// fill, so only the first card has color, DESIGN.md 2.6). The shared row style in PanelFooter.swift is only used with level green.
+struct ProblemRowButtonStyle: ButtonStyle {
+    var level: HealthLevel
+
+    func makeBody(configuration: Configuration) -> some View {
+        ProblemRowButtonBody(configuration: configuration, level: level)
+    }
+}
+
+private struct ProblemRowButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let level: HealthLevel
+    @Environment(\.tok) private var tok
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    /// The fill and the bar, cut together by the rounded corners.
+    private func rowBackground(_ shape: RoundedRectangle) -> some View {
+        ZStack(alignment: .leading) {
+            shape.fill(tok.rowBackground(level))
+            if let bar = tok.rowBar(level) {
+                Rectangle().fill(bar).frame(width: 3)
+            }
+        }
+        .clipShape(shape)
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        configuration.label
+            .background(rowBackground(shape))
+            .overlay(shape.fill(hovering || configuration.isPressed ? tok.fillHover : Color.clear))
+            .overlay(shape.strokeBorder(tok.accent, lineWidth: 1.5).opacity(isFocused ? 1 : 0))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.99 : 1)
+            .contentShape(shape)
+            .onHover { hovering = $0 }
+            .animation(PanelMotion.hover, value: hovering)
+            .animation(reduceMotion ? nil : PanelMotion.quick, value: configuration.isPressed)
     }
 }
 

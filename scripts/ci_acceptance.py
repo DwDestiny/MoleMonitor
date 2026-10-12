@@ -311,7 +311,7 @@ else:
     check(ui_report is not None, "UI test wrote ui-report.json")
     if ui_report:
         by_id = {item["id"]: item for item in ui_report["items"]}
-        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M19V", "M20"]:
+        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M19V", "M20", "M21", "M22"]:
             check(letter in by_id, f"UI item {letter} reported")
         for item in ui_report["items"]:
             label = f"UI {item['id']} {item['name']}"
@@ -359,7 +359,8 @@ print("ACCEPTANCE PASSED")
 # DE Reduce Motion gives no frames and no timer. DF: the release binary has none of the dog test code.
 # Bitmap stage (docs/DESIGN.md 4.9): DA to DE run with DogView.useBitmapArt = false and judge the vector dog. BA to BE judge the
 # bitmap dog (UITestBitmapChecks.swift): BA no callbacks open or closed, BB Reduce Motion has no crossfade, BC the eight files load,
-# BD pairwise XOR of the poses at 72 x 54 pt (gate 0.20), BE the share of non-background pixels (gray 1.5 %, others 1 %).
+# BD pairwise XOR of the poses at 72 x 54 pt (gate 0.20), BE the share of non-background pixels (gray 1.5 %, others 1 %),
+# BF the ground shadow center is within 2 px of the lower edge of each pose.
 def _dog_animation_checks():
     dog_failures = []
 
@@ -397,7 +398,7 @@ def _dog_animation_checks():
     dog_check(dog_report is not None, "dog checks wrote dog-report.json")
     if dog_report:
         by_id = {item["id"]: item for item in dog_report.get("items", [])}
-        for item_id in ("DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE"):
+        for item_id in ("DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE", "BF"):
             item = by_id.get(item_id)
             if item is None:
                 dog_check(False, f"dog {item_id} reported")
