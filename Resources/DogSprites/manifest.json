@@ -1,0 +1,232 @@
+{
+ "schema": 1,
+ "frameWidth": 320,
+ "frameHeight": 240,
+ "pointScale": 2,
+ "footLineY": 230,
+ "facing": "left",
+ "reference": "Resources/DogArt/dog_stand.png",
+ "referenceFacing": "right",
+ "actions": [
+  {
+   "name": "lie_idle",
+   "file": "lie_idle.png",
+   "frames": 6,
+   "fps": 4,
+   "playback": "loop",
+   "restFrame": 0,
+   "representativeFrame": 0,
+   "contactFrames": [],
+   "groundedFrames": [0, 1, 2, 3, 4, 5],
+   "standingFrames": [],
+   "stance": "lie",
+   "generated": true,
+   "faceBoxes": [
+    [81, 160, 49, 36],
+    [83, 162, 49, 34],
+    [82, 158, 49, 36],
+    [81, 161, 49, 35],
+    [83, 162, 50, 35],
+    [82, 161, 50, 36]
+   ]
+  },
+  {
+   "name": "walk",
+   "file": "walk.png",
+   "frames": 8,
+   "fps": 8,
+   "playback": "loop",
+   "restFrame": 0,
+   "representativeFrame": 6,
+   "contactFrames": [0, 4],
+   "groundedFrames": [0, 1, 2, 3, 4, 5, 6, 7],
+   "standingFrames": [0, 1, 2, 3, 4, 5, 6, 7],
+   "stance": "stand",
+   "generated": true,
+   "faceBoxes": [
+    [94, 70, 50, 33],
+    [95, 70, 50, 34],
+    [95, 70, 49, 33],
+    [95, 69, 51, 33],
+    [95, 70, 48, 33],
+    [98, 70, 49, 33],
+    [98, 71, 50, 33],
+    [96, 71, 50, 33]
+   ]
+  },
+  {
+   "name": "trot",
+   "file": "trot.png",
+   "frames": 8,
+   "fps": 12.8,
+   "playback": "loop",
+   "restFrame": 0,
+   "representativeFrame": 2,
+   "contactFrames": [0, 4],
+   "groundedFrames": [0, 1, 2, 3, 4, 5, 6, 7],
+   "standingFrames": [0, 1, 2, 3, 4, 5, 6, 7],
+   "stance": "stand",
+   "generated": true,
+   "faceBoxes": [
+    [87, 65, 51, 33],
+    [86, 65, 51, 33],
+    [87, 65, 51, 34],
+    [88, 64, 50, 33],
+    [87, 64, 51, 33],
+    [86, 65, 51, 33],
+    [88, 65, 50, 33],
+    [89, 64, 50, 33]
+   ]
+  },
+  {
+   "name": "sprint",
+   "file": "sprint.png",
+   "frames": 6,
+   "fps": 14.4,
+   "playback": "loop",
+   "restFrame": 0,
+   "representativeFrame": 0,
+   "contactFrames": [0, 3],
+   "groundedFrames": [0, 1, 2, 3, 4, 5],
+   "standingFrames": [],
+   "stance": "run",
+   "generated": true,
+   "faceBoxes": [
+    [93, 102, 50, 32],
+    [92, 106, 51, 31],
+    [90, 100, 50, 32],
+    [95, 106, 49, 32],
+    [95, 107, 51, 31],
+    [93, 107, 50, 32]
+   ]
+  },
+  {
+   "name": "sniff",
+   "file": "sniff.png",
+   "frames": 8,
+   "fps": 8,
+   "playback": "loop",
+   "restFrame": 2,
+   "representativeFrame": 2,
+   "contactFrames": [],
+   "groundedFrames": [0, 1, 2, 3, 4, 5, 6, 7],
+   "standingFrames": [],
+   "stance": "sniff",
+   "generated": true,
+   "faceBoxes": [
+    [71, 153, 50, 37],
+    [90, 179, 48, 38],
+    [83, 165, 51, 37],
+    [85, 150, 49, 36],
+    [86, 139, 50, 36],
+    [81, 167, 48, 37],
+    [83, 144, 49, 38],
+    [79, 146, 51, 38]
+   ]
+  },
+  {
+   "name": "sit_gray",
+   "file": "sit_gray.png",
+   "frames": 1,
+   "fps": 0,
+   "playback": "static",
+   "restFrame": 0,
+   "representativeFrame": 0,
+   "contactFrames": [],
+   "groundedFrames": [0],
+   "standingFrames": [0],
+   "stance": "stand",
+   "generated": false,
+   "faceBoxes": [
+    [74, 73, 49, 32]
+   ],
+   "source": "Resources/DogArt/dog_gray.png, mirrored to face left"
+  },
+  {
+   "name": "stand_up",
+   "file": "stand_up.png",
+   "frames": 4,
+   "fps": 12,
+   "playback": "once",
+   "restFrame": 3,
+   "representativeFrame": 1,
+   "contactFrames": [],
+   "groundedFrames": [0, 1, 2, 3],
+   "standingFrames": [3],
+   "stance": "rise",
+   "generated": true,
+   "faceBoxes": [
+    [87, 152, 48, 36],
+    [92, 103, 49, 34],
+    [89, 79, 49, 34],
+    [82, 71, 48, 33]
+   ]
+  },
+  {
+   "name": "wag",
+   "file": "wag.png",
+   "frames": 6,
+   "fps": 12,
+   "playback": "once",
+   "repeat": 2,
+   "restFrame": 0,
+   "representativeFrame": 0,
+   "contactFrames": [],
+   "groundedFrames": [0, 1, 2, 3, 4, 5],
+   "standingFrames": [],
+   "stance": "bow",
+   "generated": true,
+   "faceBoxes": [
+    [82, 115, 50, 34],
+    [86, 116, 49, 34],
+    [83, 114, 50, 35],
+    [85, 115, 49, 34],
+    [85, 114, 50, 35],
+    [84, 115, 51, 34]
+   ]
+  },
+  {
+   "name": "pant_lie",
+   "file": "pant_lie.png",
+   "frames": 6,
+   "fps": 10,
+   "playback": "loop",
+   "restFrame": 0,
+   "representativeFrame": 0,
+   "contactFrames": [],
+   "groundedFrames": [0, 1, 2, 3, 4, 5],
+   "standingFrames": [],
+   "stance": "lie",
+   "generated": true,
+   "faceBoxes": [
+    [96, 154, 50, 34],
+    [97, 144, 49, 32],
+    [104, 135, 49, 33],
+    [100, 111, 51, 32],
+    [104, 135, 49, 33],
+    [97, 144, 49, 32]
+   ]
+  },
+  {
+   "name": "notice",
+   "file": "notice.png",
+   "frames": 4,
+   "fps": 10,
+   "playback": "once",
+   "holdLastSeconds": 0.6,
+   "restFrame": 3,
+   "representativeFrame": 3,
+   "contactFrames": [],
+   "groundedFrames": [0, 1, 2, 3],
+   "standingFrames": [],
+   "stance": "sit",
+   "generated": true,
+   "faceBoxes": [
+    [108, 71, 47, 34],
+    [109, 52, 48, 32],
+    [129, 62, 51, 38],
+    [126, 55, 51, 41]
+   ]
+  }
+ ]
+}
