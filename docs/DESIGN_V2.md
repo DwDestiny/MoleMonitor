@@ -880,7 +880,7 @@ RM 下，面板中所有 `CAAnimation` 的数量在稳态为 0（门禁 W15）�
 | 分项 | 图表 | 范围 | 统计行 | 容量区 | 排行 | 脚注 |
 |---|---|---|---|---|---|---|
 | CPU | CPU %，0–100，70% 与 90% 阈值虚线 | 2 小时 / 24 小时 / 7 天 | 当前 / 均值 / 峰值 | 无 | CPU 占用前 5 | “单个 App 以单核满载为 100%，多核可超过 100%。” |
-| 内存 | 压力百分比线，背景按压力档位染色带；swap 用第二条细线（右轴） | 2 小时 / 24 小时 / 7 天 | 压力 / swap / 30 分钟变化 | 有 | 内存占用前 5 | 压力百分比说明（5.4）与已用口径 |
+| 内存 | 压力百分比线，背景按压力档位染色带。swap 用第二条细线（右轴） | 2 小时 / 24 小时 / 7 天 | 压力 / swap / 30 分钟变化 | 有 | 内存占用前 5 | 压力百分比说明（5.4）与已用口径 |
 | 磁盘 | 已用面积，触发问题的时间段高亮 | 24 小时 / 7 天 / 30 天，默认 7 天 | 1 天增长 / 5 天增长 / 30 天增长 | 有 | 磁盘写入前 5（近 5 分钟） | “写入量不等于磁盘增长。删除和覆盖也算写入。” |
 | 网络 | 2 小时：下行与上行速率两条线。24 小时、7 天：每小时或每天流量柱 | 2 小时 / 24 小时 / 7 天 | 今天 / 昨天 / 近 30 天流量 | 无 | 无，见 6.5 | “只计物理网卡，不重复计入 VPN。” |
 | 电池 | 电量线，背景按电源染色（接电源 / 电池），睡眠段灰色 | 2 小时 / 24 小时 / 7 天 | 电量 / 电源 / 上次睡眠掉电 | 无 | 阻止睡眠的 App（当前） | “这不是耗电排行。macOS 不提供可靠的每应用耗电数据。” |
@@ -1860,4 +1860,176 @@ WP-F 在旧 DESIGN.md 的对应章节开头加“已被 DESIGN_V2.md 第 N 章�
 | W21 | 内存压力百分比 | 固定输入：77 → 23%，0 → 100%，100 → 0%，−1 与 101 → nil。nil 时分项行显示“—”与缺失状态点，不显示“0%”。等级颜色只由档位决定（档位正常 + 百分比 95% → 灰点） | Core 单测 + UI 注入 |
 | W22 | 数值对齐 | 分项行数值右缘在 6 行之间相差 ≤0.5 pt。数值使用等宽数字 | `uiTestFrame` |
 
-<!-- NEXT -->
+## 14. 工作包
+
+### 14.1 总览
+
+| 包 | 内容 | 建议模型 / effort | 里程碑 | 估计 |
+|---|---|---|---|---|
+| WP-A | 数据层、提示词、CLI，以及 A1 契约骨架 | sonnet / medium | A1 骨架（0.5 天），A2 实现 | 3 天 |
+| WP-B | NSPanel 窗口、定位、关闭、悬停意图、键盘 | sonnet / high | B1 窗口壳，B2 侧栏与悬停 | 2.5 天 |
+| WP-C | 版面、分项行、侧栏内容、图表、异常区、底部 | sonnet / medium | C1 主列，C2 侧栏与图表 | 3 天 |
+| WP-D | 比熊序列帧美术、动画引擎、气泡 | opus / high | D1 引擎与降级，D2 条带美术 | 4 天 |
+| WP-E | 菜单栏图标五态 | opus / medium | E1 五态与门禁 | 1.5 天 |
+| WP-F | 门禁集成、构建、CI 文档、旧文档标记 | sonnet / medium | F1 注册骨架（0.5 天），F2 集成 | 2 天 |
+
+模型分配说明：WP-D 与 WP-E 是有审美要求的美术工作（比熊动作、菜单栏图标），按规则交给 opus。其余是版面、数据和集成，交给 sonnet。
+
+### 14.2 依赖顺序
+
+1. 阶段 1（并行 2 个）：A1、F1。A1 交付 Core 契约类型与测试登记。F1 交付 UI 检查的登记桩。
+2. 合并 A1、F1 到 `main`。
+3. 阶段 2（并行 5 个，其中 opus 2 个）：A2、B、C、D、E。
+4. 合并顺序：A2 → E → D → B → C。每次合并后，协调者运行第 3 层检查（全量 Core、CLI 测试与 CI）。
+5. 阶段 3：F2 集成全部 W 门禁，更新 CI 文档与旧文档标记。
+6. 用户在 Mac 上做第 4 层真机验收（15.3）。
+
+A1 契约骨架包含：
+
+| 契约 | 文件 | 使用方 |
+|---|---|---|
+| `CurrentReadings` 新字段（`memoryPressurePercent`、`diskTotal`、`diskUsed`、`diskPurgeable`、`memory: MemoryBreakdown?`） | `Sources/Core/CurrentReadings.swift` | C、D |
+| `TrendPoint.pressurePercent` | `Sources/Core/TrendBuffer.swift` | C |
+| `RollupStore`、`EventLog` 的读取接口（先返回空） | 新文件 | C |
+| `AppUsage.diskWrittenBytes` | `Sources/Core/AppUsage.swift` | C |
+| `DogAction` 枚举与 `DogActionInput`（只有类型） | `Sources/Core/DogAction.swift`（A1 创建，合并后移交 WP-D） | D、C |
+| `BubbleCopy.text(for:)` 签名 | `Sources/Core/BubbleCopy.swift`（A1 创建，合并后移交 WP-D） | D、C |
+| `HoverIntent` 状态机签名 | `Sources/Core/HoverIntent.swift`（A1 创建，合并后移交 WP-B） | B、C |
+| `MenuIconState` 五态枚举 | `Sources/Core/MenuIconModel.swift`（A1 修改，合并后移交 WP-E） | E |
+| 空测试文件与登记 | `Tests/CoreTests/main.swift` 与 14.3 节列出的新测试文件 | 全部 |
+
+### 14.3 文件所有权
+
+一个文件只有一个所有者。A1 创建的骨架文件，在 A1 合并后按下表移交。表外的文件不得修改，需要时请协调者调整。
+
+| 包 | 拥有的文件 |
+|---|---|
+| WP-A | `Sources/Core/`：`RollupStore.swift`（新）、`EventLog.swift`（新）、`MemoryBreakdown.swift`（新）、`AppUsage.swift`、`CurrentReadings.swift`、`StatusExtras.swift`、`StatusFile.swift`、`TrendBuffer.swift`、`TrendStore.swift`、`HealthPipeline.swift`、`HealthRules.swift`、`HealthItems.swift`、`ProblemOrder.swift`、`Prompt.swift`、`Brief.swift`、`PreviewScenario.swift`、`SleepStore.swift`、`DiskSample.swift`、`DiskReport.swift`、`DiskSeries.swift`、`Paths.swift`。`Sources/App/`：`Engine.swift`、`SystemSampler.swift`、`ProcessSampler.swift`、`Sampler.swift`。`Sources/cli/main.swift`。`Tests/CoreTests/`：`main.swift`、`PromptTests.swift`、`TrendTests.swift`、`PipelineTests.swift`、`HealthRuleTests.swift`、`PowerTests.swift`、`NetworkTests.swift`、`LiveTests.swift`、`StorageTests.swift`（新）、`MemoryTests.swift`（新）、`Golden/*`。`Tests/CliTests/*` |
+| WP-B | `Sources/MoleMonitor.swift`、`Sources/App/PanelWindow.swift`（新）、`Sources/App/PanelRoot.swift`、`Sources/App/Notifier.swift`、`Sources/App/UITestWindowChecks.swift`（新）、`Sources/Core/HoverIntent.swift`、`Tests/CoreTests/HoverIntentTests.swift`（新） |
+| WP-C | `Sources/App/`：`PanelTokens.swift`、`PanelRows.swift`（新）、`PanelSidebar.swift`（新）、`PanelAnomaly.swift`（新）、`PanelCharts.swift`、`PanelFooter.swift`、`PanelModel.swift`、`PanelPreview.swift`、`Clipboard.swift`、`UITestPanelChecks.swift`。删除 `PanelProblem.swift`、`PanelMore.swift`、`PanelApps.swift`。`Sources/Core/PanelLayout.swift`、`Sources/Core/CapacityText.swift`（新）。`Tests/CoreTests/LayoutTests.swift`、`Tests/CoreTests/CapacityTests.swift`（新） |
+| WP-D | `Resources/DogSprites/*`（新）、`Resources/DogArt/*`、`docs/ASSETS.md`、`Sources/Core/DogAction.swift`、`Sources/Core/BubbleCopy.swift`、`Sources/Core/DogArtPose.swift`、`Sources/Core/DogRig.swift`、`Sources/App/DogSpriteView.swift`（新）、`Sources/App/PanelHero.swift`、`Sources/App/DogBitmapView.swift`、`Sources/App/DogView.swift`、`Sources/App/UITestSpriteChecks.swift`（新）、`Sources/App/UITestBitmapChecks.swift`、`Sources/App/UITestDogChecks.swift`、`scripts/check_sprites.py`（新）、`Tests/CoreTests/DogActionTests.swift`（新）、`Tests/CoreTests/BubbleCopyTests.swift`（新）、`Tests/CoreTests/DogArtPoseTests.swift`、`Tests/CoreTests/DogTests.swift` |
+| WP-E | `Sources/App/StatusIcon.swift`、`Sources/App/GlyphPaths.swift`、`Sources/App/DogShapes.swift`、`Sources/App/DogGallery.swift`、`Sources/App/UITestIconChecks.swift`（新）、`Sources/Core/MenuIconModel.swift`、`Sources/Core/DogArt.swift`、`Tests/CoreTests/MenuIconTests.swift`（新） |
+| WP-F | `scripts/ci_acceptance.py`、`scripts/build.py`、`scripts/test_core.py`、`scripts/test_cli.py`、`scripts/README.md`、`scripts/AGENTS.md`、`Sources/App/UITestHarness.swift`、`.github/workflows/build-mac.yml`、`docs/CI.md`、`docs/DESIGN.md`（只加取代标记）、`docs/VERIFICATION.md`（只加新条目）、`docs/PROJECT.md`、`docs/HANDOFF.md`、`README.md`、`docs/README.md`、`Sources/README.md`、`Sources/AGENTS.md` |
+
+`Tests/CoreTests/main.swift` 只由 WP-A 修改。其他包需要登记新测试时，在报告中写明函数名，由 WP-A 或协调者在合并时登记。A1 已为 14.3 表中的全部新测试文件预先登记。
+
+### 14.4 隔离与推送规则
+
+1. 每个包一个 git worktree 和一个分支（`v2/wp-a` 等）。协调者在派发前创建 worktree，并把绝对路径写进派发说明。
+2. 每个包只推送自己的分支。只有协调者合并和推送 `main`。
+3. 推送预算：每个里程碑 3 次，每个代理 10 次。每次推送前修好全部已知错误。
+4. 小步提交。每次长时间等待前先提交。
+5. 不得给 `build-mac.yml` 加 `schedule` 或多系统矩阵，保持单作业与超时。
+
+### 14.5 各包的验收标准
+
+| 包 | 第 1 层（本机，每次改动后） | 第 2 层（CI，每个里程碑） | 交付物 |
+|---|---|---|---|
+| WP-A | `python3 scripts/test_core.py` 与 `python3 scripts/test_cli.py` 全部通过。W13 以外的 Core 门禁：W19（存储部分）、W20、W21 | B、D、L、N1、N2、M13 | 新存储格式与容量上限有单测。全部黄金提示词 ≤3000 |
+| WP-B | `HoverIntentTests` 通过（W06 Core 部分） | B、C、H、I、W03、W05、W06（UI 部分）、W10、W16 | 窗口在 CI 截图中定位正确，侧栏两种朝向 |
+| WP-C | `LayoutTests`、`CapacityTests` 通过 | M4、M5、M6、M10、M11、M12、W01、W02、W07、W09、W19、W22 | 32 + 12 张预览图 |
+| WP-D | `DogActionTests`、`BubbleCopyTests` 通过（W13），`scripts/check_sprites.py` 通过（W11） | M19、M19V、BE、BF、W04、W11、W12、W14、W15、W17、W18 | 17 个条带、manifest、联系表、PROVENANCE 更新 |
+| WP-E | `MenuIconTests` 通过 | A、M15、DD、W08 | `--dog-gallery` 菜单栏图册与 `badge-matrix.json` |
+| WP-F | 全部脚本本机语法检查 | 全部门禁一次全绿 | CI 文档、旧门禁映射、VERIFICATION 新条目 |
+
+每个包的报告格式：最终提交号、检查结果与数字、契约变更、未验证项。
+
+## 15. 验收清单
+
+### 15.1 CI 可验（第 2、3 层）
+
+| 编号 | 项目 | 标准 | 门禁 |
+|---|---|---|---|
+| V2-01 | 打开速度 | 点击到首帧 ≤150 ms，首帧与稳态亮度差 ≤10 | W03 |
+| V2-02 | 比熊匹配状态 | 注入后 300 ms 内动作正确 | W04 |
+| V2-03 | 速度随 CPU 连续 | f(s) 单调，节点值正确，相邻采样倍率变化 ≤0.25 | W04、`DogActionTests` |
+| V2-04 | 气泡长度 | 全部模板 ≤24 宽度单位，问题模板含数字 | W13 |
+| V2-05 | 数值排版 | 等宽数字，右缘相差 ≤0.5 pt | W22 |
+| V2-06 | 侧栏 | ≤250 ms，同一窗口，主列 x 变化 ≤0.5 pt | W05 |
+| V2-07 | 悬停意图 | 200 ms 不开，400 ms 开，快速划过不开 | W06 |
+| V2-08 | 无异常一行 | 无异常时异常区高 36 pt，只有一行 | W02 |
+| V2-09 | 主按钮 | 只有 1 个，100 ms 内显示“✓ 已复制” | W09 |
+| V2-10 | RM | 稳态 CA 动画 0 | W15 |
+| V2-11 | 关闭成本 | 关闭 3 s 后定时器 1 个，CA 动画 0，缓存 0 字节 | W16 |
+| V2-12 | 打开时 CPU（VM） | 10 s 稳态 ≤3% | W17 |
+| V2-13 | 菜单栏五态 | 五态 1x 两两 XOR ≥0.20，角标对比 ≥3:1 | W08 |
+| V2-14 | 提示词 | 全部样例 ≤3000 字符，安全规则逐字存在 | W20 |
+| V2-15 | 内存压力百分比 | 格式“压力 23%”，0–100 整数。读不到时显示“—”与缺失状态点，不显示 0 | W21 |
+| V2-16 | 容量三元组 | 磁盘、内存都显示总容量、已用、可用。单位相同，等宽右对齐。已用 + 可用 = 总容量（显示值精确相等）。缺失时三栏都是“—” | W19 |
+| V2-17 | 问题优先 | 问题行置顶染色，正常行无彩色，全绿时只有一处绿色 | W02 |
+| V2-18 | 数据状态区分 | 测得零值显示“0%”，缺失显示“—”，过期附时刻，采集中空心点 | W01 截图 + 单测 |
+
+### 15.2 静态检查（Linux）
+
+| 项目 | 方法 |
+|---|---|
+| Core 与 CLI 测试 | `python3 scripts/test_core.py`、`python3 scripts/test_cli.py` |
+| 气泡模板宽度 | `BubbleCopyTests` |
+| 提示词长度 | 黄金文件 |
+| App 层类型检查 | Linux 桩类型检查，只算静态检查 |
+
+### 15.3 只能真机（第 4 层，由用户在 Mac 上确认）
+
+| 编号 | 项目 | 标准 |
+|---|---|---|
+| R-01 | 比熊可爱、有趣 | 主观。连续动作自然，无闪烁，无“换了一只狗”的感觉 |
+| R-02 | 速度感 | CPU 从 5% 升到 95% 时，比熊从趴到冲刺，步子连续变快，没有突跳 |
+| R-03 | 打开观感 | 无白闪，无位置跳动 |
+| R-04 | 侧栏动画 | 220 ms 展开，主列不抖动 |
+| R-05 | 拖动读数 | 60 fps 跟手（Quartz Debug 或 Instruments 确认） |
+| R-06 | 打开 60 秒 CPU | 进程 CPU ≤3%（活动监视器或 `top -pid`），另记 WindowServer |
+| R-07 | 关闭后 | 进程 CPU 回到接近 0，无持续唤醒（活动监视器“能耗”页） |
+| R-08 | 菜单栏 | 五态在浅色、深色菜单栏 1x 与 2x 屏幕上可以分辨，位置正确 |
+| R-09 | 点外关闭 | 点击其他 App、桌面、另一个菜单栏项都关闭面板 |
+| R-10 | 全屏与多屏 | 全屏 App 中可打开，面板出现在被点击的屏幕 |
+| R-11 | 内存压力百分比 | 与 `memory_pressure` 最后一行“System-wide memory free percentage”换算后相差 ≤2 个百分点，并与活动监视器压力图趋势一致 |
+| R-12 | 内存已用 | 与活动监视器“已使用内存”相差 ≤1 GB |
+| R-13 | 磁盘三元组 | 总容量与“关于本机 → 储存空间”一致，已用 + 可用 = 总容量 |
+| R-14 | 通知授权框 | 系统授权框出现，点击通知打开面板并钉住对应侧栏 |
+| R-15 | 阻止睡眠的 App | 与 `pmset -g assertions` 一致 |
+
+CI 结果不得写成真机验收结果。
+
+## 16. 风险与开放问题
+
+### 16.1 风险
+
+| 编号 | 风险 | 影响 | 应对 |
+|---|---|---|---|
+| R1 | AI 生成的条带帧之间不一致（毛色、比例、脸） | 比熊“变脸”，破坏可爱感 | 11.5 的一致性门禁，每动作最多重生成 3 次，11.6 降级 |
+| R2 | `burdened_walk` 的杂物像背包 | 违反“一个隐喻、不用背包” | 审阅不过时降级为程序化沉重（11.6） |
+| R3 | 改变 `speed` 时相位跳变 | 步子顿一下 | `timeOffset` 相位保持，W04 检查 |
+| R4 | 非激活 NSPanel 的 key 与焦点行为 | Esc 或键盘失效 | B1 先做原型，W10 检查 |
+| R5 | 全屏空间与多屏行为 | 面板出现在错误位置 | 10.9 的规则，真机 R-10 |
+| R6 | Swift Charts 在 7 天数据上拖动掉帧 | 拖动不跟手 | LTTB 降到 ≤360 点，读数叠加层独立 |
+| R7 | 精灵内存与资源体积 | 内存 >16 MB 或包体 >6 MB | LRU 缓存、只预取 2 个动作、W18 |
+| R8 | AI 素材许可（A1–A5）未定 | 发布受阻 | WP-D 更新 PROVENANCE，发布前由用户决定 |
+| R9 | 新存储起始为空 | 头几天 24 小时 / 7 天图表空 | “已记录 N 小时”提示 |
+| R10 | `IOPMCopyAssertionsByProcess` 可用性与权限 | 电池排行为空 | 读不到时显示“读取失败”与原因 |
+| R11 | `ri_diskio_byteswritten` 口径与磁盘增长不同 | 用户误解 | 脚注说明 |
+| R12 | `kern.memorystatus_level` 非官方 | 未来 macOS 可能改变或移除 | 读不到时走缺失状态，颜色只看档位 |
+| R13 | 小屏 672 pt 展开宽度 | 13 英寸缩放模式下空间紧 | 10.4 第 4 条平移规则 |
+| R14 | VM 软件渲染不能证明动画流畅 | CI 绿但真机卡 | 真机 R-02 到 R-06 |
+| R15 | WindowServer CPU 不计入进程 | 低估总成本 | 真机另记 |
+| R16 | 气泡文案重复导致疲劳 | 有趣变无聊 | 摸狗文案轮换，彩蛋有频率上限 |
+
+### 16.2 开放问题
+
+| 编号 | 问题 | 默认决定 | 谁决定 |
+|---|---|---|---|
+| Q1 | 素材许可 A1–A5 | 开发期按现有 PROVENANCE 记录，发布前再定 | 用户（发布前） |
+| Q2 | 电池健康（12.3）是否进 v2 | 不阻塞 v2，WP-A 有余力时做 | 协调者 |
+
+### 16.3 与简报的差异
+
+| 简报内容 | 本设计 | 理由 |
+|---|---|---|
+| 气泡 ≤24 字，示例“磁盘 5 天胖了 314 GB，该让 Agent 看看了” | 按宽度单位计数（全角 1，半角 0.5） | 该示例有 28 个字符。按宽度单位为 19.5，在 2 行内可以放下。按字符计数则示例本身不合格 |
+| 现状只有红色角标 | 现状有黄、红两种角标，都是单色 | 读源码得到的事实（9.1） |
+| 侧栏展示 App 排行 | 网络不做 App 排行，电池改为“阻止睡眠的 App” | 无公开接口，红线 |
+| 分项数值 | 温度用文字，内存用压力百分比 | 系统只给热状态档位。内存按用户 2026-10-12 新要求 |
+| 宽度与 328 pt 的关系 | 主列 352 pt | 2.2 的理由 |
+| 异常记录 | 在侧栏打开，不在原地展开 | 原地展开会改变面板高度，违反“只在异常条数变化时变高” |
+| 悬停打开侧栏 | 悬停打开（未钉住），点击钉住 | 只有悬停时，用户无法把指针移进侧栏去拖动图表 |
+| 菜单栏角标 | 改为着色，取代 K1 | U6 的“状态栏 icon 体现初步状态” |
+| Mole 规则 | 维持只用 `--dry-run` | 8.3 的理由 |
