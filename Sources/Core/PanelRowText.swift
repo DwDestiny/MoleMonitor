@@ -341,7 +341,7 @@ enum PanelAreaState: Equatable {
         switch self {
         case .quiet: return "没有异常"
         case .collecting: return "正在采集第一组数据"
-        case .stale(let minutes): return "数据已过期 " + TextFormat.span(seconds: Double(minutes) * 60)
+        case .stale(let minutes): return "数据已过期 \(minutes) 分钟"
         case .anomalies: return "异常"
         }
     }

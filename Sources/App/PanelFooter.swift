@@ -1,63 +1,39 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: PanelModel (copy state, authorization, actions) and the mode of the layout plan.
-// Output: Button styles, the copy buttons, the copy call-to-action, the authorization row and the footer bar.
-// Pos: All buttons of the status card (docs/DESIGN.md 2.10). Each button uses a custom style on top of `.plain` plus `.focusEffectDisabled()`,
-//      so the system focus ring never appears. A 1.5 pt accent ring shows only when the keyboard has the focus.
+// Input: PanelModel (footer state, copy state, authorization, action callbacks).
+// Output: The footer: one primary button (copy the prompt or the inspection request) and the "…" button with its NSMenu.
+// Pos: Section 4 of the main column (docs/DESIGN_V2.md 8). The primary button is the only primary action of the panel: id `btn.copy`.
+//      After a copy the button shows "✓ 已复制" for 1.5 seconds. The "…" menu lists the CLI commands, the prompt option and the app items.
+//      Menu items carry identifiers `menu.*`. The menu is an NSMenu, so the system draws it and VoiceOver reads it.
 
+import AppKit
 import SwiftUI
 
 // MARK: - Button styles
 
-/// 24 pt round icon button. Hover shows `fill.hover`. A press scales to 0.94. The ring shows with keyboard focus only.
-struct PanelIconButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        IconButtonBody(configuration: configuration)
-    }
-}
-
-private struct IconButtonBody: View {
-    let configuration: ButtonStyleConfiguration
-    @Environment(\.tok) private var tok
-    @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hovering = false
-
-    var body: some View {
-        configuration.label
-            .frame(width: PanelSize.iconButton, height: PanelSize.iconButton)
-            .background(Circle().fill(hovering || configuration.isPressed ? tok.fillHover : Color.clear))
-            .overlay(Circle().strokeBorder(tok.accent, lineWidth: 1.5).opacity(isFocused ? 1 : 0))
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
-            .contentShape(Circle())
-            .onHover { hovering = $0 }
-            .animation(PanelMotion.hover, value: hovering)
-            .animation(reduceMotion ? nil : PanelMotion.quick, value: configuration.isPressed)
-    }
-}
-
-/// The 36 pt call-to-action. Accent fill, white text. A press scales to 0.97 in 0.1 seconds.
+/// The 276 x 40 primary button. Accent fill and white text. A press scales to 0.97 in 0.1 seconds (not under Reduce Motion).
 struct PanelPrimaryButtonStyle: ButtonStyle {
+    var secondary = false
+
     func makeBody(configuration: Configuration) -> some View {
-        PrimaryButtonBody(configuration: configuration)
+        PrimaryButtonBody(configuration: configuration, secondary: secondary)
     }
 }
 
 private struct PrimaryButtonBody: View {
     let configuration: ButtonStyleConfiguration
+    let secondary: Bool
     @Environment(\.tok) private var tok
-    @Environment(\.isFocused) private var isFocused
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: PanelSize.ctaRadius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
         configuration.label
-            .foregroundStyle(tok.onAccent)
-            .frame(width: PanelSize.contentWidth, height: PanelMetrics.cta)
-            .background(shape.fill(tok.accentFill))
-            .overlay(shape.fill(Color.white.opacity(configuration.isPressed ? 0.0 : (hovering ? 0.10 : 0))))
-            .overlay(shape.inset(by: -2).strokeBorder(tok.accent, lineWidth: 1.5).opacity(isFocused ? 1 : 0))
+            .foregroundStyle(secondary ? tok.textPrimary : tok.onAccent)
+            .frame(width: PanelMetrics.primaryButtonWidth, height: PanelMetrics.footer)
+            .background(shape.fill(secondary ? tok.chartFill : tok.accentFill))
+            .overlay(shape.fill(Color.white.opacity(configuration.isPressed || secondary ? 0.0 : (hovering ? 0.10 : 0))))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .contentShape(shape)
             .onHover { hovering = $0 }
@@ -66,323 +42,62 @@ private struct PrimaryButtonBody: View {
     }
 }
 
-/// A full-width row. Problem levels get their tint. Hover adds `fill.hover`.
-struct PanelRowButtonStyle: ButtonStyle {
-    var level: HealthLevel
+/// The 36 x 40 "…" button.
+struct PanelMoreButtonStyle: ButtonStyle {
+    var focused = false
 
     func makeBody(configuration: Configuration) -> some View {
-        RowButtonBody(configuration: configuration, level: level)
+        MoreButtonBody(configuration: configuration, focused: focused)
     }
 }
 
-private struct RowButtonBody: View {
+private struct MoreButtonBody: View {
     let configuration: ButtonStyleConfiguration
-    let level: HealthLevel
+    let focused: Bool
     @Environment(\.tok) private var tok
-    @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
         configuration.label
-            .background(shape.fill(tok.tint(level)))
-            .overlay(shape.fill(hovering || configuration.isPressed ? tok.fillHover : Color.clear))
-            .overlay(shape.strokeBorder(tok.accent, lineWidth: 1.5).opacity(isFocused ? 1 : 0))
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.99 : 1)
+            .foregroundStyle(tok.textSecondary)
+            .frame(width: PanelMetrics.moreButtonWidth, height: PanelMetrics.footer)
+            .background(shape.fill(hovering || configuration.isPressed ? tok.fillHover : tok.chartFill))
+            .overlay(shape.strokeBorder(tok.accent, lineWidth: 1.5).opacity(focused ? 1 : 0))
             .contentShape(shape)
             .onHover { hovering = $0 }
             .animation(PanelMotion.hover, value: hovering)
-            .animation(reduceMotion ? nil : PanelMotion.quick, value: configuration.isPressed)
     }
 }
 
-/// Text or segment button without a background of its own. A press dims it. Keyboard focus shows the ring.
-struct PanelPlainButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        PlainButtonBody(configuration: configuration)
+// MARK: - Menu
+
+/// Target of the menu items. The anchor box keeps it alive while the menu is open.
+@MainActor
+final class PanelMenuHandler: NSObject {
+    weak var model: PanelModel?
+
+    init(model: PanelModel) {
+        self.model = model
+        super.init()
     }
+
+    @objc func copyCommand(_ sender: NSMenuItem) {
+        if let text = sender.representedObject as? String { model?.copyCommand(text) }
+    }
+
+    @objc func toggleAppNames(_ sender: NSMenuItem) {
+        guard let model else { return }
+        model.setIncludeAppNames(!model.includeAppNames)
+    }
+
+    @objc func enableNotifications(_ sender: NSMenuItem) { model?.onEnableNotifications() }
+    @objc func openDataFolder(_ sender: NSMenuItem) { model?.onOpenDataFolder() }
+    @objc func about(_ sender: NSMenuItem) { model?.onAbout() }
+    @objc func quit(_ sender: NSMenuItem) { model?.onQuit() }
 }
 
-private struct PlainButtonBody: View {
-    let configuration: ButtonStyleConfiguration
-    @Environment(\.tok) private var tok
-    @Environment(\.isFocused) private var isFocused
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
-        configuration.label
-            .opacity(configuration.isPressed ? 0.6 : 1)
-            .overlay(shape.strokeBorder(tok.accent, lineWidth: 1.5).opacity(isFocused ? 1 : 0))
-    }
-}
-
-// MARK: - Copy buttons
-
-/// The small copy button of a problem. The icon turns into a check mark for 1.5 seconds after a copy.
-struct CopyIconButton: View {
-    @ObservedObject var model: PanelModel
-    let target: CopyTarget
-    let item: HealthItem
-    @Environment(\.tok) private var tok
-
-    var body: some View {
-        let copied = model.copied.contains(target)
-        Button(action: { model.copy(target) }) {
-            ZStack {
-                Image(systemName: "doc.on.doc")
-                    .opacity(copied ? 0 : 1)
-                Image(systemName: "checkmark")
-                    .opacity(copied ? 1 : 0)
-            }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(copied ? tok.textPrimary : tok.textSecondary)
-            .animation(PanelMotion.fadeShort, value: copied)
-        }
-        .buttonStyle(PanelIconButtonStyle())
-        .focusEffectDisabled()
-        .help(copied ? "已复制" : "复制\(item.label)问题给 Agent")
-        .accessibilityIdentifier("btn.copy." + item.rawValue)
-        .accessibilityLabel(Text(copied ? "已复制" : "复制\(item.label)问题给 Agent"))
-        .uiTestFrame("btn.copy." + item.rawValue)
-    }
-}
-
-/// The main button under the problem rows: "复制给 Agent · 磁盘".
-struct CopyCTA: View {
-    @ObservedObject var model: PanelModel
-    let item: HealthItem
-
-    var body: some View {
-        let copied = model.copied.contains(.primary)
-        Button(action: { model.copy(.primary) }) {
-            ZStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "doc.on.doc").font(.system(size: 12, weight: .semibold))
-                    Text("复制给 Agent · " + item.label)
-                        .font(PanelFont.headline)
-                        .lineLimit(1)
-                        .uiTestFrame("txt.cta.label")
-                }
-                .opacity(copied ? 0 : 1)
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark").font(.system(size: 12, weight: .bold))
-                    Text("已复制").font(PanelFont.headline)
-                }
-                .opacity(copied ? 1 : 0)
-            }
-            .animation(PanelMotion.fadeShort, value: copied)
-        }
-        .buttonStyle(PanelPrimaryButtonStyle())
-        .focusEffectDisabled()
-        .keyboardShortcut("c")
-        .accessibilityIdentifier("btn.copy.primary")
-        .accessibilityLabel(Text(copied ? "已复制" : "复制给 Agent，\(item.label)"))
-        .uiTestFrame("btn.copy.primary")
-    }
-}
-
-// MARK: - Authorization row
-
-struct AuthorizationRow: View {
-    @ObservedObject var model: PanelModel
-    @Environment(\.tok) private var tok
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "bell.slash")
-                .font(.system(size: 12))
-                .foregroundStyle(tok.textSecondary)
-                .accessibilityHidden(true)
-            Text(message)
-                .font(PanelFont.footnote)
-                .foregroundStyle(tok.textSecondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .uiTestFrame("label.authorization")
-                .accessibilityIdentifier("label.authorization")
-            if model.authorization == "not_determined" {
-                Button(action: { model.onEnableNotifications() }) {
-                    Text("开启通知")
-                        .font(PanelFont.callout)
-                        .foregroundStyle(tok.accent)
-                        .padding(.horizontal, 6)
-                        .frame(height: 22)
-                }
-                .buttonStyle(PanelPlainButtonStyle())
-                .focusEffectDisabled()
-                .accessibilityIdentifier("btn.enableNotifications")
-                .accessibilityLabel(Text("开启通知"))
-                .uiTestFrame("btn.enableNotifications")
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(width: PanelSize.contentWidth, height: PanelMetrics.authorization)
-        .accessibilityElement(children: .contain)
-    }
-
-    private var message: String {
-        switch model.authorization {
-        case "not_determined": return "MoleMonitor 在磁盘异常增长等情况下发送系统通知"
-        case "denied": return "通知已关闭，可在系统设置 > 通知中打开"
-        default: return "此环境无法发送通知，提醒只显示在这里"
-        }
-    }
-}
-
-// MARK: - Footer
-
-struct PanelFooter: View {
-    @ObservedObject var model: PanelModel
-    let quiet: Bool
-    @Environment(\.tok) private var tok
-    @Environment(\.panelSnapshot) private var snapshot
-
-    var body: some View {
-        HStack(spacing: 0) {
-            leading
-            Spacer(minLength: 8)
-            HStack(spacing: 8) {
-                cliButton
-                settingsButton
-                quitButton
-            }
-        }
-        .frame(width: PanelSize.contentWidth, height: PanelMetrics.footer)
-        .overlay(alignment: .top) {
-            Rectangle().fill(tok.separator).frame(height: 0.5)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("section.footer")
-    }
-
-    // MARK: Leading
-
-    @ViewBuilder
-    private var leading: some View {
-        if quiet {
-            statusCopyButton
-        } else {
-            Text(dataTimeText)
-                .font(PanelFont.footnote)
-                .monospacedDigit()
-                .foregroundStyle(tok.textSecondary)
-                .lineLimit(1)
-                .padding(.leading, 4)
-                .uiTestFrame("txt.footer.time")
-                .accessibilityIdentifier("label.dataTime")
-        }
-    }
-
-    private var dataTimeText: String {
-        let data = model.data
-        if data.isCollecting { return "统计中" }
-        let stamp = data.current.sampledAt ?? data.status?.writtenAt
-        guard let stamp else { return "数据 —" }
-        let base = "数据 " + PanelFormat.clock(stamp)
-        return data.staleSince != nil ? base + "（已过期）" : base
-    }
-
-    private var statusCopyButton: some View {
-        let copied = model.copied.contains(.primary)
-        return Button(action: { model.copy(.primary) }) {
-            ZStack(alignment: .leading) {
-                HStack(spacing: 6) {
-                    Image(systemName: "doc.on.doc").font(.system(size: 11, weight: .medium))
-                    Text("复制状态给 Agent").font(PanelFont.callout)
-                }
-                .opacity(copied ? 0 : 1)
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
-                    Text("已复制").font(PanelFont.callout)
-                }
-                .opacity(copied ? 1 : 0)
-            }
-            .foregroundStyle(tok.textPrimary)
-            .padding(.horizontal, 4)
-            .frame(height: 24)
-            .contentShape(Rectangle())
-            .animation(PanelMotion.fadeShort, value: copied)
-        }
-        .buttonStyle(PanelPlainButtonStyle())
-        .focusEffectDisabled()
-        .keyboardShortcut("c")
-        .accessibilityIdentifier("btn.copy.status")
-        .accessibilityLabel(Text(copied ? "已复制" : "复制状态给 Agent"))
-        .uiTestFrame("btn.copy.status")
-    }
-
-    // MARK: Icon buttons
-
-    private func icon(_ symbol: String) -> some View {
-        Image(systemName: symbol)
-            .font(.system(size: 13, weight: .regular))
-            .foregroundStyle(tok.textSecondary)
-    }
-
-    @ViewBuilder
-    private var cliButton: some View {
-        if snapshot {
-            HoverIcon(symbol: "terminal").uiTestFrame("btn.cli")
-        } else {
-            Menu {
-                Button("复制命令：一行状态") { model.copyCommand(PanelFooter.command("--status --brief")) }
-                Button("复制命令：完整状态 JSON") { model.copyCommand(PanelFooter.command("--status")) }
-                Button("复制命令：排查提示词") { model.copyCommand(PanelFooter.command("prompt")) }
-            } label: {
-                HoverIcon(symbol: "terminal")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .focusEffectDisabled()
-            .help("命令行")
-            .accessibilityIdentifier("btn.cli")
-            .accessibilityLabel(Text("命令行"))
-            .uiTestFrame("btn.cli")
-        }
-    }
-
-    @ViewBuilder
-    private var settingsButton: some View {
-        if snapshot {
-            HoverIcon(symbol: "gearshape").uiTestFrame("btn.settings")
-        } else {
-            Menu {
-                Toggle("提示词包含 App 名称", isOn: Binding(get: { model.includeAppNames },
-                                                         set: { model.setIncludeAppNames($0) }))
-                Button("打开通知设置…") { model.onOpenNotificationSettings() }
-                Button("打开数据文件夹") { model.onOpenDataFolder() }
-                Divider()
-                Button("关于 MoleMonitor") { model.onAbout() }
-            } label: {
-                HoverIcon(symbol: "gearshape")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .focusEffectDisabled()
-            .help("设置")
-            .accessibilityIdentifier("btn.settings")
-            .accessibilityLabel(Text("设置"))
-            .uiTestFrame("btn.settings")
-        }
-    }
-
-    private var quitButton: some View {
-        Button(action: { model.onQuit() }) {
-            icon("power")
-        }
-        .buttonStyle(PanelIconButtonStyle())
-        .focusEffectDisabled()
-        .keyboardShortcut("q")
-        .help("退出 MoleMonitor")
-        .accessibilityIdentifier("btn.quit")
-        .accessibilityLabel(Text("退出 MoleMonitor"))
-        .uiTestFrame("btn.quit")
-    }
-
+enum PanelMoreMenu {
     /// A shell command with the path of the helper. The home folder is written as `~` when the path has no space.
     static func command(_ arguments: String) -> String {
         let absolute = Bundle.main.bundlePath + "/Contents/Helpers/molemonitor-cli"
@@ -390,22 +105,191 @@ struct PanelFooter: View {
         let path = absolute.contains(" ") ? "'" + absolute + "'" : shown
         return path + " " + arguments
     }
+
+    /// The CLI entries: title and arguments (DESIGN_V2.md 8.2).
+    static let commands: [(title: String, arguments: String, id: String)] = [
+        ("状态 --status", "--status", "menu.cli.status"),
+        ("磁盘历史 --disk-history --days 30", "--disk-history --days 30", "menu.cli.disk"),
+        ("异常记录 --events --days 7", "--events --days 7", "menu.cli.events"),
+    ]
+
+    @MainActor
+    static func makeMenu(model: PanelModel, handler: PanelMenuHandler) -> NSMenu {
+        let menu = NSMenu(title: "")
+        menu.autoenablesItems = false
+
+        let cli = NSMenuItem(title: "复制 CLI 命令", action: nil, keyEquivalent: "")
+        cli.identifier = NSUserInterfaceItemIdentifier("menu.cli")
+        let sub = NSMenu(title: "")
+        for entry in commands {
+            let item = NSMenuItem(title: entry.title, action: #selector(PanelMenuHandler.copyCommand(_:)), keyEquivalent: "")
+            item.target = handler
+            item.representedObject = command(entry.arguments)
+            item.identifier = NSUserInterfaceItemIdentifier(entry.id)
+            sub.addItem(item)
+        }
+        cli.submenu = sub
+        menu.addItem(cli)
+
+        let names = NSMenuItem(title: "提示词包含 App 名称", action: #selector(PanelMenuHandler.toggleAppNames(_:)), keyEquivalent: "")
+        names.target = handler
+        names.state = model.includeAppNames ? .on : .off
+        names.identifier = NSUserInterfaceItemIdentifier("menu.appNames")
+        menu.addItem(names)
+        menu.addItem(NSMenuItem.separator())
+
+        if model.authorization != "authorized" {
+            let notify = NSMenuItem(title: "开启通知…", action: #selector(PanelMenuHandler.enableNotifications(_:)), keyEquivalent: "")
+            notify.target = handler
+            notify.identifier = NSUserInterfaceItemIdentifier("menu.notify")
+            menu.addItem(notify)
+        }
+        let folder = NSMenuItem(title: "打开数据文件夹", action: #selector(PanelMenuHandler.openDataFolder(_:)), keyEquivalent: "")
+        folder.target = handler
+        folder.identifier = NSUserInterfaceItemIdentifier("menu.dataFolder")
+        menu.addItem(folder)
+        let about = NSMenuItem(title: "关于 MoleMonitor", action: #selector(PanelMenuHandler.about(_:)), keyEquivalent: "")
+        about.target = handler
+        about.identifier = NSUserInterfaceItemIdentifier("menu.about")
+        menu.addItem(about)
+        menu.addItem(NSMenuItem.separator())
+        let quit = NSMenuItem(title: "退出 MoleMonitor", action: #selector(PanelMenuHandler.quit(_:)), keyEquivalent: "q")
+        quit.keyEquivalentModifierMask = [.command]
+        quit.target = handler
+        quit.identifier = NSUserInterfaceItemIdentifier("menu.quit")
+        menu.addItem(quit)
+        return menu
+    }
 }
 
-/// The label of a menu icon: the same 24 pt circle and hover as the plain icon buttons.
-private struct HoverIcon: View {
-    let symbol: String
+/// The view that anchors the menu. Flipped, so y grows downward like SwiftUI.
+final class PanelMenuAnchorView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+final class PanelMenuAnchor {
+    weak var view: NSView?
+    var handler: PanelMenuHandler?
+
+    @MainActor
+    func pop(model: PanelModel) {
+        guard let view else { return }
+        let handler = PanelMenuHandler(model: model)
+        self.handler = handler
+        let menu = PanelMoreMenu.makeMenu(model: model, handler: handler)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
+    }
+}
+
+private struct PanelMenuAnchorRepresentable: NSViewRepresentable {
+    let anchor: PanelMenuAnchor
+
+    func makeNSView(context: Context) -> NSView {
+        let view = PanelMenuAnchorView()
+        anchor.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        anchor.view = nsView
+    }
+}
+
+// MARK: - Footer
+
+struct PanelFooter: View {
+    @ObservedObject var model: PanelModel
     @Environment(\.tok) private var tok
-    @State private var hovering = false
+    @Environment(\.panelSnapshot) private var snapshot
+    @State private var anchor = PanelMenuAnchor()
 
     var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 13, weight: .regular))
-            .foregroundStyle(tok.textSecondary)
-            .frame(width: PanelSize.iconButton, height: PanelSize.iconButton)
-            .background(Circle().fill(hovering ? tok.fillHover : Color.clear))
-            .contentShape(Circle())
-            .onHover { hovering = $0 }
-            .animation(PanelMotion.hover, value: hovering)
+        let state = model.footerState
+        let copied = !model.copied.isEmpty
+        HStack(spacing: PanelMetrics.footerGap) {
+            primary(state, copied: copied)
+            moreButton
+        }
+        .frame(width: PanelMetrics.contentWidth, height: PanelMetrics.footer)
+        .overlay(hiddenQuit)
+        .hoverRegion(.neutral, model: model)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("section.footer")
+        .onAppear {
+            let target = model
+            let menuAnchor = anchor
+            model.onShowMoreMenu = { [weak target] in
+                if let target { menuAnchor.pop(model: target) }
+            }
+        }
+    }
+
+    private func primary(_ state: PanelFooterState, copied: Bool) -> some View {
+        let failed = model.copyFailed
+        return Button(action: { model.copy(.primary) }) {
+            ZStack {
+                VStack(spacing: 1) {
+                    Text(state.title)
+                        .font(PanelType.button)
+                        .lineLimit(1)
+                        .uiTestFrame("txt.btn.title")
+                    if let sub = state.subtitle {
+                        Text(sub)
+                            .font(PanelType.buttonSub)
+                            .opacity(0.85)
+                            .lineLimit(1)
+                    }
+                }
+                .opacity(copied || failed ? 0 : 1)
+                Text(state.copiedTitle)
+                    .font(PanelType.button)
+                    .lineLimit(1)
+                    .opacity(copied ? 1 : 0)
+                    .uiTestFrame("txt.btn.copied")
+                Text("没复制上，再点一次试试")
+                    .font(PanelType.button)
+                    .lineLimit(1)
+                    .opacity(failed ? 1 : 0)
+            }
+            .animation(PanelMotion.fadeShort, value: copied)
+        }
+        .buttonStyle(PanelPrimaryButtonStyle(secondary: state.mode == .inspectDisabled))
+        .focusEffectDisabled()
+        .disabled(!state.enabled)
+        .opacity(state.enabled ? 1 : 0.4)
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .strokeBorder(tok.accent, lineWidth: 1.5).padding(-2)
+            .opacity(model.keyFocus == .primary ? 1 : 0))
+        .keyboardShortcut("c")
+        .accessibilityIdentifier("btn.copy")
+        .accessibilityLabel(Text(copied ? "已复制" : state.title + (state.subtitle.map { "，" + $0 } ?? "")))
+        .uiTestFrame("btn.copy")
+    }
+
+    @ViewBuilder
+    private var moreButton: some View {
+        let button = Button(action: { model.onShowMoreMenu?() }) {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .buttonStyle(PanelMoreButtonStyle(focused: model.keyFocus == .more))
+        .focusEffectDisabled()
+        .accessibilityIdentifier("btn.more")
+        .accessibilityLabel(Text("更多"))
+        .uiTestFrame("btn.more")
+        if snapshot {
+            button
+        } else {
+            button.background(PanelMenuAnchorRepresentable(anchor: anchor))
+        }
+    }
+
+    /// ⌘Q quits the app while the panel has the key. The button has no size and no look.
+    private var hiddenQuit: some View {
+        Button("") { model.onQuit() }
+            .keyboardShortcut("q")
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
     }
 }
