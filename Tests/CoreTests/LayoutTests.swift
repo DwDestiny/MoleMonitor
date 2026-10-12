@@ -143,4 +143,97 @@ func runLayoutTests() {
     let empty = SparkSeries.empty(now: now)
     expect(empty.isEmpty && empty.last == nil, "empty spark")
     expect(SparkSeries.thin((0..<500).map { SparkPoint(t: now, v: Double($0)) }, limit: 90).count == 90, "thin to 90 points")
+
+    runSidebarTests()
+}
+
+func runSidebarTests() {
+    let utc = TimeZone(identifier: "UTC")!
+    section("Sidebar: ranges")
+    expect(SidebarRange.options(for: .cpu) == [.h2, .h24, .d7], "cpu ranges")
+    expect(SidebarRange.options(for: .disk) == [.h24, .d7, .d30] && SidebarRange.defaultRange(for: .disk) == .d7, "disk ranges")
+    expect(SidebarRange.defaultRange(for: .memory) == .h2 && SidebarRange.options(for: .anomalyLog) == [.d7, .d30], "defaults")
+    expect(SidebarRange.covering(start: now.addingTimeInterval(-3 * 3600), now: now, item: .cpu) == .h24, "covering 3 h gives 24 h")
+    expect(SidebarRange.covering(start: now.addingTimeInterval(-10 * 86400), now: now, item: .cpu) == .d7, "covering is capped")
+
+    section("Sidebar: LTTB and runs")
+    let pts = (0..<1000).map { ChartPoint(t: now.addingTimeInterval(Double($0) * 60), v: Double($0 % 50)) }
+    let cut = ChartSampling.lttb(pts, limit: 360)
+    expect(cut.count == 360 && cut.first == pts.first && cut.last == pts.last, "lttb keeps 360 points with both ends, got \(cut.count)")
+    expect(ChartSampling.lttb(Array(pts.prefix(100)), limit: 360).count == 100, "short list is unchanged")
+    let samples: [(t: Date, v: Double?)] = [(now, 1), (now.addingTimeInterval(30), 2), (now.addingTimeInterval(60), nil),
+                                            (now.addingTimeInterval(90), 3), (now.addingTimeInterval(1000), 4)]
+    let runs = ChartSampling.runs(samples, gap: 120, limit: 240)
+    expect(runs.count == 3 && runs[0].count == 2 && runs[1].count == 1 && runs[2].count == 1, "a nil value and a gap split runs, got \(runs.map { $0.count })")
+
+    section("Sidebar: charts")
+    let fine = (0..<240).map { i in TrendPoint(t: now.addingTimeInterval(-Double(239 - i) * 30), cpu: Double(i % 100)) }
+    var input = SidebarInput(item: .cpu, range: .h2, trend: TrendSeries(segments: [fine]), rollups: [], diskSeries: [], diskTrigger: nil,
+                             sleeps: [], current: CurrentReadings(), verdicts: [], status: nil, now: now, timeZone: utc)
+    let c2 = SidebarChart.make(input)
+    expect(c2.lines.count == 1 && c2.lines[0].pointCount == 240 && c2.thresholds == [70, 90], "cpu 2 h line has 240 points")
+    expect(c2.recordedText == nil && c2.emptyHead < 0.01, "full history has no recorded note")
+    expect(c2.readout(at: now, timeZone: utc)?.hasSuffix("%") == true, "readout ends with percent, got \(String(describing: c2.readout(at: now, timeZone: utc)))")
+    input.range = .h24
+    let c24 = SidebarChart.make(input)
+    expect(c24.isEmpty && c24.firstData == nil && c24.emptyHead == 1, "24 h without rollups is empty")
+    var ws = [RollupWindow]()
+    for i in 0..<288 { ws.append(RollupWindow(end: now.addingTimeInterval(-Double(287 - i) * 300), pointCount: 10, cpuMean: 20, cpuPeak: 40)) }
+    input.rollups = ws
+    let c24b = SidebarChart.make(input)
+    expect(c24b.lines[0].pointCount == 288 && c24b.recordedText == nil, "24 h from 288 windows, got \(c24b.lines[0].pointCount)")
+    input.range = .d7
+    let c7 = SidebarChart.make(input)
+    expect(c7.lines[0].pointCount == 288 && c7.recordedText == "已记录 23 小时", "7 d with 23 hours of history, got \(String(describing: c7.recordedText))")
+    let stats = SidebarStats.make(input)
+    expect(stats.map { $0.label } == ["当前", "均值", "峰值"] && stats[1].value == "20%" && stats[2].value == "40%", "cpu stats \(stats)")
+
+    section("Sidebar: network and thermal")
+    input.item = .network
+    input.range = .h24
+    input.rollups = (0..<288).map { RollupWindow(end: now.addingTimeInterval(-Double(287 - $0) * 300), pointCount: 10, rxKBps: 100, txKBps: 20) }
+    let net = SidebarChart.make(input)
+    expect(net.bars.count >= 24 && net.bars.count <= 25 && net.lines.isEmpty, "24 h network gives hourly bars, got \(net.bars.count)")
+    let nstats = SidebarStats.make(input)
+    expect(nstats.count == 3 && nstats[2].value.hasPrefix("至少 "), "30 day traffic is a lower bound with 1 day of history, got \(nstats[2].value)")
+    input.item = .thermal
+    input.range = .h2
+    input.trend = TrendSeries(segments: [(0..<10).map { TrendPoint(t: now.addingTimeInterval(-Double(9 - $0) * 30), cpu: 10, thermal: $0 < 5 ? .nominal : .fair) }])
+    let th = SidebarChart.make(input)
+    expect(th.style == .step && th.domain == 0...3 && th.lines.count == 2 && th.lines[1].secondary, "thermal step with a CPU line")
+    expect(th.readout(at: now, timeZone: utc)?.contains("偏热") == true, "thermal readout uses the word")
+
+    section("Sidebar: ranking and footnotes")
+    let apps = [AppUsage(key: "a", name: "A", bundleID: "x.a", cpuPercent: 94, memoryBytes: 2_000_000_000, memoryBasis: "footprint", processCount: 1,
+                         isSystem: false, diskWrittenBytes: 500_000_000),
+                AppUsage(key: "b", name: "B", bundleID: nil, cpuPercent: 10, memoryBytes: 400_000_000, memoryBasis: "footprint", processCount: 1,
+                         isSystem: false, diskWrittenBytes: nil)]
+    let cpuTable = SidebarRanking.make(.cpu, apps: apps, interfaces: nil, blockers: nil)
+    expect(cpuTable?.rows.count == 2 && cpuTable?.rows[0].value == "94%", "cpu ranking")
+    let disk = SidebarRanking.make(.disk, apps: apps, interfaces: nil, blockers: nil)
+    expect(disk?.rows.count == 1 && disk?.rows[0].value == "500 MB", "disk write ranking, got \(String(describing: disk?.rows.first?.value))")
+    let noWrites = SidebarRanking.make(.disk, apps: apps.map { var a = $0; a.diskWrittenBytes = nil; return a }, interfaces: nil, blockers: nil)
+    expect(noWrites?.rows.isEmpty == true && noWrites?.emptyText?.hasPrefix("\u{2014}") == true, "missing disk writes are not zero")
+    let nets = SidebarRanking.make(.network, apps: [], interfaces: [InterfaceRate(name: "en0", displayName: "Wi-Fi", rxPerSecond: 1_100_000, txPerSecond: 96_000, rxTotal: 5, txTotal: 6),
+                                                             InterfaceRate(name: "utun3", displayName: nil, rxPerSecond: 9_000_000, txPerSecond: 0, rxTotal: nil, txTotal: nil)], blockers: nil)
+    expect(nets?.rows.count == 1 && nets?.rows[0].name == "Wi-Fi" && nets?.rows[0].value == "\u{2193}1.1 MB/s \u{2191}96 KB/s", "network ranking skips VPN, got \(String(describing: nets?.rows.first?.value))")
+    expect(SidebarRanking.make(.network, apps: [], interfaces: nil, blockers: nil)?.emptyText?.hasPrefix("\u{2014}") == true, "no interface data is a dash")
+    expect(SidebarRanking.make(.battery, apps: [], interfaces: nil, blockers: [])?.emptyText == "没有 App 阻止睡眠", "no blockers")
+    expect(SidebarRanking.make(.anomalyLog, apps: apps, interfaces: nil, blockers: nil) == nil, "log has no ranking")
+    expect(SidebarFootnote.lines(.battery, current: CurrentReadings()) == ["这不是耗电排行。macOS 不提供可靠的每应用耗电数据。"], "battery footnote")
+    expect(SidebarFootnote.lines(.network, current: CurrentReadings()).first?.contains("按网卡分列") == true, "network footnote")
+
+    section("Sidebar: anomaly records")
+    let e1 = EventRecord(item: .disk, first: .yellow, peak: .red, reasonCode: "growth_1d", start: now.addingTimeInterval(-3600),
+                         end: nil, peakValue: 314, unit: "GB", app: nil, endEstimated: false)
+    let e2 = EventRecord(item: .cpu, first: .yellow, peak: .yellow, reasonCode: "cpu_mean_10m", start: now.addingTimeInterval(-30 * 3600),
+                         end: now.addingTimeInterval(-29 * 3600), peakValue: 94, unit: "%", app: "Xcode", endEstimated: true)
+    let groups = SidebarRecords.groups([e2, e1], days: 7, now: now, timeZone: utc)
+    expect(groups.count == 2 && groups[0].title == "今天" && groups[1].title == "昨天", "groups today and yesterday, got \(groups.map { $0.title })")
+    expect(groups[0].rows[0].span.hasSuffix("进行中") && groups[0].rows[0].ongoing, "ongoing record")
+    expect(groups[1].rows[0].duration.hasPrefix("约 ") && groups[1].rows[0].evidence.contains("Xcode"), "estimated end and app name")
+    expect(SidebarRecords.dayTitle(20000, today: 20010).contains("月") && SidebarRecords.dayTitle(20000, today: 20010).contains("周"), "older day title")
+    let rstats = SidebarStats.make(SidebarInput(item: .anomalyLog, range: .d7, trend: .empty, rollups: [], diskSeries: [], diskTrigger: nil, sleeps: [],
+                                                current: CurrentReadings(), verdicts: [], status: nil, now: now, timeZone: utc), events: [e1, e2])
+    expect(rstats[0].value == "2" && rstats[1].value == "1 小时 0 分" || rstats[1].value.contains("小时"), "record stats \(rstats)")
 }

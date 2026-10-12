@@ -223,7 +223,7 @@ final class PanelModel: ObservableObject, PanelPinning {
     func spark(for item: SidebarItem) -> SparkSeries {
         // While collecting, the row shows only the dashed baseline. No measured curve exists yet.
         if case .collecting = data.dataState { return .empty(now: data.now) }
-        SparkSeries.make(item, trend: data.trend, disk: data.diskSeries, now: data.now)
+        return SparkSeries.make(item, trend: data.trend, disk: data.diskSeries, now: data.now)
     }
 
     /// Apps sorted for one list. The minimum-use filter and the order come from `AppRanking.top`.
