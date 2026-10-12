@@ -746,7 +746,7 @@ func runDogTests() {
     let green = [verdict(.thermal, .green), verdict(.memory, .green), verdict(.disk, .green), verdict(.power, .green), verdict(.cpu, .green)]
     expect(MenuIconModel.state(green, dataState: .fresh) == MenuIconState(posture: .relaxed, badge: nil), "all green: relaxed, no badge")
     expect(MenuIconModel.state(green, dataState: .collecting).posture == .hollow, "collecting: hollow")
-    expect(MenuIconModel.state(green, dataState: .stale(now)) == MenuIconState(posture: .hollow, badge: nil), "stale: hollow, no badge")
+    expect(MenuIconModel.state(green, dataState: .stale(now)) == MenuIconState(posture: .hollow, badge: nil, mark: .stale), "stale: hollow, no badge, clock mark")
     let cpuY = [verdict(.cpu, .yellow, minutes: 40)] + green.filter { $0.item != .cpu }
     expect(MenuIconModel.state(cpuY, dataState: .fresh) == MenuIconState(posture: .raised, badge: MenuBadge(item: .cpu)), "yellow: raised + category")
     let diskR = [verdict(.disk, .red, minutes: 192, headline: "5 天多占用 314 GB")] + green.filter { $0.item != .disk }
@@ -759,10 +759,10 @@ func runDogTests() {
     expect(MenuIconModel.text(green, dataState: .fresh, now: now) == "MoleMonitor：一切正常。温度、内存、磁盘、耗电、CPU 正常。", "text: all normal")
     expect(MenuIconModel.text(diskR, dataState: .fresh, now: now) == "MoleMonitor：磁盘异常，5 天多占用 314 GB，已持续 3 小时 12 分。温度、内存、耗电、CPU 正常。", "text: one problem")
     let two = [verdict(.disk, .red, minutes: 192), verdict(.cpu, .yellow, minutes: 40)] + green.filter { $0.item != .disk && $0.item != .cpu }
-    expect(MenuIconModel.text(two, dataState: .fresh, now: now) == "MoleMonitor：2 项需要处理。磁盘异常，已持续 3 小时 12 分。CPU 需留意，已持续 40 分。温度、内存、耗电正常。", "text: two problems in order")
+    expect(MenuIconModel.text(two, dataState: .fresh, now: now) == "MoleMonitor：2 项需要处理。磁盘异常，已持续 3 小时 12 分。CPU 需要留意，已持续 40 分。温度、内存、耗电正常。", "text: two problems in order")
     let desktop = green.filter { $0.item != .power } + [verdict(.power, .notApplicable)]
     expect(!MenuIconModel.text(desktop, dataState: .fresh, now: now).contains("耗电"), "text: no power item on a desktop")
-    expect(MenuIconModel.text(green, dataState: .collecting, now: now) == "MoleMonitor：正在统计。", "text: collecting")
+    expect(MenuIconModel.text(green, dataState: .collecting, now: now) == "MoleMonitor：正在采集。", "text: collecting")
     expect(MenuIconModel.text(green, dataState: .stale(now), now: now).hasPrefix("MoleMonitor：数据已过期，最后数据 "), "text: stale")
     expect(MenuIconModel.duration(30) == "不到 1 分" && MenuIconModel.duration(25 * 60) == "25 分", "duration: minutes")
     expect(MenuIconModel.duration(26 * 3600) == "1 天 2 小时" && MenuIconModel.duration(7200) == "2 小时", "duration: hours and days")

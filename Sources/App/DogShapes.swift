@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: DogArt path data, DogRig layers, a menu icon state (docs/DESIGN.md 3, 4.2, 4.6).
-// Output: Core Graphics drawing of the card Bichon and of the menu bar template icon.
-// Pos: The one renderer for DogView, StatusIconController and DogGallery. Builds each CGPath once and caches it. Owner I2.
+// Output: Core Graphics drawing of the card Bichon and of the menu bar icon (five states, DESIGN_V2.md 9).
+// Pos: The one renderer for DogView, StatusIconController and DogGallery. Builds each CGPath once and caches it. Owner WP-E
+//      (WP-D's DogView vector fallback calls DogRenderer and does not change it).
 // Stage 2: `drawFrame` draws an animated DogView frame (with the art crossfade of a gait switch), and the menu renderer
 // draws MenuIconFrame values, so the switch animation and the still icon share one drawing path.
 //
@@ -201,11 +202,66 @@ enum DogRenderer {
     }
 }
 
-/// The menu bar template icon: Bichon head on the left, badge on the right (DESIGN.md 3.1 to 3.4). Alpha is all that matters.
+/// Inks of one menu bar icon (DESIGN_V2.md 9.2 rule 2): `head` draws the head and the data mark (the menu bar text color,
+/// or black in a template image, where only alpha counts); `warning` and `danger` draw the yellow glyph and the red disc
+/// (tokens `dot.warning` and `dot.danger` of DESIGN_V2.md 3.3, light or dark by the menu bar appearance).
+struct MenuIconInk {
+    var head: CGColor
+    var warning: CGColor
+    var danger: CGColor
+
+    /// One color for everything (a template image, or a gallery cell in one ink).
+    static func mono(_ c: CGColor) -> MenuIconInk { MenuIconInk(head: c, warning: c, danger: c) }
+    static let template = mono(CGColor(gray: 0, alpha: 1))
+
+    static func hex(_ h: UInt32, alpha: CGFloat = 1) -> CGColor {
+        CGColor(srgbRed: CGFloat((h >> 16) & 0xFF) / 255, green: CGFloat((h >> 8) & 0xFF) / 255,
+                blue: CGFloat(h & 0xFF) / 255, alpha: alpha)
+    }
+
+    /// The badge colors of a light or dark menu bar, with the given head ink.
+    static func colored(dark: Bool, head: CGColor) -> MenuIconInk {
+        MenuIconInk(head: head, warning: hex(MenuIconPalette.hex(.warning, dark: dark)),
+                    danger: hex(MenuIconPalette.hex(.danger, dark: dark)))
+    }
+
+    /// Dark when the appearance is a dark one (dark aqua, vibrant dark, and their high contrast variants).
+    static func isDark(_ appearance: NSAppearance) -> Bool {
+        let match = appearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark,
+                                                .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua,
+                                                .accessibilityHighContrastVibrantLight, .accessibilityHighContrastVibrantDark])
+        return match == .darkAqua || match == .vibrantDark || match == .accessibilityHighContrastDarkAqua
+            || match == .accessibilityHighContrastVibrantDark
+    }
+
+    /// `labelColor` resolved for an appearance, in sRGB.
+    static func labelColor(_ appearance: NSAppearance) -> CGColor {
+        var c = CGColor(gray: isDark(appearance) ? 1 : 0, alpha: 0.85)
+        appearance.performAsCurrentDrawingAppearance {
+            if let srgb = NSColor.labelColor.usingColorSpace(.sRGB) { c = srgb.cgColor }
+        }
+        return c
+    }
+
+    /// The inks for an appearance: head in `labelColor`, badges in the tokens of that appearance.
+    static func resolved(_ appearance: NSAppearance) -> MenuIconInk {
+        colored(dark: isDark(appearance), head: labelColor(appearance))
+    }
+
+    /// The inks for the appearance AppKit draws with now (inside an NSImage drawing handler: the menu bar button's).
+    // UNVERIFIED-ON-MAC: the status bar button draws its image with its own effective appearance (light or dark menu
+    // bar, which follows the wallpaper on macOS 14). CI checks the drawing under forced aqua and darkAqua only.
+    static func current() -> MenuIconInk { resolved(NSAppearance.currentDrawing()) }
+}
+
+/// The menu bar icon: Bichon head on the left, badge or data mark on the right (DESIGN.md 3.1 to 3.4, DESIGN_V2.md 9).
 /// Round 2 (I2): the head (x 0 to 15) and the badge (x 16 to 24) never overlap, so there is no badge gap and the head
 /// is never cut. The ears are part of one head silhouette, so there is no ear gap either.
 /// Round 3 (I2): the red level (pant head) gets the alarm badge, a 9 x 9 pt solid disc at x 15 to 24 with the glyph
 /// knocked out (alpha 0). The yellow level keeps the 8 x 8 pt glyph. The tongue is drawn at 55 % alpha.
+/// v2 (WP-E, DESIGN_V2.md 9.2): five states. The yellow glyph and the red disc are colored, so their images are not
+/// templates: the head is drawn in the menu bar text color at draw time. Normal, collecting and stale stay template images.
+/// Collecting and stale draw the hollow head with a data mark (three dots, clock) in the 8 x 8 pt badge box.
 enum MenuIconRenderer {
     static let size = CGSize(width: DogArt.menuSize.w, height: DogArt.menuSize.h)
     /// Clear stroke around the tongue: half of it (0.75 pt) separates the tongue from the chin.
@@ -213,21 +269,39 @@ enum MenuIconRenderer {
     /// Width of the hollow ring, inside the silhouette (1.5 pt, so that it covers whole pixels at 2x and most of a pixel at 1x).
     static let hollowLine: CGFloat = 1.5
 
-    /// Draws the icon at `origin` (top left) in a y-down context, 1 unit = 1 pt. `ink` is the template ink.
+    /// Draws a still state at `origin` (top left) in a y-down context, 1 unit = 1 pt.
+    static func draw(_ state: MenuIconState, style: GlyphStyle, ink: MenuIconInk, at origin: CGPoint = .zero, in ctx: CGContext) {
+        draw(MenuMotion.still(state), style: style, ink: ink, mark: state.mark, at: origin, cached: true, in: ctx)
+    }
+
+    /// The same in one ink (alpha studies, template look).
     static func draw(_ state: MenuIconState, style: GlyphStyle, ink: CGColor, at origin: CGPoint = .zero, in ctx: CGContext) {
-        draw(MenuMotion.still(state), style: style, ink: ink, at: origin, cached: true, in: ctx)
+        draw(state, style: style, ink: .mono(ink), at: origin, in: ctx)
+    }
+
+    /// Draws one frame in one ink (the switch animation of the dog checks and the gallery).
+    static func draw(_ frame: MenuIconFrame, style: GlyphStyle, ink: CGColor, at origin: CGPoint = .zero,
+                     cached: Bool, in ctx: CGContext) {
+        draw(frame, style: style, ink: .mono(ink), mark: nil, at: origin, cached: cached, in: ctx)
     }
 
     /// Draws one frame (a still state or a frame of the switch animation, DESIGN.md 3.5). `cached` false builds the
-    /// paths of morphed frames without the shared cache, so the cache keeps only the still art.
-    static func draw(_ frame: MenuIconFrame, style: GlyphStyle, ink: CGColor, at origin: CGPoint = .zero,
+    /// paths of morphed frames without the shared cache, so the cache keeps only the still art. `mark` adds the data
+    /// mark of collecting or stale in the badge box.
+    static func draw(_ frame: MenuIconFrame, style: GlyphStyle, ink: MenuIconInk, mark: MenuMark?, at origin: CGPoint = .zero,
                      cached: Bool, in ctx: CGContext) {
         func path(_ part: DogPart) -> CGPath { cached ? DogPathCache.path(part.ops) : GlyphPaths.cgPath(part.ops) }
         ctx.saveGState()
         ctx.translateBy(x: origin.x, y: origin.y)
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-        ctx.setFillColor(ink)
-        ctx.setStrokeColor(ink)
+        // The head and the mark are one layer in the opaque head color, composited at the ink alpha (labelColor has
+        // alpha 0.85), so overlapping parts do not add up to a darker seam.
+        ctx.saveGState()
+        ctx.setAlpha(ink.head.alpha)
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        let headOpaque = ink.head.copy(alpha: 1) ?? ink.head
+        ctx.setFillColor(headOpaque)
+        ctx.setStrokeColor(headOpaque)
         let parts = frame.head
         if frame.hollow {
             // Inner ring of the silhouette: clip to the head, stroke twice the ring width, so the ring lies
@@ -265,9 +339,19 @@ enum MenuIconRenderer {
                 fill(p, clear: part.role == .cutout, in: ctx)
             }
         }
+        if let mark {
+            ctx.saveGState()
+            ctx.translateBy(x: DogArt.menuBadgeOrigin.x, y: DogArt.menuBadgeOrigin.y)
+            ctx.addPath(cached ? markPath(mark) : GlyphPaths.markYDown(mark))
+            ctx.fillPath()
+            ctx.restoreGState()
+        }
+        ctx.endTransparencyLayer()
+        ctx.restoreGState()
         if let badge = frame.badge, frame.badgeScale > 0.001 {
             let side = frame.alarm ? DogArt.alarmSize : DogArt.badgeSize
             let o = frame.alarm ? DogArt.alarmOrigin : DogArt.menuBadgeOrigin
+            ctx.saveGState()
             ctx.translateBy(x: o.x, y: o.y)
             if frame.badgeScale != 1 {
                 let k = CGFloat(frame.badgeScale), c = CGFloat(side / 2)
@@ -276,16 +360,23 @@ enum MenuIconRenderer {
                 ctx.translateBy(x: -c, y: -c)
             }
             if frame.alarm {
+                ctx.setFillColor(ink.danger)
                 for part in DogArt.alarmDisc { fill(DogPathCache.path(part.ops), clear: false, in: ctx) }
                 fill(GlyphPaths.alarmKnockout(badge.item, style: style), clear: true, in: ctx)
             } else {
+                ctx.setFillColor(ink.warning)
                 ctx.addPath(GlyphPaths.badgeYDown(badge.item, style: style))
                 ctx.fillPath()
             }
+            ctx.restoreGState()
         }
         ctx.endTransparencyLayer()
         ctx.restoreGState()
     }
+
+    /// The two mark paths, built once.
+    private static let markPaths: [MenuMark: CGPath] = Dictionary(uniqueKeysWithValues: MenuMark.allCases.map { ($0, GlyphPaths.markYDown($0)) })
+    private static func markPath(_ m: MenuMark) -> CGPath { markPaths[m] ?? GlyphPaths.markYDown(m) }
 
     private static func fill(_ path: CGPath, clear: Bool, in ctx: CGContext) {
         ctx.saveGState()
@@ -295,22 +386,41 @@ enum MenuIconRenderer {
         ctx.restoreGState()
     }
 
-    /// A template NSImage of the icon: 24 x 18 pt, vector, drawn again for each backing scale.
+    /// The still NSImage of a state: 24 x 18 pt, vector, drawn again for each backing scale. Normal, collecting and
+    /// stale: a template image. Caution and alert: not a template; the drawing handler resolves the head ink
+    /// (`labelColor`) and the badge color for the appearance AppKit draws with, and `cacheMode = .never` makes AppKit
+    /// run the handler again after an appearance change (DESIGN_V2.md 9.2 rule 2).
     static func image(_ state: MenuIconState, style: GlyphStyle = GlyphPaths.chosen) -> NSImage {
-        image(MenuMotion.still(state), style: style, cached: true)
+        let frame = MenuMotion.still(state)
+        let template = state.kind.isTemplate
+        let mark = state.mark
+        let image = NSImage(size: NSSize(width: size.width, height: size.height), flipped: true) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            let ink: MenuIconInk = template ? .template : .current()
+            MenuIconRenderer.draw(frame, style: style, ink: ink, mark: mark, cached: true, in: ctx)
+            return true
+        }
+        image.isTemplate = template
+        if !template { image.cacheMode = .never }
+        return image
     }
 
-    /// A template NSImage of one frame. Frames of the switch animation are bitmaps (1x and 2x reps), made once per
-    /// switch and kept by StatusIconController, so playing them never draws paths again.
-    static func image(_ frame: MenuIconFrame, style: GlyphStyle = GlyphPaths.chosen, cached: Bool) -> NSImage {
+    /// An NSImage of one frame. Frames of the switch animation are bitmaps (1x and 2x reps), made once per
+    /// switch and kept by StatusIconController, so playing them never draws paths again. `appearance` nil gives a
+    /// template image in black (the stage 2 behavior). With an appearance, the frame is drawn in the inks of that
+    /// appearance and the image is not a template, so the colored badge stays colored during the play.
+    static func image(_ frame: MenuIconFrame, style: GlyphStyle = GlyphPaths.chosen, cached: Bool,
+                      appearance: NSAppearance? = nil) -> NSImage {
         let pt = NSSize(width: size.width, height: size.height)
+        let ink: MenuIconInk = appearance.map { MenuIconInk.resolved($0) } ?? .template
+        let template = appearance == nil
         if cached {
             let image = NSImage(size: pt, flipped: true) { _ in
                 guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-                MenuIconRenderer.draw(frame, style: style, ink: CGColor(gray: 0, alpha: 1), cached: true, in: ctx)
+                MenuIconRenderer.draw(frame, style: style, ink: ink, mark: nil, cached: true, in: ctx)
                 return true
             }
-            image.isTemplate = true
+            image.isTemplate = template
             return image
         }
         let image = NSImage(size: pt)
@@ -321,13 +431,13 @@ enum MenuIconRenderer {
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
             ctx.translateBy(x: 0, y: CGFloat(h))
             ctx.scaleBy(x: CGFloat(scale), y: -CGFloat(scale))
-            MenuIconRenderer.draw(frame, style: style, ink: CGColor(gray: 0, alpha: 1), cached: false, in: ctx)
+            MenuIconRenderer.draw(frame, style: style, ink: ink, mark: nil, cached: false, in: ctx)
             guard let cg = ctx.makeImage() else { continue }
             let rep = NSBitmapImageRep(cgImage: cg)
             rep.size = pt
             image.addRepresentation(rep)
         }
-        image.isTemplate = true
+        image.isTemplate = template
         return image
     }
 }

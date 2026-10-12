@@ -42,6 +42,10 @@ struct HealthItemStatus: Codable, Equatable {
     var swapUsed: Measured<Int64>?
     var swapGrowth30m: Measured<Int64>?
     var swapTrend: SwapTrend?
+    /// Memory pressure percent (DESIGN_V2.md 5.4). Absent in files of older versions. Status "collecting" when unreadable.
+    var pressurePercent: Measured<Int>?
+    /// App, wired and compressed memory in bytes (DESIGN_V2.md 6.3). Absent in files of older versions.
+    var breakdown: MemoryBreakdown?
     // CPU.
     var mean5m: Measured<Double>?
     var mean10m: Measured<Double>?
@@ -61,6 +65,8 @@ struct HealthItemStatus: Codable, Equatable {
         case swapUsed = "swap_used"
         case swapGrowth30m = "swap_growth_30m"
         case swapTrend = "swap_trend"
+        case pressurePercent = "pressure_percent"
+        case breakdown
         case mean5m = "mean_5m"
         case mean10m = "mean_10m"
         case trend2h = "trend_2h"
@@ -141,6 +147,12 @@ enum StatusExtras {
             s.swapUsed = measuredBytes(c.swapUsed, at: at)
             s.swapGrowth30m = measuredBytes(c.swapGrowth30m, at: at)
             s.swapTrend = c.swapTrend
+            if let p = c.memoryPressurePercent {
+                s.pressurePercent = .ok(p, unit: "percent", at: at)
+            } else {
+                s.pressurePercent = .absent(unit: "percent", status: .collecting)
+            }
+            s.breakdown = c.memory
         case .cpu:
             s.mean5m = measuredPercent(c.cpuMean5m, at: at)
             s.mean10m = measuredPercent(c.cpuMean10m, at: at)
@@ -251,6 +263,16 @@ enum StatusExtras {
         return ProblemOrder.all(out)
     }
 
+    /// Fills the disk capacity triple of the readings from the status item (DESIGN_V2.md 6.3, D7).
+    static func applyDisk(_ d: DiskItem, to c: inout CurrentReadings) {
+        let cap = DiskCapacity.make(total: d.total.value, availableImportant: d.availableImportant.value,
+                                    availableNow: d.availableNow.value)
+        c.diskTotal = cap.total
+        c.diskUsed = cap.used
+        c.diskPurgeable = cap.purgeable
+        if let available = cap.available { c.diskAvailable = available }
+    }
+
     static func current(from status: StatusFile) -> CurrentReadings {
         var c = CurrentReadings()
         c.sampledAt = status.writtenAt
@@ -261,7 +283,10 @@ enum StatusExtras {
             c.swapUsed = m.swapUsed?.value
             c.swapGrowth30m = m.swapGrowth30m?.value
             c.swapTrend = m.swapTrend
+            c.memoryPressurePercent = m.pressurePercent?.value
+            c.memory = m.breakdown
         }
+        applyDisk(status.items.disk, to: &c)
         if let u = status.items.cpu {
             c.cpuMean5m = u.mean5m?.value
             c.cpuMean10m = u.mean10m?.value

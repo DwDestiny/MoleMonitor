@@ -1,24 +1,113 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: Health verdicts and the data state (docs/DESIGN.md 3.2, 3.3, 3.6, 8.1).
-// Output: The menu bar icon state (posture and badge), its accessibility text, and the 1x XOR ratio metric (3.3, 9.4 G1).
-// Pos: Pure mapping from health to icon; no drawing. Foundation only. Owner I2.
+// Input: Health verdicts and the data state (docs/DESIGN_V2.md 9.2, 9.3; docs/DESIGN.md 3.2, 3.6).
+// Output: The five menu bar icon states (kind, posture, badge, data mark), the accessibility text, the badge color tokens,
+//         and the 1x legibility metrics (XOR ratio, WCAG contrast) with their gate thresholds (W08, A, M14).
+// Pos: Pure mapping from health to icon; no drawing. Foundation only. Owner WP-E.
 
 import Foundation
 
 enum MenuPosture: String, CaseIterable { case relaxed, raised, pant, hollow }   // Ears relaxed, ears raised, tongue out, hollow
-struct MenuBadge: Hashable { var item: HealthItem }   // The badge shows the category only, not yellow or red
+struct MenuBadge: Hashable { var item: HealthItem }   // The category of the worst problem; the posture and the color show the level
+
+/// The mark of the two data states (DESIGN_V2.md 9.2): an 8 x 8 pt three-dot ellipsis (collecting) or a clock (stale).
+/// The mark is drawn in the menu bar text color, next to the hollow head.
+enum MenuMark: String, CaseIterable { case collecting, stale }
+
 struct MenuIconState: Hashable {
     var posture: MenuPosture
     var badge: MenuBadge?
+    /// Collecting or stale only (with the hollow posture). Nil in the three health states.
+    var mark: MenuMark? = nil
+
+    /// The v2 state of this value (DESIGN_V2.md 9.2).
+    var kind: MenuIconKind {
+        if let mark { return mark == .collecting ? .collecting : .stale }
+        guard badge != nil else { return .normal }
+        return posture == .pant ? .alert : .caution
+    }
+}
+
+/// The five states of the v2 menu bar icon (DESIGN_V2.md 9.2). `MenuIconState` is the drawable value of a state:
+/// `MenuIconModel.state` gives it, and `MenuIconState.kind` maps it back.
+enum MenuIconKind: String, CaseIterable {
+    case normal, caution, alert, collecting, stale
+
+    /// The head posture of the state (9.2 table).
+    var posture: MenuPosture {
+        switch self {
+        case .normal: return .relaxed
+        case .caution: return .raised
+        case .alert: return .pant
+        case .collecting, .stale: return .hollow
+        }
+    }
+
+    /// True: one template image (the whole icon follows the menu bar). False: the badge has its own color, so the image
+    /// is not a template and the head is drawn in the menu bar text color (9.2 rule 2). Collecting and stale draw their
+    /// mark in the menu bar text color, so a template image gives the same look; they stay templates.
+    var isTemplate: Bool { self != .caution && self != .alert }
+
+    /// The badge color token (DESIGN_V2.md 3.3), or nil for the menu bar text color.
+    var badgeToken: MenuIconPalette.Token? {
+        switch self {
+        case .caution: return .warning
+        case .alert: return .danger
+        default: return nil
+        }
+    }
+}
+
+/// Badge colors of DESIGN_V2.md 3.3 (`dot.warning`, `dot.danger`) and the reference menu bar colors of the contrast gate.
+/// The App resolves light or dark from the menu bar appearance at draw time.
+enum MenuIconPalette {
+    enum Token: String, CaseIterable { case warning, danger }
+
+    static func hex(_ token: Token, dark: Bool) -> UInt32 {
+        switch token {
+        case .warning: return dark ? 0xFF9F0A : 0xC26400
+        case .danger: return dark ? 0xFF453A : 0xE5302A
+        }
+    }
+
+    /// Reference menu bar colors (the gallery bar backgrounds): the gate W08 needs contrast >= 3:1 on both.
+    static func bar(dark: Bool) -> UInt32 { dark ? 0x252527 : 0xF2F2F2 }
+    /// Informational backgrounds (not gated): the selected highlight and wallpaper-tinted bars (the gallery mock-up).
+    static let lightExtras: [(String, UInt32)] = [("selected", 0xDCDCDC), ("wallpaperWarm", 0xD9C7A6)]
+    static let darkExtras: [(String, UInt32)] = [("selected", 0x47474A), ("wallpaperBlue", 0x5B7DB1)]
 }
 
 enum MenuIconModel {
-    /// Collecting or stale: hollow, no badge. Otherwise the worst level picks the posture and the first problem item
+    /// The v2 state: collecting and stale are separate, yellow is `caution`, red is `alert`. The worst problem decides
+    /// (ProblemOrder puts red first). Equal to `state(verdicts, dataState:).kind`.
+    static func kind(_ verdicts: [ItemVerdict], dataState: DataState) -> MenuIconKind {
+        switch dataState {
+        case .collecting: return .collecting
+        case .stale: return .stale
+        case .fresh: break
+        }
+        guard let first = ProblemOrder.problems(verdicts).first else { return .normal }
+        return first.level == .red ? .alert : .caution
+    }
+
+    /// The drawable value of a state for one badge item (`item` is used by caution and alert only). Round trip:
+    /// `state(for: k, item: i).kind == k`.
+    static func state(for kind: MenuIconKind, item: HealthItem) -> MenuIconState {
+        switch kind {
+        case .normal: return MenuIconState(posture: .relaxed, badge: nil)
+        case .caution: return MenuIconState(posture: .raised, badge: MenuBadge(item: item))
+        case .alert: return MenuIconState(posture: .pant, badge: MenuBadge(item: item))
+        case .collecting: return MenuIconState(posture: .hollow, badge: nil, mark: .collecting)
+        case .stale: return MenuIconState(posture: .hollow, badge: nil, mark: .stale)
+        }
+    }
+
+    /// Collecting or stale: hollow, no badge, the data mark. Otherwise the worst level picks the posture and the first problem item
     /// in ProblemOrder picks the badge (DESIGN.md 3.2).
     static func state(_ verdicts: [ItemVerdict], dataState: DataState) -> MenuIconState {
         switch dataState {
-        case .collecting, .stale: return MenuIconState(posture: .hollow, badge: nil)
+        case .collecting: return MenuIconState(posture: .hollow, badge: nil, mark: .collecting)
+        case .stale: return MenuIconState(posture: .hollow, badge: nil, mark: .stale)
         case .fresh: break
         }
         guard let first = ProblemOrder.problems(verdicts).first else {
@@ -28,13 +117,28 @@ enum MenuIconModel {
         return MenuIconState(posture: posture, badge: MenuBadge(item: first.item))
     }
 
-    /// Tooltip and VoiceOver text (DESIGN.md 3.6): problem items in ProblemOrder, then the normal items.
+    /// The accessibility label of a state (DESIGN_V2.md 9.2 table), without the end mark. `item` is the badge item of
+    /// caution and alert. The tooltip and VoiceOver text (`text`) start with this label.
+    static func label(_ kind: MenuIconKind, item: HealthItem?) -> String {
+        let name = item?.label ?? ""
+        let latin = name.unicodeScalars.last.map { $0.isASCII } ?? false
+        switch kind {
+        case .normal: return "MoleMonitor：一切正常"
+        case .caution: return "MoleMonitor：" + name + (latin ? " " : "") + "需要留意"
+        case .alert: return "MoleMonitor：" + name + (latin ? " " : "") + "异常"
+        case .collecting: return "MoleMonitor：正在采集"
+        case .stale: return "MoleMonitor：数据已过期"
+        }
+    }
+
+    /// Tooltip and VoiceOver text (DESIGN.md 3.6, DESIGN_V2.md 9.2): one problem starts with the 9.2 label; more problems
+    /// give the count, then each problem item in ProblemOrder; then the normal items.
     static func text(_ verdicts: [ItemVerdict], dataState: DataState, now: Date) -> String {
         switch dataState {
         case .collecting:
-            return "MoleMonitor：正在统计。"
+            return label(.collecting, item: nil) + "。"
         case .stale(let last):
-            return "MoleMonitor：数据已过期，最后数据 \(clock(last))。"
+            return label(.stale, item: nil) + "，最后数据 \(clock(last))。"
         case .fresh:
             break
         }
@@ -47,10 +151,10 @@ enum MenuIconModel {
         let latinEnd = joined.unicodeScalars.last.map { $0.isASCII } ?? false
         let normalText = normals.isEmpty ? "" : joined + (latinEnd ? " 正常。" : "正常。")
         if problems.isEmpty {
-            return "MoleMonitor：一切正常。" + normalText
+            return label(.normal, item: nil) + "。" + normalText
         }
         func name(_ v: ItemVerdict) -> String {
-            let w = v.level == .red ? "异常" : "需留意"
+            let w = v.level == .red ? "异常" : "需要留意"
             let latin = v.item.label.unicodeScalars.last.map { $0.isASCII } ?? false
             return v.item.label + (latin ? " " : "") + w
         }
@@ -89,8 +193,31 @@ enum MenuIconModel {
     }
 }
 
-/// The 1x legibility metric of DESIGN.md 3.3 and 9.4 G1-4 and G1-5.
+/// The 1x legibility metric of DESIGN.md 3.3 and 9.4 G1-4 and G1-5, and the five-state gates of DESIGN_V2.md 9.3 (W08).
 enum IconMetrics {
+    /// Five states pairwise at 1x (W08, DESIGN_V2.md 9.3). The data marks (ellipsis, clock) join the badge glyph matrix
+    /// at `badgePass`.
+    static let fiveStatePass = 0.20
+    /// Yellow and red badges against the reference menu bars (W08): WCAG contrast at least this ratio.
+    static let badgeContrastPass = 3.0
+    /// Head ink of a non-template icon against the menu bar text color: each channel within this value (0 to 255, gate A).
+    static let headInkTolerance = 8.0
+
+    /// WCAG 2 relative luminance of an sRGB color 0xRRGGBB.
+    static func luminance(_ hex: UInt32) -> Double {
+        func channel(_ v: UInt32) -> Double {
+            let c = Double(v & 0xFF) / 255
+            return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channel(hex >> 16) + 0.7152 * channel(hex >> 8) + 0.0722 * channel(hex)
+    }
+
+    /// WCAG 2 contrast ratio of two opaque sRGB colors (1 to 21).
+    static func contrast(_ a: UInt32, _ b: UInt32) -> Double {
+        let la = luminance(a), lb = luminance(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    }
+
     /// A pixel is solid when its alpha is at least this value.
     static let solidThreshold = 0.5
     /// Badge glyphs pass at this ratio (G1-5), postures at 0.20 (G1-4).

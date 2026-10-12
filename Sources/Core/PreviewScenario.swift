@@ -20,13 +20,13 @@ enum PreviewScenario {
         let wobble = 1.2 * sin(d * 0.9) + 0.4 * sin(d * 2.3)
         switch level {
         case .green:
-            return 380 + 0.5 * (30 - d) + wobble
+            return 568 + 0.5 * (30 - d) + wobble   // ends at about 583 GB used (DESIGN_V2.md 2.5)
         case .yellow:
             let ramp = max(0, min(1, (4.6 - d) / 4.6))
             return 450 + 0.3 * (30 - d) + 105 * ramp + wobble
         case .red:
             let ramp = max(0, min(1, (4.8 - d) / 4.8))
-            return 271 + 0.4 * (30 - d) + 310 * ramp * ramp * (3 - 2 * ramp) + wobble
+            return 553 + 0.4 * (30 - d) + 310 * ramp * ramp * (3 - 2 * ramp) + wobble   // ends at about 875 GB used (DESIGN_V2.md 2.4)
         }
     }
 
@@ -44,7 +44,7 @@ enum PreviewScenario {
             let used = Int64(usedGB(level, daysAgo: age / 86400) * 1e9)
             let total = Int64(totalGB * 1e9)
             out.append(DiskSample(t: now.addingTimeInterval(-age), src: .timer, total: total,
-                                  availImportant: total - used, avail: total - used - 14_000_000_000,
+                                  availImportant: total - used, avail: total - used - 21_000_000_000,
                                   netRx: rx, netTx: tx))
         }
         return out
@@ -96,6 +96,8 @@ struct PreviewFixture {
     var diskTrigger: DiskTrigger?
     /// The fixed dog input of the scenario (DESIGN.md 8.5). Added to 8.1: the gallery and the screenshots read it.
     var dogInput: DogInput
+    /// Invented anomaly records of the last 7 days (DESIGN_V2.md 7.4). Newest first. Empty for `full: false`.
+    var events: [EventRecord] = []
 }
 
 private struct TrendShape {
@@ -105,11 +107,13 @@ private struct TrendShape {
     var pressure: (Double) -> MemoryPressure
     var battery: (Double) -> Double
     var power: (Double) -> PowerSource
+    /// Memory pressure percent, minutes ago -> 0...100.
+    var pressurePercent: (Double) -> Int = { _ in 23 }
 }
 
 extension PreviewScenario {
-    /// Physical memory of the invented machine: 16 GiB.
-    static let fixturePhysicalMemory: Int64 = 17_179_869_184
+    /// Physical memory of the invented machine: 64 GiB (the Mac15,8 of DESIGN_V2.md 8.8).
+    static let fixturePhysicalMemory: Int64 = 68_719_476_736
 
     /// Fixed data for one scenario. Every value is invented. `full: false` removes the trend, the apps, the sleep
     /// records and the disk series (an empty first run); verdicts, current readings and status stay.
@@ -134,7 +138,10 @@ extension PreviewScenario {
                                 notifications: .init(authorization: "authorized"))
 
         var current = fixtureCurrent(c, at: statusNow)
-        if c != .collecting { current.diskAvailable = engine.items.disk.availableImportant.value }
+        if c != .collecting {
+            current.diskAvailable = engine.items.disk.availableImportant.value
+            StatusExtras.applyDisk(engine.items.disk, to: &current)
+        }
         let verdicts = fixtureVerdicts(c, current: current, engine: engine, now: statusNow)
         // The fixture disk problem started 3 hours ago (see `fixtureVerdicts`): the status item says the same.
         if let disk = verdicts.first(where: { $0.item == .disk }), disk.isProblem {
@@ -148,7 +155,9 @@ extension PreviewScenario {
         var sleeps = [SleepRecord]()
         var diskSeries = [DiskPoint]()
         var diskTrigger: DiskTrigger?
+        var events = [EventRecord]()
         if full {
+            events = fixtureEvents(c, now: statusNow)
             trend = fixtureTrend(c, now: now)
             apps = c == .collecting ? [] : fixtureApps(c)   // A first run has not scanned processes yet.
             if c == .powerYellow, let s = current.lastSleep { sleeps = [s] }
@@ -156,7 +165,64 @@ extension PreviewScenario {
             diskTrigger = DiskSeries.trigger(verdict: engine.verdict, samples: samples)
         }
         return PreviewFixture(verdicts: verdicts, current: current, trend: trend, sleeps: sleeps, apps: apps,
-                              status: status, diskSeries: diskSeries, diskTrigger: diskTrigger, dogInput: dog)
+                              status: status, diskSeries: diskSeries, diskTrigger: diskTrigger, dogInput: dog, events: events)
+    }
+
+    // MARK: Anomaly records (DESIGN_V2.md 7.4)
+
+    /// Invented records. Problems that are open in the scenario have `end == nil`. The app name is a fictional one.
+    static func fixtureEvents(_ c: PreviewCase, now: Date) -> [EventRecord] {
+        func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
+        func record(_ item: HealthItem, _ first: HealthLevel, _ peak: HealthLevel, _ reason: String, start: Double,
+                    end: Double?, value: Double?, unit: String?, app: String? = nil) -> EventRecord {
+            EventRecord(item: item, first: first, peak: peak, reasonCode: reason, start: ago(start),
+                        end: end.map { ago($0) }, peakValue: value, unit: unit, app: app, endEstimated: false)
+        }
+        let day = 1440.0
+        // Two closed records of the last week: shown in every scenario with data (DESIGN_V2.md 2.5: "近 7 天 2 条记录").
+        let cpuOld = record(.cpu, .yellow, .yellow, "cpu_mean_5m", start: 2 * day + 600, end: 2 * day + 540, value: 82, unit: "%")
+        let memOld = record(.memory, .yellow, .yellow, "pressure_warning", start: 4 * day + 300, end: 4 * day + 270, value: 71, unit: "%")
+        var open = [EventRecord]()
+        switch c {
+        case .allGreen, .stale, .collecting:
+            break
+        case .cpuYellow:
+            open = [record(.cpu, .yellow, .yellow, "cpu_mean_5m", start: 18, end: nil, value: 76, unit: "%")]
+        case .diskRed:
+            open = [record(.disk, .yellow, .red, "growth_5d", start: 192, end: nil, value: 314, unit: "GB")]
+        case .powerYellow:
+            open = [record(.power, .yellow, .yellow, "sleep_drain", start: 130, end: nil, value: 3.3, unit: "%/h")]
+        case .multi:
+            open = [record(.disk, .yellow, .red, "growth_5d", start: 192, end: nil, value: 314, unit: "GB"),
+                    record(.memory, .yellow, .red, "pressure_critical", start: 50, end: nil, value: 91, unit: "%"),
+                    record(.power, .yellow, .yellow, "awake_drain", start: 40, end: nil, value: 34, unit: "%/h"),
+                    record(.cpu, .yellow, .yellow, "cpu_mean_5m", start: 40, end: nil, value: 74, unit: "%")]
+        }
+        if c == .collecting { return [] }
+        return open + [cpuOld, memOld]
+    }
+
+    // MARK: Rollup windows (DESIGN_V2.md 12.2 D1)
+
+    /// Invented 5 minute windows that end at `now`, covering `hours` hours. Smooth curves; the values match the scenario.
+    static func fixtureRollups(_ c: PreviewCase, hours: Int, now: Date) -> [RollupWindow] {
+        guard c != .collecting else { return [] }
+        let current = fixtureCurrent(c, at: now)
+        let count = hours * 12
+        var out = [RollupWindow]()
+        for i in 0..<count {
+            let ago = Double(count - 1 - i) * RollupStore.windowSeconds
+            let h = ago / 3600
+            let cpu = max(2, (current.cpuPercent ?? 10) + 6 * sin(h * 1.3) + 3 * sin(h * 4.1))
+            let pp = Double(current.memoryPressurePercent ?? 23) + 5 * sin(h * 0.9)
+            out.append(RollupWindow(end: now.addingTimeInterval(-ago), pointCount: 10, cpuMean: cpu, cpuPeak: min(100, cpu + 15),
+                                    pressureMean: max(0, min(100, pp)), pressurePeak: max(0, min(100, pp + 8)),
+                                    swapMB: Int64((current.swapUsed ?? 0) / 1_000_000), pressure: current.pressure,
+                                    thermal: current.thermal, batteryPercent: current.batteryPercent,
+                                    power: current.powerSource, rxKBps: 450 + 300 * (sin(h * 2.1) + 1),
+                                    txKBps: 70 + 50 * (sin(h * 3.7) + 1)))
+        }
+        return out
     }
 
     // MARK: Prompt input (golden tests and the CLI tests)
@@ -210,6 +276,13 @@ extension PreviewScenario {
 
     // MARK: Current readings
 
+    /// Memory split of the invented 64 GiB machine from GiB values (one decimal, as the card shows them).
+    private static func fixtureMemory(app: Double, wired: Double, compressed: Double) -> MemoryBreakdown {
+        let gib = Double(1 << 30)
+        return MemoryBreakdown(app: Int64((app * gib).rounded()), wired: Int64((wired * gib).rounded()),
+                               compressed: Int64((compressed * gib).rounded()), total: fixturePhysicalMemory)
+    }
+
     private static func fixtureCurrent(_ c: PreviewCase, at t: Date) -> CurrentReadings {
         let gib = Double(1 << 30)
         var r = CurrentReadings()
@@ -221,21 +294,25 @@ extension PreviewScenario {
         r.tx = 220_000
         switch c {
         case .allGreen, .stale, .collecting:
+            r.memoryPressurePercent = 23; r.memory = fixtureMemory(app: 20.0, wired: 6.0, compressed: 5.4)
             r.cpuPercent = 8; r.cpuMean5m = 8; r.cpuMean10m = 9
             r.pressure = .normal; r.swapUsed = Int64(1.2 * gib); r.swapGrowth30m = 20_000_000; r.swapTrend = .flat
             r.batteryPercent = 83; r.powerSource = .ac
             r.smcCPUTemperature = 41; r.fanRPMs = [1200, 1215]
         case .cpuYellow:
+            r.memoryPressurePercent = 31; r.memory = fixtureMemory(app: 26.0, wired: 6.2, compressed: 6.4)
             r.cpuPercent = 76; r.cpuMean5m = 76; r.cpuMean10m = 74
             r.pressure = .normal; r.swapUsed = Int64(2.1 * gib); r.swapGrowth30m = 60_000_000; r.swapTrend = .flat
             r.batteryPercent = 83; r.powerSource = .ac
             r.smcCPUTemperature = 49; r.fanRPMs = [2400, 2410]
         case .diskRed:
+            r.memoryPressurePercent = 28; r.memory = fixtureMemory(app: 23.0, wired: 6.1, compressed: 5.1)
             r.cpuPercent = 23; r.cpuMean5m = 22; r.cpuMean10m = 21
             r.pressure = .normal; r.swapUsed = Int64(1.8 * gib); r.swapGrowth30m = 30_000_000; r.swapTrend = .flat
             r.batteryPercent = 83; r.powerSource = .ac
             r.smcCPUTemperature = 44; r.fanRPMs = [1400, 1405]
         case .powerYellow:
+            r.memoryPressurePercent = 25; r.memory = fixtureMemory(app: 21.5, wired: 6.0, compressed: 5.5)
             r.cpuPercent = 12; r.cpuMean5m = 12; r.cpuMean10m = 11
             r.pressure = .normal; r.swapUsed = Int64(1.3 * gib); r.swapGrowth30m = 10_000_000; r.swapTrend = .flat
             r.batteryPercent = 61; r.powerSource = .battery
@@ -246,6 +323,7 @@ extension PreviewScenario {
             r.awakeDrainPerHour = 0.8
             r.smcCPUTemperature = 38; r.fanRPMs = [0, 0]
         case .multi:
+            r.memoryPressurePercent = 87; r.memory = fixtureMemory(app: 41.0, wired: 6.1, compressed: 11.1)
             r.cpuPercent = 74; r.cpuMean5m = 74; r.cpuMean10m = 72
             r.pressure = .critical; r.swapUsed = 9_800_000_000; r.swapGrowth30m = 2_400_000_000; r.swapTrend = .steepUp
             r.batteryPercent = 42; r.powerSource = .battery
@@ -349,6 +427,7 @@ extension PreviewScenario {
         case .allGreen:
             break
         case .cpuYellow:
+            shape.pressurePercent = { _ in 31 }
             shape.cpu = { (m: Double) -> Double in m <= 22.0 ? wave(76, 6, m) : wave(20, 7, m) }
             shape.swap = flatSwap(2.1)
         case .diskRed:
@@ -374,6 +453,7 @@ extension PreviewScenario {
                 return Int64(bytes)
             }
             shape.pressure = { m in m <= 25 ? .critical : (m <= 60 ? .warning : .normal) }
+            shape.pressurePercent = { (m: Double) -> Int in m <= 25 ? 87 : (m <= 60 ? 64 : 41) }
             shape.battery = { (m: Double) -> Double in m <= 70.0 ? 42.0 + 34.0 * m / 60.0 : 82.0 }
             shape.power = { m in m <= 70 ? .battery : .ac }
         case .collecting:
@@ -394,7 +474,8 @@ extension PreviewScenario {
             let cpu: Double = min(100.0, max(0.0, shape.cpu(m)))
             return TrendPoint(t: end.addingTimeInterval(-secondsAgo), cpu: cpu,
                               rx: rx, tx: tx, swapUsed: shape.swap(m), battery: shape.battery(m),
-                              pressure: shape.pressure(m), thermal: .nominal, power: shape.power(m))
+                              pressure: shape.pressure(m), thermal: .nominal, power: shape.power(m),
+                              pressurePercent: shape.pressurePercent(m))
         }
         var points = [TrendPoint]()
         for s in stride(from: 7200.0, to: fine ? 300.0 : -1.0, by: -30.0) { points.append(point(s)) }

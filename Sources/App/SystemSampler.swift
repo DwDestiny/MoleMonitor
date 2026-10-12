@@ -9,6 +9,7 @@
 
 import Foundation
 import Darwin
+import SystemConfiguration
 
 final class SystemSampler {
     struct Reading {
@@ -18,6 +19,14 @@ final class SystemSampler {
         var pressure: MemoryPressure?
         var swapUsed: Int64?
         var thermal: ThermalLevel?
+        /// Filled on every call (30 s and 2 s tick): two cheap reads, no new timer (DESIGN_V2.md 5.4).
+        /// 100 - kern.memorystatus_level. Nil when the sysctl fails or the level is outside 0...100.
+        var pressurePercent: Int?
+        /// App, wired and compressed memory from host_statistics64. Nil when the call fails.
+        var memory: MemoryBreakdown?
+        /// Speed and totals per physical interface (DESIGN_V2.md 6.6, D9). Filled on every call from the same counter read
+        /// as `rate`. Nil when the counters cannot be read. Rates inside are nil on the first call.
+        var interfaces: [InterfaceRate]?
     }
 
     struct MachineInfo {
@@ -28,8 +37,14 @@ final class SystemSampler {
     }
 
     private let host: mach_port_t
+    private let memoryTotal: Int64? = SystemSampler.sysctlInt64("hw.memsize")
     private var prevTicks: [CPUTicks]?
     private var prevNet: (rx: Int64, tx: Int64, at: Date)?
+    private var prevCounters: (list: [InterfaceCounters], at: Date)?
+    /// BSD name to display name, kept in memory only (DESIGN_V2.md D9). Read again only when a physical interface has no
+    /// name yet, and at most once per 60 s.
+    private var displayNames = [String: String]()
+    private var namesReadAt: Date?
 
     init() {
         // One send right for the lifetime of this object; released in deinit.
@@ -51,7 +66,17 @@ final class SystemSampler {
             prevTicks = nil
         }
 
-        if let counters = Sampler.readNetworkCounters(), let total = NetworkFilter.total(counters) {
+        let allCounters = Sampler.readNetworkCounters()
+        if let counters = allCounters {
+            refreshDisplayNames(for: counters, at: now)
+            reading.interfaces = InterfaceRates.make(previous: prevCounters?.list, current: counters,
+                                                     seconds: prevCounters.map { now.timeIntervalSince($0.at) } ?? 0,
+                                                     displayNames: displayNames)
+            prevCounters = (counters, now)
+        } else {
+            prevCounters = nil
+        }
+        if let counters = allCounters, let total = NetworkFilter.total(counters) {
             if let prev = prevNet {
                 reading.rate = NetworkFilter.rate(prevRx: prev.rx, prevTx: prev.tx, rx: total.rx, tx: total.tx,
                                                   seconds: now.timeIntervalSince(prev.at))
@@ -61,12 +86,33 @@ final class SystemSampler {
             prevNet = nil
         }
 
+        reading.pressurePercent = SystemSampler.memoryPressurePercent()
+        reading.memory = readMemoryBreakdown()
+
         if slow {
             reading.pressure = SystemSampler.memoryPressure()
             reading.swapUsed = SystemSampler.swapUsed()
             reading.thermal = SystemSampler.thermalLevel()
         }
         return reading
+    }
+
+    // MARK: Interface names
+
+    /// UNVERIFIED-ON-MAC: SCNetworkInterfaceCopyAll lists the hardware services (Wi-Fi, Ethernet, iPhone USB, Thunderbolt
+    /// Bridge). An interface it does not list keeps its BSD name. Read only; nothing is configured.
+    private func refreshDisplayNames(for counters: [InterfaceCounters], at now: Date) {
+        let missing = counters.contains { NetworkFilter.isPhysical($0.name) && displayNames[$0.name] == nil }
+        guard missing else { return }
+        if let last = namesReadAt, now.timeIntervalSince(last) < 60 { return }
+        namesReadAt = now
+        var names = [String: String]()
+        for item in (SCNetworkInterfaceCopyAll() as? [SCNetworkInterface]) ?? [] {
+            guard let bsd = SCNetworkInterfaceGetBSDName(item) as String?,
+                  let title = SCNetworkInterfaceGetLocalizedDisplayName(item) as String?, !title.isEmpty else { continue }
+            names[bsd] = title
+        }
+        displayNames = names
     }
 
     // MARK: CPU
@@ -111,6 +157,37 @@ final class SystemSampler {
         case 4: return .critical
         default: return nil
         }
+    }
+
+    /// `kern.memorystatus_level` is the system's available-memory percent. The pressure percent is 100 minus it.
+    /// It is an approximate reading without Apple documentation (DESIGN_V2.md 5.4); the colors never use it.
+    // UNVERIFIED-ON-MAC: the sysctl returns a 4 byte integer on macOS 14 and 15.
+    static func memoryPressurePercent() -> Int? {
+        var level: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname("kern.memorystatus_level", &level, &size, nil, 0) == 0,
+              size == MemoryLayout<Int32>.size else { return nil }
+        return PressurePercent.from(level: Int(level))
+    }
+
+    /// Page counts of host_statistics64(HOST_VM_INFO64), turned into bytes by `MemoryBreakdown.make` (Core).
+    // UNVERIFIED-ON-MAC: field names of vm_statistics64 and the HOST_VM_INFO64 flavor constant as imported by Swift.
+    private func readMemoryBreakdown() -> MemoryBreakdown? {
+        var stats = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride)
+        let status = withUnsafeMutablePointer(to: &stats) { pointer -> kern_return_t in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard status == KERN_SUCCESS else { return nil }
+        var pageSize: vm_size_t = 0
+        guard host_page_size(host, &pageSize) == KERN_SUCCESS, pageSize > 0 else { return nil }
+        return MemoryBreakdown.make(internalPages: Int64(stats.internal_page_count),
+                                    purgeablePages: Int64(stats.purgeable_count),
+                                    wirePages: Int64(stats.wire_count),
+                                    compressorPages: Int64(stats.compressor_page_count),
+                                    pageSize: Int64(pageSize), total: memoryTotal)
     }
 
     /// Bytes of swap in use (vm.swapusage, struct xsw_usage). Nil when the read fails.

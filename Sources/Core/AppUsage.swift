@@ -18,6 +18,8 @@ struct ProcessSample: Equatable {
     var footprint: UInt64?
     var rss: UInt64?
     var isSystem: Bool
+    /// Cumulative bytes written since the process started (`ri_diskio_byteswritten`). Nil when not read.
+    var diskWritten: UInt64? = nil
 }
 
 struct AppUsage: Codable, Equatable, Identifiable {
@@ -29,6 +31,9 @@ struct AppUsage: Codable, Equatable, Identifiable {
     var memoryBasis: String     // "footprint" or "rss"
     var processCount: Int
     var isSystem: Bool
+    /// Bytes written to disk since the previous scan (`ri_diskio_byteswritten` difference). Nil when not measured.
+    /// Writes are not disk growth: deletes and overwrites count too (DESIGN_V2.md 6.4).
+    var diskWrittenBytes: Int64?
     var id: String { key }
 }
 
@@ -73,7 +78,11 @@ enum AppRanking {
                       ignore: Set<String>) -> [AppUsage] {
         struct Key: Hashable { var pid: Int32; var start: UInt64 }
         var before = [Key: UInt64]()
-        for p in previous { before[Key(pid: p.pid, start: p.startAbs)] = p.cpuTimeNs }
+        var writtenBefore = [Key: UInt64]()
+        for p in previous {
+            before[Key(pid: p.pid, start: p.startAbs)] = p.cpuTimeNs
+            if let w = p.diskWritten { writtenBefore[Key(pid: p.pid, start: p.startAbs)] = w }
+        }
         let canMeasure = !previous.isEmpty && seconds > 0
 
         struct Group {
@@ -84,6 +93,7 @@ enum AppRanking {
             var usedRSS = false
             var count = 0
             var allSystem = true
+            var written: Int64?
         }
         var groups = [String: Group]()
         var order = [String]()
@@ -95,6 +105,13 @@ enum AppRanking {
                 let old = before[Key(pid: p.pid, start: p.startAbs)] ?? 0
                 let delta = p.cpuTimeNs > old ? Double(p.cpuTimeNs - old) : 0
                 g.cpu = (g.cpu ?? 0) + delta / (seconds * 1e9) * 100
+            }
+            // Disk writes: like CPU, a new process counts all its writes. A counter that went down counts as 0.
+            // The previous scan must exist and have disk data, or the value stays nil (not measured).
+            if canMeasure, let w = p.diskWritten, !writtenBefore.isEmpty {
+                let old = writtenBefore[Key(pid: p.pid, start: p.startAbs)] ?? 0
+                let delta = w > old ? w - old : 0
+                g.written = (g.written ?? 0) + Int64(clamping: delta)
             }
             if let f = p.footprint {
                 g.memory = (g.memory ?? 0) + Int64(f)
@@ -110,7 +127,8 @@ enum AppRanking {
         for key in order {
             guard let g = groups[key] else { continue }
             out.append(AppUsage(key: key, name: g.name, bundleID: g.bundleID, cpuPercent: g.cpu, memoryBytes: g.memory,
-                                memoryBasis: g.usedRSS ? "rss" : "footprint", processCount: g.count, isSystem: g.allSystem))
+                                memoryBasis: g.usedRSS ? "rss" : "footprint", processCount: g.count, isSystem: g.allSystem,
+                                diskWrittenBytes: g.written))
         }
         return out
     }
@@ -134,6 +152,80 @@ enum AppRanking {
             return a.key < b.key
         }
         return Array(sorted.prefix(max(0, count)))
+    }
+}
+
+/// An app that holds a power assertion (DESIGN_V2.md 6.5). Display name and the two kinds only.
+struct SleepBlocker: Codable, Equatable {
+    var name: String
+    var preventsSystemSleep: Bool
+    var preventsDisplaySleep: Bool
+
+    /// "防止系统睡眠", "防止显示器睡眠" or both joined by "、".
+    var kindText: String {
+        var parts = [String]()
+        if preventsSystemSleep { parts.append("防止系统睡眠") }
+        if preventsDisplaySleep { parts.append("防止显示器睡眠") }
+        return parts.joined(separator: "、")
+    }
+}
+
+/// Disk bytes written per app over the last 5 minutes (DESIGN_V2.md 6.5). Writes are not disk growth: deletes and
+/// overwrites count too. Intervals longer than 10 minutes (sleep) are not counted. Memory only, nothing is stored.
+struct AppDiskWriteTracker {
+    static let window: TimeInterval = 300
+    static let longestInterval: TimeInterval = 600
+    /// A row below 1 MB in the window is not shown.
+    static let minimumBytes: Int64 = 1_000_000
+
+    struct Row: Equatable {
+        var key: String
+        var name: String
+        var bytes: Int64
+        var isSystem: Bool
+    }
+
+    private struct Entry {
+        var at: Date
+        var bytes: [String: Int64]
+    }
+
+    private var entries = [Entry]()
+    private var names = [String: (name: String, isSystem: Bool)]()
+
+    init() {}
+
+    mutating func add(at time: Date, seconds: Double, usage: [AppUsage]) {
+        guard seconds > 0, seconds <= AppDiskWriteTracker.longestInterval else { return }
+        if let last = entries.last, time <= last.at { entries.removeAll() }   // The clock moved back: start again.
+        var bytes = [String: Int64]()
+        for u in usage {
+            guard let w = u.diskWrittenBytes, w > 0 else { continue }
+            bytes[u.key] = w
+            names[u.key] = (u.name, u.isSystem)
+        }
+        entries.append(Entry(at: time, bytes: bytes))
+        entries.removeAll { time.timeIntervalSince($0.at) > AppDiskWriteTracker.window }
+    }
+
+    mutating func reset() {
+        entries.removeAll()
+        names.removeAll()
+    }
+
+    /// The top writers of the last 5 minutes, largest first. Ties sort by name.
+    func top(now: Date, count: Int = 5) -> [Row] {
+        var sum = [String: Int64]()
+        for e in entries where now.timeIntervalSince(e.at) <= AppDiskWriteTracker.window {
+            for (key, value) in e.bytes { sum[key, default: 0] += value }
+        }
+        var rows = [Row]()
+        for (key, bytes) in sum where bytes >= AppDiskWriteTracker.minimumBytes {
+            let info = names[key]
+            rows.append(Row(key: key, name: info?.name ?? key, bytes: bytes, isSystem: info?.isSystem ?? false))
+        }
+        rows.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : ($0.name != $1.name ? $0.name < $1.name : $0.key < $1.key) }
+        return Array(rows.prefix(max(0, count)))
     }
 }
 

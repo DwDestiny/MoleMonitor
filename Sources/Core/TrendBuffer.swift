@@ -17,6 +17,13 @@ struct TrendPoint: Codable, Equatable {
     var pressure: MemoryPressure?
     var thermal: ThermalLevel?
     var power: PowerSource?
+    /// Memory pressure percent, 0 to 100. Nil means "not measured", also for points decoded from an older file.
+    var pressurePercent: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case t, cpu, rx, tx, swapUsed, battery, pressure, thermal, power
+        case pressurePercent = "pp"
+    }
 }
 
 struct CPUSummary: Codable, Equatable {

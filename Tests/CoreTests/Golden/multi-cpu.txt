@@ -1,47 +1,50 @@
-# MoleMonitor 排查请求
-请作为我的 Mac 维护助手，根据以下只读监测数据排查问题，并给出优化建议。
+# 请帮我排查这台 Mac：CPU 5 分钟均值 74%
+以下是 MoleMonitor 的只读监测数据。采样于 10月11日 12:00，数据新鲜。
 
-## 环境
-- Mac14,15 · Apple M2 · 内存 16 GB · macOS 15.1
-- MoleMonitor 0.2.0 · 采样于 10月11日 12:00 · 数据新鲜
-- CLI：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli`
+## 1. 现在的问题
+| 顺序 | 项目 | 级别 | 证据 | 已持续 |
+|---|---|---|---|---|
+| 1 | CPU | 黄 | 5 分钟均值 74%，2 小时峰值 81% | 40 分 |
 
-## 状态摘要
-| 项 | 等级 | 当前 | 已持续 |
-|---|---|---|---|
-| CPU | 黄 | 10 分钟均值 72% | 40 分 |
+其余正常：温度。
 
-## 证据
+## 2. 你的任务
+1. 按第 3 节的步骤只读诊断，找出原因。
+2. 列出可以处理的对象：名称、大小或占用、理由、能否恢复。
+3. 等我确认后，才做任何改动。
+4. 回复格式：一句结论 → 证据 → 建议。每条建议标明“只读”或“会改动系统”。
+
+## 3. 排查步骤
+### 3.1 CPU（黄，最优先）
+口径：单个 App 的 CPU 以单核满载为 100%，多核可超过 100%。
+1. 运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。
+2. 1 分钟后再运行一次，区分短时尖峰与持续占用。
+3. 系统进程（mds_stores、mdworker、photoanalysisd、backupd）：说明用途。通常等它完成，不结束它。
+4. 用户 App：先列出进程与理由，等我确认，再建议保存并正常退出。不要自行结束进程，不用 `kill -9`。
+
+## 4. 安全规则（必须遵守）
+1. 先只读诊断，再给建议。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 5. 参考数据
+- 机器：Mac14,15 · Apple M2 · 内存 64 GB · macOS 15.1 · MoleMonitor 0.2.0
+
 | App（近 5 分钟） | CPU | 内存 |
 |---|---|---|
 | Orchard Browser（com.example.orchard） | 52% | 6.4 GB |
 | Kiln Studio（com.example.kiln-studio） | 38% | 4.2 GB |
 | kiln-compile | 24% | 1.5 GB |
-| WindowServer | 11% | 900 MB |
+| WindowServer | 11% | 0.9 GB |
 | Aster Chat（com.example.aster-chat） | 6% | 1.4 GB |
 
 | 指标 | 值 |
 |---|---|
 | CPU 2 小时 | 均值 56%，峰值 81% |
+| 热状态 | 正常（nominal） |
 
-## 当前提醒
-1. [黄] CPU 5 分钟均值持续偏高。
-
-## 我注意到的现象
-[在此描述你注意到的现象]
-
-## 排查规则
-1. 先只读诊断，再给建议。
-2. 删除、卸载、清理、结束进程、退出 App 前，都先列清单（对象、大小、理由），等我确认。
-3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
-4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
-5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。如果找不到 `mo`，说明我没有安装 Mole，不要自行安装。
-6. 命令报错时先运行 `<命令> --help` 或 `man <命令>`，不猜命令名或参数。
-7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。
-
-## 专项：CPU
-口径：单核满载为 100%，多核可超过 100%。
-1. 运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。
-2. 1 分钟后再运行一次，区分短时尖峰与持续占用。
-3. 系统进程（mds_stores、mdworker、photoanalysisd、backupd）：说明用途，通常等它完成，不结束它。
-4. 用户 App：先列出进程与理由，等我确认后，再建议保存并正常退出。不要自行结束进程，不直接 `kill -9`。
+## 6. 我补充的现象
+[可选：写下你注意到的现象，例如“风扇一直在响”]
