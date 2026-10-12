@@ -248,16 +248,17 @@ private struct CapacityArea: View {
     }
 
     private func column(_ label: String, _ value: String, id: String) -> some View {
-        VStack(alignment: .trailing, spacing: 2) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(label).font(PanelType.sideStatLabel).foregroundStyle(tok.textSecondary)
             Text(value)
                 .font(PanelType.sideStat)
                 .foregroundStyle(tok.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .frame(width: 95, alignment: .leading)
                 .uiTestFrame(id)
         }
-        .frame(width: 95, alignment: .trailing)
+        .frame(width: 95, alignment: .leading)
     }
 
     private func swatch(_ kind: CapacitySegment.Kind, _ text: String) -> some View {
