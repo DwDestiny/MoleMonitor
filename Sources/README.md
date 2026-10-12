@@ -69,21 +69,21 @@ last_updated: 2026-10-11
 | `ProcessSampler.swift` | 用 libproc 读进程列表，输出 `ProcessSample` 与覆盖率。排名在 Core 的 `AppRanking` |
 | `SystemSampler.swift` | 读每核 CPU tick、网卡计数器、内存压力和机器信息。取代旧的 `LiveSampler` |
 | `DogView.swift` | 状态卡比熊入口，调用方式 `DogView(input:size:)`。开关 `DogView.useBitmapArt`（默认 `true`）为真且 8 张位图都能加载时，转给 `DogBitmapView`。否则显示矢量比熊（回退，代码与门禁保留）。矢量路径是唯一可以用 `TimelineView` 的视图 |
-| `DogBitmapView.swift` | 位图比熊：`DogArtLibrary`（从 `Contents/Resources/DogArt` 加载 8 张图并缓存）、`DogBitmapView`（0.22 秒交叉淡入，减少动态效果时直接切换，关注姿态叠加矢量气泡，地面阴影（`groundShadow`，默认开））。无 `TimelineView`、`Canvas`、定时器 |
+| `DogBitmapView.swift` | 位图比熊：`DogArtLibrary`（从 `Contents/Resources/DogArt` 加载 8 张图并缓存）、`DogBitmapView`（0.22 秒交叉淡入，减少动态效果时直接切换，关注姿态叠加矢量气泡且不缩放（向左移 5% 框宽，`alertShift`），地面阴影（`groundShadow`，默认开）按姿态取位置：`DogInkBox` 由 alpha 求脚底线与水平中心，`shadowSpec` 给出椭圆）。无 `TimelineView`、`Canvas`、定时器 |
 | `DogShapes.swift` | 用 Core Graphics 绘制状态卡比熊和菜单栏模板图标，路径只建一次并缓存 |
 | `GlyphPaths.swift` | 类别角标路径，菜单栏角标、气泡和卡片类别图标共用 |
 | `DogGallery.swift` | `--dog-gallery` 导出所有静态姿态、菜单栏图标和角标的 PNG 图册。图册判矢量渲染器，渲染 `DogView` 时临时关闭位图开关 |
 | `UITestDogChecks.swift` | 比熊动画门禁（矢量路径：DA 至 DE），输出 `dog-report.json`。整个文件在 `#if UITEST` 内 |
-| `UITestBitmapChecks.swift` | 位图比熊门禁 BA 至 BE，面板门禁 M19V 与 M20，8 姿态联系表。整个文件在 `#if UITEST` 内 |
+| `UITestBitmapChecks.swift` | 位图比熊门禁 BA 至 BF，面板门禁 M19V、M20、M21、M22，8 姿态联系表。整个文件在 `#if UITEST` 内 |
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
 | `PanelRoot.swift` | 状态卡根视图：固定的头部、滚动的中部、固定的底栏。按版面计划渲染，不排序。入场动画 |
-| `PanelHero.swift` | 头部：比熊、标题、灯列（安静模式与问题模式） |
-| `PanelProblem.swift` | 问题卡、问题行、其余正常行、证据区 |
+| `PanelHero.swift` | 头部：比熊、标题、灯列（安静模式与问题模式）。问题模式比熊框 72 × 54，框顶距头部顶 6 pt，向左拉出 12 pt |
+| `PanelProblem.swift` | 问题卡、问题行、其余正常行、证据区。`ProblemRowButtonStyle`：浅色下折叠行是灰底加 3 pt 等级色条，深色下沿用等级底色 |
 | `PanelCharts.swift` | 图表：问题曲线（2 小时粗段加 5 分钟细段）、迷你线、磁盘 30 天图 |
 | `PanelApps.swift` | 占用 App 行、证据列表、折叠行 |
 | `PanelMore.swift` | “更多”折叠行及展开内容 |
 | `PanelFooter.swift` | 按钮样式、复制按钮、授权行、底栏 |
-| `PanelTokens.swift` | 颜色、字号、动效、尺寸令牌，格式化函数，灯，流式布局 |
+| `PanelTokens.swift` | 颜色、字号、动效、尺寸令牌（含 `rowFill`、`rowBackground`、`rowBar`），格式化函数，灯，流式布局 |
 | `PanelPreview.swift` | `--preview` 渲染 28 张静态图 |
 | `UITestPanelChecks.swift` | 状态卡的界面门禁 M2 至 M6、M11 至 M14、M19、M19V、M20、N1、N2。整个文件在 `#if UITEST` 内 |
 | `UITestHarness.swift` | 界面回归测试代码（检查 A 至 L）。整个文件在 `#if UITEST` 内，只存在于 `scripts/build.py --ui-test` 的变体 |
