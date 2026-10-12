@@ -9,6 +9,7 @@
 
 import Foundation
 import Darwin
+import SystemConfiguration
 
 final class SystemSampler {
     struct Reading {
@@ -23,6 +24,9 @@ final class SystemSampler {
         var pressurePercent: Int?
         /// App, wired and compressed memory from host_statistics64. Nil when the call fails.
         var memory: MemoryBreakdown?
+        /// Speed and totals per physical interface (DESIGN_V2.md 6.6, D9). Filled on every call from the same counter read
+        /// as `rate`. Nil when the counters cannot be read. Rates inside are nil on the first call.
+        var interfaces: [InterfaceRate]?
     }
 
     struct MachineInfo {
@@ -36,6 +40,11 @@ final class SystemSampler {
     private let memoryTotal: Int64? = SystemSampler.sysctlInt64("hw.memsize")
     private var prevTicks: [CPUTicks]?
     private var prevNet: (rx: Int64, tx: Int64, at: Date)?
+    private var prevCounters: (list: [InterfaceCounters], at: Date)?
+    /// BSD name to display name, kept in memory only (DESIGN_V2.md D9). Read again only when a physical interface has no
+    /// name yet, and at most once per 60 s.
+    private var displayNames = [String: String]()
+    private var namesReadAt: Date?
 
     init() {
         // One send right for the lifetime of this object; released in deinit.
@@ -57,7 +66,17 @@ final class SystemSampler {
             prevTicks = nil
         }
 
-        if let counters = Sampler.readNetworkCounters(), let total = NetworkFilter.total(counters) {
+        let allCounters = Sampler.readNetworkCounters()
+        if let counters = allCounters {
+            refreshDisplayNames(for: counters, at: now)
+            reading.interfaces = InterfaceRates.make(previous: prevCounters?.list, current: counters,
+                                                     seconds: prevCounters.map { now.timeIntervalSince($0.at) } ?? 0,
+                                                     displayNames: displayNames)
+            prevCounters = (counters, now)
+        } else {
+            prevCounters = nil
+        }
+        if let counters = allCounters, let total = NetworkFilter.total(counters) {
             if let prev = prevNet {
                 reading.rate = NetworkFilter.rate(prevRx: prev.rx, prevTx: prev.tx, rx: total.rx, tx: total.tx,
                                                   seconds: now.timeIntervalSince(prev.at))
@@ -76,6 +95,24 @@ final class SystemSampler {
             reading.thermal = SystemSampler.thermalLevel()
         }
         return reading
+    }
+
+    // MARK: Interface names
+
+    /// UNVERIFIED-ON-MAC: SCNetworkInterfaceCopyAll lists the hardware services (Wi-Fi, Ethernet, iPhone USB, Thunderbolt
+    /// Bridge). An interface it does not list keeps its BSD name. Read only; nothing is configured.
+    private func refreshDisplayNames(for counters: [InterfaceCounters], at now: Date) {
+        let missing = counters.contains { NetworkFilter.isPhysical($0.name) && displayNames[$0.name] == nil }
+        guard missing else { return }
+        if let last = namesReadAt, now.timeIntervalSince(last) < 60 { return }
+        namesReadAt = now
+        var names = [String: String]()
+        for item in (SCNetworkInterfaceCopyAll() as? [SCNetworkInterface]) ?? [] {
+            guard let bsd = SCNetworkInterfaceGetBSDName(item) as String?,
+                  let title = SCNetworkInterfaceGetLocalizedDisplayName(item) as String?, !title.isEmpty else { continue }
+            names[bsd] = title
+        }
+        displayNames = names
     }
 
     // MARK: CPU

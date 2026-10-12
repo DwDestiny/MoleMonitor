@@ -65,6 +65,26 @@ func runNetworkTests() {
     expect(NetworkFilter.rate(prevRx: 5, prevTx: 5, rx: 9, tx: 9, seconds: .nan) == nil, "NaN time difference: nil")
     expect(NetworkFilter.rate(prevRx: 5, prevTx: 5, rx: 9, tx: 9, seconds: .infinity) == nil, "infinite time difference: nil")
 
+    section("InterfaceRates (D9)")
+    let names = ["en0": "Wi-Fi", "en5": "iPhone USB"]
+    let first = InterfaceRates.make(previous: nil, current: [nic("en0", 1_000, 100), nic("lo0", 9, 9), nic("utun2", 9, 9)], seconds: 2, displayNames: names)
+    expect(first.count == 1 && first[0].name == "en0" && first[0].displayName == "Wi-Fi", "only physical interfaces, with the display name")
+    expect(first[0].downBytesPerSec == nil && first[0].upBytesPerSec == nil, "the first reading has no rate (nil, not 0)")
+    expect(first[0].totalDown == 1_000 && first[0].totalUp == 100, "totals are the counters")
+    let prevList = [nic("en0", 1_000, 100), nic("en5", 50, 50), nic("en7", 10, 10)]
+    let nowList = [nic("en0", 3_000, 100), nic("en1", 7, 7), nic("en5", 40, 90), nic("utun1", 1, 1)]
+    let rs = InterfaceRates.make(previous: prevList, current: nowList, seconds: 2, displayNames: names)
+    expect(rs.map { $0.name } == ["en0", "en1", "en5"], "sorted, a gone interface (en7) has no entry: \(rs.map { $0.name })")
+    expect(rs[0].downBytesPerSec == 1_000 && rs[0].upBytesPerSec == 0, "a measured zero stays 0")
+    expect(rs[1].downBytesPerSec == nil && rs[1].displayName == "en1", "a new interface has nil rates and the BSD name as fallback")
+    expect(rs[2].downBytesPerSec == nil && rs[2].upBytesPerSec == 20, "a counter that went down (wrap or reset) gives nil for that direction only")
+    expect(InterfaceRates.make(previous: prevList, current: nowList, seconds: 0, displayNames: [:]).allSatisfy { $0.downBytesPerSec == nil && $0.upBytesPerSec == nil }, "zero seconds: nil rates")
+    expect(InterfaceRates.make(previous: prevList, current: nowList, seconds: .nan, displayNames: [:]).allSatisfy { $0.downBytesPerSec == nil }, "NaN seconds: nil rates")
+    expect(InterfaceRates.make(previous: [], current: [nic("lo0", 1, 1)], seconds: 2, displayNames: [:]).isEmpty, "no physical interface: empty list")
+    expect(InterfaceRates.make(previous: nil, current: [nic("en0", UInt64.max, 1)], seconds: 2, displayNames: ["en0": ""])[0].totalDown == Int64.max
+           && InterfaceRates.make(previous: nil, current: [nic("en0", 1, 1)], seconds: 2, displayNames: ["en0": ""])[0].displayName == "en0", "huge totals are clamped, an empty display name falls back")
+    expect(InterfaceRates.make(previous: nil, current: [nic("en0", 1, 1), nic("en0", 2, 2)], seconds: 2, displayNames: [:]).count == 1, "a repeated name counts once")
+
     section("RouteMessages.walk")
     let m1 = message(type: 0x12, length: 192)
     let m2 = message(type: 0x0e, length: 16)
