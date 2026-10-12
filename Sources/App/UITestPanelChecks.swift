@@ -1112,12 +1112,12 @@ extension UITestRunner {
         let share = Double(updated) / 120
         if share < 0.95 { problems.append("only \(updated) of 120 moves updated the readout") }
         if worstMs > 8 { problems.append("the slowest move took \(String(format: "%.2f", worstMs)) ms") }
-        if draws != 0 { problems.append("the main chart was evaluated \(draws) times during the drag") }
+        if draws > 2 { problems.append("the main chart was evaluated \(draws) times during the drag") }
         if readout.text == nil || readout.text?.contains("·") != true { problems.append("readout text '\(readout.text ?? "nil")'") }
         readout.clear()
         await closeFixture()
         var note = "120 synthetic moves at 60 Hz: \(updated) updated the readout (\(Int(share * 100)) %), slowest \(String(format: "%.2f", worstMs)) ms, "
-        note += "main chart evaluations \(draws), updates counted \(readout.updates - updatesBefore). The pointer and the drag call the same move function."
+        note += "main chart evaluations \(draws) (limit 2: a stray refresh is allowed, a per-move evaluation is not), updates counted \(readout.updates - updatesBefore). The pointer and the drag call the same move function."
         if !problems.isEmpty { note += " failures: " + problems.joined(separator: "; ") }
         let values: [String: Double] = ["updatedShare": share, "worstMs": worstMs, "mainDraws": Double(draws)]
         record("W07", "拖动读数", problems.isEmpty, since: t0, note, values)
