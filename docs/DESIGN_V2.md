@@ -959,4 +959,443 @@ RM 下，面板中所有 `CAAnimation` 的数量在稳态为 0（门禁 W15）�
 | 空 | “近 7 天没有异常记录”与比熊小图标 |
 | 来源 | `events.json`，见 12.2 |
 
+## 8. 一键复制与提示词
+
+### 8.1 底部
+
+底部高 40 pt，只有两个控件：主按钮（宽 276 pt）和“…”按钮（36 pt），间距 8 pt。
+
+| 状态 | 主按钮样式 | 主按钮文字 | 复制内容 |
+|---|---|---|---|
+| 有问题 | `accent.fill` 填充 | “复制排查提示词”+ 副文字“粘贴给你的 Agent” | 排查提示词（8.4） |
+| 无问题 | 次级样式：`fill.hover` 背景，`text.primary` 文字 | “让 Agent 做一次日常巡检” | 巡检提示词（8.8.6） |
+| 过期 | 同“有问题”或“无问题” | 同左 | 提示词开头写明数据过期 |
+| 采集中 | 次级样式，不可用（alpha 40%） | “让 Agent 做一次日常巡检” | 无 |
+
+复制后的反馈：
+
+1. 100 ms 内，主按钮文字换成“✓ 已复制”，保持 1.5 s，然后恢复。
+2. 同时，气泡弹出“已复制，去问你的 Agent 吧”（巡检为“巡检单已复制，交给 Agent 吧”），保持 4 s。
+3. 同时，比熊播放 `wag`。RM 时不播放。
+4. 如果写入剪贴板失败，那么主按钮恢复原文字，气泡显示“没复制上，再点一次试试”。
+5. 面板获得焦点时，⌘C 等于点击主按钮。
+
+### 8.2 “…”菜单
+
+点击“…”打开原生 `NSMenu`。菜单项如下，顺序固定：
+
+| 菜单项 | 行为 |
+|---|---|
+| 复制 CLI 命令 ▸ | 子菜单：`--status`、`--disk-history --days 30`、`--events --days 7`。复制完整 CLI 路径加参数 |
+| 提示词包含 App 名称 | 勾选项，默认勾选。取消后，提示词与气泡都不出现 App 名称和 bundle ID |
+| 开启通知… | 只在通知未授权时出现 |
+| 打开数据文件夹 | 在“访达”中显示数据目录 |
+| 关于 MoleMonitor | 版本号与许可证 |
+| 退出 MoleMonitor ⌘Q | 退出应用 |
+
+### 8.3 提示词原则
+
+| 编号 | 原则 |
+|---|---|
+| P1 | 只读诊断先行。提示词要求 Agent 先只读诊断，再给建议 |
+| P2 | 证据带数字。每个问题至少有一个数字和单位，例如“5 天 +314 GB” |
+| P3 | 清理交给用户的 Agent。Agent 可以调用 Mole CLI，但 Mole 清理只用 `--dry-run` 预览 |
+| P4 | 不让 Agent 自行改动。任何改动前，Agent 列清单并等用户确认 |
+| P5 | 长度 ≤3000 字符（Swift `String.count`） |
+| P6 | 标题就是问题。Agent 看第一行就知道要解决什么 |
+| P7 | 不含隐私：家目录写成 `~`，不含序列号、完整进程参数、凭据。现有脱敏规则 S1–S8、T1–T13 保留 |
+
+安全规则保留旧设计的 7 条，内容不放宽：第 1–6 条在提示词第 4 节，第 7 条“回复：结论 → 证据 → 下一步”在第 2 节。设计评估过“用户确认后允许 Agent 运行非 dry-run 的 Mole 清理”，决定不改。理由：真正的删除应当由用户在终端里亲自确认，这是本产品“只读”承诺的一部分。
+
+### 8.4 提示词结构
+
+| 节 | 标题 | 内容 |
+|---|---|---|
+| 0 | `# 请帮我排查这台 Mac：<最严重问题的证据>` | 多项时加“等 N 项问题”。下一行写数据来源、采样时刻、新鲜度 |
+| 1 | `## 1. 现在的问题` | 问题表：顺序、项目、级别、证据、已持续。表下列出正常项 |
+| 2 | `## 2. 你的任务` | 4 条：只读诊断、列清单、等确认、回复格式 |
+| 3 | `## 3. 排查步骤` | 每个问题一小节：口径一句，加编号步骤 |
+| 4 | `## 4. 安全规则（必须遵守）` | 6 条固定文字 |
+| 5 | `## 5. 参考数据` | 机器、App 表、指标表、近 7 天异常记录 |
+| 6 | `## 6. 我补充的现象` | 占位行，用户自己填写 |
+
+数据状态的写法：
+
+| 状态 | 第 0 节第 2 行 |
+|---|---|
+| 新鲜 | “采样于 10月12日 14:05，数据新鲜。” |
+| 过期 | “采样于 10月12日 13:20，数据已过期 45 分钟。数字可能不是现在的状态，请先运行 `<CLI> --status` 确认。” |
+| 部分缺失 | 缺失的指标写“未读到”，不写 0 |
+
+### 8.5 多项问题的合并规则
+
+1. 问题按 5.2 的顺序排列。
+2. 第 1 个问题：写完整排查步骤。
+3. 第 2 个问题：如果总长度 ≤3000，那么写完整步骤。否则只写前 2 步。
+4. 第 3 个及以后的问题：放在“3.N 其余问题（各做第一步）”，每项只写第一条命令。
+5. 第 5 节的指标表合并全部问题的指标，每个指标只出现一次。
+6. App 表的列按第 1 个问题选择：磁盘问题用写入量，内存问题先列内存，CPU 和温度问题先列 CPU。
+
+### 8.6 超长压缩顺序
+
+如果提示词超过 3000 字符，那么按下面顺序逐级压缩，每一级之后重新计数：
+
+| 级 | 操作 |
+|---|---|
+| L1 | App 表从 5 行减到 3 行 |
+| L2 | 删除“近 7 天异常记录”行 |
+| L3 | 第 2 个问题的步骤减到前 2 步 |
+| L4 | 第 3 个及以后的问题合成一行：“其余问题：CPU（黄）、温度（黄）。先完成上面的步骤。” |
+| L5 | 每个口径行缩短为第一句 |
+| L6 | 机器行只保留芯片和内存 |
+
+第 0、1、2、4 节永远不压缩。如果 L6 之后仍然超过 3000，那么删除第 5 节。门禁 W20 检查：全部黄金样例 ≤3000，并且第 4 节逐字存在。
+
+### 8.7 文案原则
+
+1. 提示词用机主的口吻，称呼 Agent 为“你”。
+2. 一句一事。步骤用祈使句：“运行 …”“列出 …”。
+3. 每条命令写完整，不写别名。CLI 写完整路径。
+4. 有截断风险的命令必须带截取，例如 `| head -n 15`、`| tail -n 200`。
+5. 每节标题带编号，便于 Agent 在回复中引用。
+
+### 8.8 全文示例
+
+下面的示例使用虚构的机器数据。CLI 路径以 `/Applications` 安装位置为例，实际值由 App 包位置生成。“字符数”用 Swift `String.count` 的同等方法（Unicode 字符）计数。
+
+#### 8.8.1 磁盘（1753 字符）
+
+```text
+# 请帮我排查这台 Mac：磁盘 5 天多占用 314 GB
+以下是 MoleMonitor 的只读监测数据。采样于 10月12日 14:05，数据新鲜。
+
+## 1. 现在的问题
+| 顺序 | 项目 | 级别 | 证据 | 已持续 |
+|---|---|---|---|---|
+| 1 | 磁盘 | 红 | 5 天 +314 GB，可用 120 GB | 3 小时 12 分 |
+
+其余正常：内存、耗电、CPU、温度。
+
+## 2. 你的任务
+1. 按第 3 节的步骤只读诊断，找出原因。
+2. 列出可以处理的对象：名称、大小或占用、理由、能否恢复。
+3. 等我确认后，才做任何改动。
+4. 回复格式：一句结论 → 证据 → 建议。每条建议标明“只读”或“会改动系统”。
+
+## 3. 排查步骤
+### 3.1 磁盘（红，最优先）
+口径：真实已用不含可清除空间（快照、系统缓存）。增长量 = 当前值 − 窗口内最低值。
+1. 运行 `/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`，找出增长集中的日期。
+2. 运行 `mo analyze --json ~`，找出最大的目录。再对其中最大的子目录运行 `mo analyze --json <目录>`。不要省略 `--json`：交互模式可能把文件移到废纸篓。
+3. 对照第 5 节的写入排行与增长日期，判断来源：下载、虚拟机镜像、Xcode 数据、容器镜像、照片库、本地备份。
+4. 运行 `mo clean --dry-run` 与 `mo purge --dry-run`，只看预览结果。
+5. 列出可回收项：路径（家目录写 ~）、大小、能否再生成。
+
+## 4. 安全规则（必须遵守）
+1. 先只读诊断，再给建议。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 5. 参考数据
+- 机器：Mac15,8 · Apple M3 Max · 内存 64 GB · macOS 15.1 · MoleMonitor 0.4.0
+
+| 指标 | 值 |
+|---|---|
+| 磁盘增长 | 1 天 +34 GB · 5 天 +314 GB · 30 天 +322 GB |
+| 磁盘容量 | 共 995 GB · 已用 875 GB · 可用 120 GB（含可清除 21 GB） |
+| 写入最多的 App（近 5 分钟） | Docker Desktop 2.1 GB · Xcode 640 MB · Google Chrome 120 MB |
+| 近 7 天异常记录 | 磁盘 红 1 次（本次）· CPU 黄 2 次 |
+
+## 6. 我补充的现象
+[可选：写下你注意到的现象，例如“导入视频后空间少了很多”]
+```
+
+#### 8.8.2 内存（1942 字符）
+
+```text
+# 请帮我排查这台 Mac：内存压力 87%，已到严重档
+以下是 MoleMonitor 的只读监测数据。采样于 10月12日 14:05，数据新鲜。
+
+## 1. 现在的问题
+| 顺序 | 项目 | 级别 | 证据 | 已持续 |
+|---|---|---|---|---|
+| 1 | 内存 | 红 | 压力 87%（系统档位：严重），swap 9.8 GB，30 分钟 +3.1 GB | 25 分 |
+
+其余正常：磁盘、耗电、CPU、温度。
+
+## 2. 你的任务
+1. 按第 3 节的步骤只读诊断，找出原因。
+2. 列出可以处理的对象：名称、大小或占用、理由、能否恢复。
+3. 等我确认后，才做任何改动。
+4. 回复格式：一句结论 → 证据 → 建议。每条建议标明“只读”或“会改动系统”。
+
+## 3. 排查步骤
+### 3.1 内存（红，最优先）
+口径：等级以系统压力档位为准。压力百分比 = 100 − `kern.memorystatus_level`，是近似读数。macOS 会把空闲内存用作文件缓存，所以不看“已用占比”。
+1. 运行 `memory_pressure`、`sysctl vm.swapusage` 与 `vm_stat`，确认压力、swap 与压缩内存。
+2. 运行 `ps -Ao pid,rss,comm -m | head -n 15`，对照第 5 节的排行找出大户。
+3. 5 分钟后再运行第 2 步。内存持续上涨的 App 可能有泄漏。
+4. 建议顺序：保存后重启该 App（先问我）→ 减少标签页或扩展。不建议 `sudo purge` 或内存清理软件。
+
+## 4. 安全规则（必须遵守）
+1. 先只读诊断，再给建议。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 5. 参考数据
+- 机器：Mac15,8 · Apple M3 Max · 内存 64 GB · macOS 15.1 · MoleMonitor 0.4.0
+
+| App（近 5 分钟） | 内存 | CPU |
+|---|---|---|
+| Google Chrome（com.google.Chrome） | 14.2 GB | 38% |
+| Xcode（com.apple.dt.Xcode） | 6.1 GB | 12% |
+| Docker Desktop（com.docker.docker） | 4.0 GB | 9% |
+| Slack（com.tinyspeck.slackmacgap） | 1.6 GB | 2% |
+| WindowServer | 0.9 GB | 11% |
+
+| 指标 | 值 |
+|---|---|
+| 内存容量 | 共 64.0 GB · 已用 58.2 GB（App 41.0 · 联动 6.1 · 压缩 11.1）· 可用 5.8 GB |
+| swap | 9.8 GB，30 分钟 +3.1 GB，趋势 ↑↑ |
+| 内存压力（2 小时） | 均值 61%，峰值 91% · 正常 70 分钟 · 警告 25 分钟 · 严重 25 分钟 |
+| 近 7 天异常记录 | 内存 黄 3 次 · 内存 红 1 次（本次） |
+
+## 6. 我补充的现象
+[可选：写下你注意到的现象，例如“切换窗口时卡顿”]
+```
+
+#### 8.8.3 CPU（1714 字符）
+
+```text
+# 请帮我排查这台 Mac：CPU 10 分钟均值 94%
+以下是 MoleMonitor 的只读监测数据。采样于 10月12日 14:05，数据新鲜。
+
+## 1. 现在的问题
+| 顺序 | 项目 | 级别 | 证据 | 已持续 |
+|---|---|---|---|---|
+| 1 | CPU | 红 | 10 分钟均值 94%，2 小时峰值 100% | 18 分 |
+
+其余正常：内存、磁盘、耗电、温度。
+
+## 2. 你的任务
+1. 按第 3 节的步骤只读诊断，找出原因。
+2. 列出可以处理的对象：名称、大小或占用、理由、能否恢复。
+3. 等我确认后，才做任何改动。
+4. 回复格式：一句结论 → 证据 → 建议。每条建议标明“只读”或“会改动系统”。
+
+## 3. 排查步骤
+### 3.1 CPU（红，最优先）
+口径：单个 App 的 CPU 以单核满载为 100%，多核可超过 100%。
+1. 运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。
+2. 1 分钟后再运行一次，区分短时尖峰与持续占用。
+3. 系统进程（mds_stores、mdworker、photoanalysisd、backupd）：说明用途。通常等它完成，不结束它。
+4. 用户 App：先列出进程与理由，等我确认，再建议保存并正常退出。不要自行结束进程，不用 `kill -9`。
+
+## 4. 安全规则（必须遵守）
+1. 先只读诊断，再给建议。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 5. 参考数据
+- 机器：Mac15,8 · Apple M3 Max · 内存 64 GB · macOS 15.1 · MoleMonitor 0.4.0
+
+| App（实时） | CPU | 内存 |
+|---|---|---|
+| swift-frontend | 412% | 3.2 GB |
+| Xcode（com.apple.dt.Xcode） | 88% | 6.1 GB |
+| Google Chrome（com.google.Chrome） | 41% | 5.1 GB |
+| WindowServer | 14% | 0.9 GB |
+| Slack（com.tinyspeck.slackmacgap） | 4% | 1.1 GB |
+
+| 指标 | 值 |
+|---|---|
+| CPU 2 小时 | 均值 62%，峰值 100% |
+| 热状态 | 正常（nominal） |
+| 近 7 天异常记录 | CPU 黄 4 次 · CPU 红 1 次（本次） |
+
+## 6. 我补充的现象
+[可选：写下你注意到的现象，例如“风扇一直在响”]
+```
+
+#### 8.8.4 耗电（1563 字符）
+
+```text
+# 请帮我排查这台 Mac：睡眠时每小时掉电 3.3%
+以下是 MoleMonitor 的只读监测数据。采样于 10月12日 08:40，数据新鲜。
+
+## 1. 现在的问题
+| 顺序 | 项目 | 级别 | 证据 | 已持续 |
+|---|---|---|---|---|
+| 1 | 耗电 | 黄 | 睡眠 6 小时 20 分，电量 82% → 61%，3.3%/小时 | 2 小时 10 分 |
+
+其余正常：内存、磁盘、CPU、温度。
+
+## 2. 你的任务
+1. 按第 3 节的步骤只读诊断，找出原因。
+2. 列出可以处理的对象：名称、大小或占用、理由、能否恢复。
+3. 等我确认后，才做任何改动。
+4. 回复格式：一句结论 → 证据 → 建议。每条建议标明“只读”或“会改动系统”。
+
+## 3. 排查步骤
+### 3.1 耗电（黄，最优先）
+口径：耗电来自电池电量读数，不来自 CPU 估算。睡眠掉电 = 睡眠前后电量差 ÷ 睡眠小时数。
+1. 运行 `pmset -g batt`，确认电源、电量和充电状态。
+2. 运行 `pmset -g assertions`，找出阻止睡眠的进程。对照第 5 节的名单。
+3. 运行 `pmset -g log | tail -n 200`，查看最近的睡眠与唤醒记录。输出很长，必须截取。
+4. CPU 与内存只是线索，不能换算成耗电。
+5. 只建议退出阻止睡眠的 App。不运行不带 `-g` 的 `pmset`，它会修改电源设置。
+
+## 4. 安全规则（必须遵守）
+1. 先只读诊断，再给建议。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 5. 参考数据
+- 机器：Mac15,8 · Apple M3 Max · 内存 64 GB · macOS 15.1 · MoleMonitor 0.4.0
+
+| 指标 | 值 |
+|---|---|
+| 电量 | 61%，电池供电 |
+| 上次睡眠 | 6 小时 20 分，82% → 61% |
+| 近 7 次睡眠 | 3.3%/小时 · 0.6%/小时 · 0.5%/小时 |
+| 阻止睡眠的进程（现在） | Zoom（防止显示器睡眠）· backupd（防止系统睡眠） |
+| 近 7 天异常记录 | 耗电 黄 1 次（本次） |
+
+## 6. 我补充的现象
+[可选：写下你注意到的现象，例如“早上起来电量少了很多”]
+```
+
+#### 8.8.5 多项合并：磁盘红、内存红、CPU 黄（2488 字符）
+
+```text
+# 请帮我排查这台 Mac：磁盘 5 天多占用 314 GB 等 3 项问题
+以下是 MoleMonitor 的只读监测数据。采样于 10月12日 14:05，数据新鲜。
+
+## 1. 现在的问题
+| 顺序 | 项目 | 级别 | 证据 | 已持续 |
+|---|---|---|---|---|
+| 1 | 磁盘 | 红 | 5 天 +314 GB，可用 120 GB | 3 小时 12 分 |
+| 2 | 内存 | 红 | 压力 87%（系统档位：严重），swap 9.8 GB | 25 分 |
+| 3 | CPU | 黄 | 5 分钟均值 74% | 40 分 |
+
+其余正常：耗电、温度。
+
+## 2. 你的任务
+1. 按第 3 节的顺序只读诊断。先处理排在前面的问题。
+2. 列出可以处理的对象：名称、大小或占用、理由、能否恢复。
+3. 等我确认后，才做任何改动。
+4. 回复格式：每个问题一段，按顺序：一句结论 → 证据 → 建议。每条建议标明“只读”或“会改动系统”。
+
+## 3. 排查步骤
+### 3.1 磁盘（红，最优先）
+口径：真实已用不含可清除空间（快照、系统缓存）。增长量 = 当前值 − 窗口内最低值。
+1. 运行 `/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`，找出增长集中的日期。
+2. 运行 `mo analyze --json ~`，找出最大的目录。再对其中最大的子目录运行 `mo analyze --json <目录>`。不要省略 `--json`：交互模式可能把文件移到废纸篓。
+3. 对照第 5 节的写入排行与增长日期，判断来源：下载、虚拟机镜像、Xcode 数据、容器镜像、照片库、本地备份。
+4. 运行 `mo clean --dry-run` 与 `mo purge --dry-run`，只看预览结果。
+5. 列出可回收项：路径（家目录写 ~）、大小、能否再生成。
+
+### 3.2 内存（红）
+口径：等级以系统压力档位为准。压力百分比是近似读数。不看“已用占比”。
+1. 运行 `sysctl vm.swapusage` 与 `vm_stat`，确认 swap 与压缩内存。
+2. 运行 `ps -Ao pid,rss,comm -m | head -n 15`，对照第 5 节的排行找出大户。
+3. 5 分钟后再运行第 2 步。内存持续上涨的 App 可能有泄漏。
+4. 建议顺序：保存后重启该 App（先问我）→ 减少标签页或扩展。不建议 `sudo purge` 或内存清理软件。
+
+### 3.3 其余问题（各做第一步）
+- CPU（黄）：运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。
+
+## 4. 安全规则（必须遵守）
+1. 先只读诊断，再给建议。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 5. 参考数据
+- 机器：Mac15,8 · Apple M3 Max · 内存 64 GB · macOS 15.1 · MoleMonitor 0.4.0
+
+| App（近 5 分钟） | CPU | 内存 |
+|---|---|---|
+| Google Chrome（com.google.Chrome） | 86% | 14.2 GB |
+| Xcode（com.apple.dt.Xcode） | 41% | 6.1 GB |
+| Docker Desktop（com.docker.docker） | 22% | 4.0 GB |
+| WindowServer | 12% | 0.9 GB |
+| Slack（com.tinyspeck.slackmacgap） | 4% | 1.6 GB |
+
+| 指标 | 值 |
+|---|---|
+| 磁盘增长 | 1 天 +34 GB · 5 天 +314 GB · 30 天 +322 GB |
+| 写入最多的 App（近 5 分钟） | Docker Desktop 2.1 GB · Xcode 640 MB · Google Chrome 120 MB |
+| swap | 9.8 GB，30 分钟 +3.1 GB，趋势 ↑↑ |
+| CPU 2 小时 | 均值 61%，峰值 97% |
+| 近 7 天异常记录 | 磁盘 红 1 次 · 内存 红 1 次 · CPU 黄 3 次 |
+
+## 6. 我补充的现象
+[可选：写下你注意到的现象]
+```
+
+#### 8.8.6 日常巡检（1714 字符）
+
+```text
+# 请帮我给这台 Mac 做一次日常巡检
+以下是 MoleMonitor 的只读监测数据。采样于 10月12日 14:05，数据新鲜。现在没有异常。
+
+## 1. 现在的状态
+| 项目 | 当前 |
+|---|---|
+| CPU | 10 分钟均值 12%，2 小时峰值 64% |
+| 内存 | 压力 23%（正常），已用 31.4 / 64.0 GB，swap 1.3 GB，平稳 |
+| 磁盘 | 共 995 GB · 已用 583 GB · 可用 412 GB · 5 天 +8 GB |
+| 耗电 | 电量 82%，接电源 · 上次睡眠 0.5%/小时 |
+| 温度 | 正常（nominal） |
+
+近 7 天异常记录：CPU 黄 2 次（最长 34 分），磁盘 0 次，内存 0 次。
+
+## 2. 你的任务
+1. 做一次 5 分钟内的快速体检。只读，不做任何改动。
+2. 只汇报值得注意的发现。没有发现就说“没有发现”。
+3. 回复格式：一句结论 → 发现（每条带证据）→ 可选建议（标明“只读”或“会改动系统”）。
+
+## 3. 巡检步骤
+1. 运行 `/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`，看磁盘是否持续增长。
+2. 运行 `/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --events --days 7`，看异常是否反复出现。
+3. 运行 `mo status --json`，看是否有长期高占用的进程。
+4. 运行 `mo clean --dry-run`，只看可清理空间的预览，汇报总大小。
+5. 运行 `pmset -g assertions`，看是否有进程长期阻止睡眠。
+
+## 4. 安全规则（必须遵守）
+1. 先只读诊断，再给建议。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 5. 参考数据
+- 机器：Mac15,8 · Apple M3 Max · 内存 64 GB · macOS 15.1 · MoleMonitor 0.4.0
+
+| App（近 5 分钟） | CPU | 内存 |
+|---|---|---|
+| Google Chrome（com.google.Chrome） | 6% | 3.8 GB |
+| Xcode（com.apple.dt.Xcode） | 2% | 2.1 GB |
+| Slack（com.tinyspeck.slackmacgap） | 1% | 0.9 GB |
+
+## 6. 我补充的现象
+[可选：写下你注意到的现象]
+```
+
 <!-- NEXT -->
