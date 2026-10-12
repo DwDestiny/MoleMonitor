@@ -189,6 +189,7 @@ private struct SidebarStatsRow: View {
                         .minimumScaleFactor(0.7)
                         .uiTestFrame("side.stat.\(index)")
                 }
+                .padding(.trailing, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityElement(children: .combine)
             }
