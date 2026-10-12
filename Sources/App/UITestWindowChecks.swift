@@ -283,7 +283,9 @@ enum UITestWindowChecks {
         let scale = Double(ref.w) / PanelWindowMetrics.mainWidth
         let x0 = Int(Double(region.minX) * scale)
         let tw = Int(Double(region.width) * scale)
-        let rows = Int(Double(region.minY) * scale)..<Int(Double(region.maxY) * scale)
+        let rowStart: Int = Int(Double(region.minY) * scale)
+        let rowEnd: Int = Int(Double(region.maxY) * scale)
+        let rows: Range<Int> = rowStart..<rowEnd
         let sums = columnSums(ref, rows: rows)
         guard tw > 8, x0 >= 0, x0 + tw <= sums.count, !rows.isEmpty else { return nil }
         let template = Array(sums[x0..<(x0 + tw)])
@@ -309,7 +311,10 @@ enum UITestWindowChecks {
         }
         let widthPt = Double(frame.w) / probe.scale
         let left = probe.edge == .right ? probe.windowLeft0 : probe.windowRight0 - widthPt
-        return (left + Double(bestAt) / probe.scale, best / Double(tw * Swift.max(1, probe.rows.count)), widthPt)
+        let x: Double = left + Double(bestAt) / probe.scale
+        let cells: Double = Double(tw * Swift.max(1, probe.rows.count))
+        let error: Double = best / cells
+        return (x, error, widthPt)
     }
 
     private struct VisualRun {
@@ -334,8 +339,11 @@ enum UITestWindowChecks {
             if m.widthPt > 353 && m.widthPt < 671 { run.intermediate += 1 }
             run.maxDrift = Swift.max(run.maxDrift, abs(m.x - x0))
             run.maxError = Swift.max(run.maxError, m.error)
-            run.series.append("\(Int(t)):\(Int(m.widthPt.rounded()))/\(String(format: "%.1f", m.x - x0))")
-            if opening ? m.widthPt >= 671.5 : m.widthPt <= 352.5 { break }
+            let offset: String = String(format: "%.1f", m.x - x0)
+            let widthText: Int = Int(m.widthPt.rounded())
+            run.series.append("\(Int(t)):\(widthText)/\(offset)")
+            let reached: Bool = opening ? (m.widthPt >= 671.5) : (m.widthPt <= 352.5)
+            if reached { break }
             await r.sleepMs(1)
         }
         return run
@@ -403,7 +411,10 @@ enum UITestWindowChecks {
         if let visible, visible.width >= 672, let f = serverBounds(w) {
             let screenHeight = NSScreen.screens.first?.frame.height ?? 0
             let top = screenHeight - f.minY   // AppKit y of the top edge
-            if f.minX < visible.minX - 0.5 || f.maxX > visible.maxX + 0.5 || top > visible.maxY + 0.5 {
+            let leftOut: Bool = f.minX < visible.minX - 0.5
+            let rightOut: Bool = f.maxX > visible.maxX + 0.5
+            let topOut: Bool = top > visible.maxY + 0.5
+            if leftOut || rightOut || topOut {
                 problems.append("expanded frame \(NSStringFromRect(f)) leaves the visible frame \(NSStringFromRect(visible))")
             }
         }
