@@ -241,8 +241,8 @@ dist/MoleMonitor.app/Contents/MacOS/MoleMonitor --diagnose --seconds 22
 |---|---|---|
 | Core 测试 | 4171 条断言通过 | Linux，2026-10-12 重跑 |
 | CLI 测试 | 116 项检查通过 | Linux，2026-10-12 重跑 |
-| 主分支最新绿色 CI 运行 | run 38198524520（commit 标题 `docs: index ASSETS.md in README and docs/README`） | 虚拟机上的构建、`ci_acceptance.py` 与界面回归。该运行早于 i5 面板修订的合并 |
-| i5 面板修订的 CI 运行 | run 38201895085（分支 `i5/polish`，提交 `f3bd4ef`）通过，详情见条目 5 | 同上。主分支上 i5 合并提交的运行 38202894084 在写本条目时仍在进行，未计入 |
+| 主分支最新绿色 CI 运行 | run 38202894084（主分支上 i5 面板修订的合并提交 `1e68b12`）。`ACCEPTANCE PASSED`，`DOG ANIMATION CHECKS PASSED`，0 项失败 | 虚拟机上的构建、`ci_acceptance.py` 与界面回归。本条目之后只改文档，文档不触发 CI |
+| i5 面板修订的分支运行 | run 38201895085（分支 `i5/polish`，提交 `f3bd4ef`）通过，详情见条目 5 | 同上 |
 
 ### 仅静态检查
 
