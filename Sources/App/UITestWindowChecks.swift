@@ -432,7 +432,13 @@ enum UITestWindowChecks {
                 let intermediate = open.intermediate + close.intermediate
                 if drift > 0.5 { problems.append("the main column moved \(fmt(drift, 2)) pt on the screen") }
                 if !reduceMotion && intermediate < 2 { problems.append("only \(intermediate) intermediate frames were captured") }
-                visualNote = "visual drift \(fmt(drift, 2)) pt over \(open.frames + close.frames) frames (\(intermediate) intermediate, match error \(fmt(Swift.max(open.maxError, close.maxError), 1)), contrast \(fmt(probe.contrast, 1))); open \(open.series.joined(separator: " ")); close \(close.series.joined(separator: " "))"
+                let frameCount: Int = open.frames + close.frames
+                let errorText: String = fmt(Swift.max(open.maxError, close.maxError), 1)
+                let contrastText: String = fmt(probe.contrast, 1)
+                var text: String = "visual drift \(fmt(drift, 2)) pt over \(frameCount) frames (\(intermediate) intermediate, match error \(errorText), contrast \(contrastText))"
+                text += "; open " + open.series.joined(separator: " ")
+                text += "; close " + close.series.joined(separator: " ")
+                visualNote = text
             } else {
                 visualNote = "visual drift: window capture or template not available"
             }
@@ -440,8 +446,11 @@ enum UITestWindowChecks {
             visualNote = "visual drift skipped: the main column moves by design on this screen (shift \(fmt(w.placement.mainShift, 1)) pt)"
         }
         let edge = w.sidebarEdge == .right ? "right" : "left"
-        let note = "\(label) (edge \(edge), main shift \(fmt(w.placement.mainShift, 1)) pt): " + parts.joined(separator: ", ") + "; " + visualNote
-            + (problems.isEmpty ? "" : " PROBLEMS: " + problems.joined(separator: " / "))
+        let shiftText: String = fmt(w.placement.mainShift, 1)
+        var note: String = "\(label) (edge \(edge), main shift \(shiftText) pt): "
+        note += parts.joined(separator: ", ")
+        note += "; " + visualNote
+        if !problems.isEmpty { note += " PROBLEMS: " + problems.joined(separator: " / ") }
         return W05Result(label: label, ok: problems.isEmpty, note: note)
     }
 
@@ -485,9 +494,9 @@ enum UITestWindowChecks {
         let sides = Set(results.filter { $0.label.hasPrefix("synthetic") && !$0.label.contains("Reduce") && $0.ok }.map(\.label))
         let bothEdges = sides.count == 2
         let allOk = results.allSatisfy(\.ok) && !results.isEmpty && !sides.isEmpty
-        let note = results.map(\.note).joined(separator: " | ")
-            + (skipped.isEmpty ? "" : " | NOT VERIFIED: " + skipped.joined(separator: ", "))
-            + (bothEdges ? "" : " | only one direction was verified on the synthetic windows")
+        var note: String = results.map(\.note).joined(separator: " | ")
+        if !skipped.isEmpty { note += " | NOT VERIFIED: " + skipped.joined(separator: ", ") }
+        if !bothEdges { note += " | only one direction was verified on the synthetic windows" }
         r.record("W05", "sidebar window motion", allOk, since: t0, note,
                  ["cases": Double(results.count), "failedCases": Double(results.filter { !$0.ok }.count)])
         await ensureClosed(r)
