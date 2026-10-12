@@ -449,6 +449,27 @@ enum DogRig {
         return (gait == .trot || gait == .sprint) ? .open : .smile
     }
 
+    /// The thought bubble alone (circle, tail dot and, when `glyph` is given, the problem glyph), scaled about the bubble
+    /// center by `scale` (the pop). The bitmap dog draws it over the picture (docs/DESIGN.md 4.9).
+    static func bubbleLayers(glyph: [DogPart]?, scale k: Double) -> [DogLayer] {
+        var out = [DogLayer]()
+        for part in DogArt.overlay(.bubble) {
+            out.append(DogLayer(part: part, transform: .scale(k, k, about: part.pivot), alpha: 1))
+        }
+        if let glyph {
+            let f = DogArt.bubbleGlyphFrame
+            let pivot = (DogArt.bubbleCircle.x, DogArt.bubbleCircle.y)
+            let place = DogAffine.scale(f.size / DogArt.badgeSize, f.size / DogArt.badgeSize, about: (0, 0))
+                .then(.translate(f.x, f.y)).then(.scale(k, k, about: pivot))
+            for part in glyph {
+                var g = part
+                g.name = "glyph." + part.name
+                out.append(DogLayer(part: g, transform: place, alpha: 1))
+            }
+        }
+        return out
+    }
+
     /// All layers of one frame in drawing order. `glyph` is the bubble glyph art (DogArt.badge), or nil.
     /// `pose.opacity` is not in the layer alphas: the renderer applies it to the whole dog as one group.
     static func layers(gait: DogGait, pose: DogPose, glyph: [DogPart]? = nil) -> [DogLayer] {
@@ -508,20 +529,7 @@ enum DogRig {
             for part in DogArt.overlay(.sweat) { add(part, head, 1) }
         }
         if pose.bubble > 0 {
-            for part in DogArt.overlay(.bubble) {
-                add(part, .scale(k, k, about: part.pivot))
-            }
-            if let glyph {
-                let f = DogArt.bubbleGlyphFrame
-                let pivot = (DogArt.bubbleCircle.x, DogArt.bubbleCircle.y)
-                let place = DogAffine.scale(f.size / DogArt.badgeSize, f.size / DogArt.badgeSize, about: (0, 0))
-                    .then(.translate(f.x, f.y)).then(.scale(k, k, about: pivot))
-                for part in glyph {
-                    var g = part
-                    g.name = "glyph." + part.name
-                    add(g, place)
-                }
-            }
+            out.append(contentsOf: bubbleLayers(glyph: glyph, scale: k))
         }
         return out
     }
