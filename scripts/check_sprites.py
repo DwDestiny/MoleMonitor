@@ -38,6 +38,7 @@ DISTINCT_MIN = 0.20
 DARK_L, DARK_MIN_PX, FACE_SPOTS = 30.0, 20, 3
 HUE_CHROMA, HUE_BIN_SHARE, HUE_CLUSTERS_MAX = 8.0, 0.002, 6
 BUNDLE_MAX_BYTES = 4 * 1024 * 1024
+PROP_W, PROP_H = 192, 112
 GENERATED_STRIPS = 9
 
 # Table 4.3 of docs/DESIGN_V2.md: the first-release actions and their frame counts (59 frames).
@@ -215,8 +216,18 @@ def main():
             rep.add("file " + a["name"], False, err)
             continue
         frames[a["name"]] = fr
-    rep.add("files", len(frames) == len(actions), "%d of %d strips read, each frame %dx%d px"
-            % (len(frames), len(actions), FRAME_W, FRAME_H))
+    # The bed props of the stage (DESIGN_V2.md 4.2, 4.4): bed_some and bed_full, 192 x 112 px each.
+    props = manifest.get("props", [])
+    props_ok = sorted(p.get("name") for p in props) == ["bed_full", "bed_some"]
+    for p in props:
+        try:
+            with Image.open(SPRITES / p.get("file", "")) as im:
+                props_ok = props_ok and im.size == (PROP_W, PROP_H) and im.mode == "RGBA"
+        except OSError:
+            props_ok = False
+    rep.add("files", len(frames) == len(actions) and props_ok,
+            "%d of %d strips read, each frame %dx%d px; %d bed props %s (%dx%d px)"
+            % (len(frames), len(actions), FRAME_W, FRAME_H, len(props), "ok" if props_ok else "WRONG", PROP_W, PROP_H))
     if len(frames) != len(actions) or not REFERENCE.is_file():
         if not REFERENCE.is_file():
             rep.add("reference", False, "missing %s" % REFERENCE.name)

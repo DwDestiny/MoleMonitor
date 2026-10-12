@@ -68,6 +68,7 @@ Not hand drawn. Not covered by the GPL-3.0-only license of the code. The license
    The `stand_up` call has two references: frame 6 of `lie_idle.png` mirrored back to face right, and `dog_stand.png`.
 2. One `edit` call per strip, size 1536 x 1024, `background=transparent`, one row of N frames.
    23 calls in total: walk 1, trot 2, sprint 3, lie_idle 2, pant_lie 3, sniff 2, stand_up 7, wag 1, notice 2.
+   One more call makes the two bed props (see "Bed props" below), so the panel v2 art used 24 calls.
    The table below names the call that is used. The other calls were rejected after review or measurement.
 3. Cleanup with a script: alpha floor 80, alpha ceiling 200, components under 3000 px removed,
    one connected component per frame, left to right.
@@ -111,3 +112,17 @@ trails, no speed lines, no glow, no detached particles, no logos.
 | wag.png | wag 1 | 6 frames of one happy play-bow loop; front low, rear end raised, open-mouth smile; the tail wags from side to side |
 | notice.png | notice 2 | 4 frames of noticing something while sitting upright: relaxed, head lifts, head turns to the viewer, alert with wide eyes; ears stay long and floppy |
 | sit_gray.png | none | `dog_gray.png` mirrored |
+
+### Bed props (`Resources/DogSprites/bed_some.png`, `bed_full.png`)
+
+The stage shows the bed of the dog when the disk is yellow (`bed_some`) or red (`bed_full`), `docs/DESIGN_V2.md` 4.2 and 4.4.
+One `edit` call, 1536 x 1024, `background=transparent`, reference `dog_stand.png` for the style only.
+Prompt: "Same soft 3D illustration style, same lighting and same rendering as the reference puppy image. Draw two separated
+objects side by side on a transparent background, both the same size, seen from the front and slightly above, wide and low:
+left, a round soft pet bed (a low cushioned basket in warm light beige fabric) with three small plain cardboard boxes inside,
+the bed is half full; right, exactly the same pet bed overfilled with many small plain cardboard boxes piled high above the rim,
+a few boxes leaning, clearly too full. No puppy, no shadows, no floor, no text, no labels, no logos, no tape print, no glow.
+Wide empty margin around both objects."
+Cleanup: the same alpha floor and ceiling as the strips. One common scale for both beds, so the two beds have the same size.
+Each bed on a 192 x 112 px canvas (96 x 56 pt), lowest pixel on y = 108 px.
+
