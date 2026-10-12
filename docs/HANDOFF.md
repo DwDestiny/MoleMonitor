@@ -1,47 +1,66 @@
 ---
 title: "MoleMonitor · Claude 接手说明"
 type: handoff
-last_updated: 2026-10-11
+last_updated: 2026-10-12
 ---
 
 # Claude 接手说明
 
-阶段 1 的代码已经写完，状态卡已重做，并已加上 GitHub Actions 回归门禁。`Sources/Core/` 与 CLI 在 Linux 上测试。`Sources/App/` 在 CI 的 macOS 虚拟机上构建并通过回归门禁，但没有在用户的 Mac 上人工验收。项目在 Linux VPS 上可以继续设计、改源码和写文档。AppKit、SwiftUI、UserNotifications、IOKit 的真机检查必须在 Apple Silicon Mac 上完成。
+MoleMonitor 的功能代码已经写完。`Sources/Core/` 与 CLI 在 Linux 上测试。`Sources/App/` 在 CI 的 macOS 虚拟机上构建并通过回归门禁，但没有在用户的 Mac 上人工验收。Linux VPS 可以继续阅读、设计、改源码和写文档。AppKit、SwiftUI、UserNotifications、IOKit 的真机检查必须在 Apple Silicon Mac 上完成。
+
+状态卡与比熊的设计真源是 [DESIGN.md](DESIGN.md)。产品范围与数据口径见 [PROJECT.md](PROJECT.md)。如果两者冲突，以 DESIGN.md 与 [VERIFICATION.md](VERIFICATION.md) 为准。
 
 ## 当前状态
 
 | 部分 | 状态 |
 |---|---|
-| 产品方向 | 只检测和预警，不做清理。设计真源是 [PROJECT.md](PROJECT.md) |
-| `Sources/Core/` | 完成。Linux 上 353 条断言通过 |
-| `Sources/cli/`（`molemonitor-cli`） | 完成。Linux 上 79 项检查通过。CI 虚拟机上 p50 8.1 ms，p95 11.8 ms |
-| `Sources/App/`（Engine、Sampler、LiveSampler、Notifier、StatusIcon、Panel） | 已写完。状态卡已重做：磁盘 30 天趋势图，实时卡（网速与整机 CPU，60 秒窗口，每 2 秒采样，只在状态卡打开期间采样，实时点不落盘），入场动画，宽 340 pt。已通过 CI 回归门禁 |
-| `Sources/App/UITestHarness.swift` | 界面回归测试代码。只在 `-D UITEST` 构建中存在 |
-| `Sources/MoleMonitor.swift` | 入口分流：`--self-test`、`--diagnose`、`--preview`、正常 App |
-| `Sources/Sensors.swift` | 保留的只读 SMC。阶段 1 不引用，阶段 2 使用 |
-| `scripts/build.py` | 编译 App 和 CLI，ad-hoc 签名。`--ui-test` 构建测试变体。已在 CI 上运行 |
-| `scripts/ci_acceptance.py`、`.github/workflows/build-mac.yml` | CI 回归门禁。最新全绿运行：Actions run 38115054435。说明见 [CI.md](CI.md) |
+| 产品方向 | 只读 macOS 14+ 菜单栏健康哨兵。只检测和预警，不做清理 |
+| 状态卡 | 问题优先：有问题时突出问题名与证据，正常项靠后。安静模式高 332 pt，问题模式高 560 或 620 pt，宽度固定 328 pt。尺寸见 [DESIGN.md 2.5](DESIGN.md#25-尺寸与间距) |
+| 数据层 | 引擎每 30 秒采样一次，内存保存 2 小时环形缓冲，每 5 分钟写 `trend.json`。设计见 [DESIGN.md 第 6 章](DESIGN.md#6-数据层规格) |
+| 健康规则 | CPU、内存、温度、磁盘、耗电五项都已实现。占用 App 前 5 名已实现 |
+| 提示词 | 状态卡有“复制给 Agent”按钮，生成不超过 3000 字的排查提示词。CLI 命令是 `molemonitor-cli prompt`。提示词禁止 `mo optimize`、`mo uninstall` 和非 dry-run 清理。删除、卸载、清理、结束进程前须经用户确认 |
+| 状态卡比熊 | AI 生成的位图姿态，共 8 张（7 个姿态加灰化）。姿态静态显示，切换时 0.22 秒淡入，没有连续动画。位图动画推迟，等用户在真机上用 Activity Monitor 测过 CPU 之后再定。旧的程序化矢量比熊保留作回退（`DogView.useBitmapArt`） |
+| 菜单栏图标 | 矢量比熊正面头像剪影加角标。状态切换有不超过 8 帧的动画 |
+| 素材 | AI 生成，版权归属法律上不确定，不适用 GPL。发布前须由用户确认，见 [ASSETS.md](ASSETS.md) 第 4 节 |
+| `Sources/Core/` | 完成。Linux 上 4171 条断言通过 |
+| `Sources/cli/`（`molemonitor-cli`） | 完成。Linux 上 116 项检查通过 |
+| `Sources/App/` | 完成，通过 CI 回归门禁。文件划分见 [Sources/README.md](../Sources/README.md) |
+| `Sources/App/UITest*.swift` | 界面回归测试代码。只在 `-D UITEST` 构建中存在 |
+| `Sources/Sensors.swift` | 保留的只读 SMC |
+| `scripts/build.py` | 编译 App 和 CLI，ad-hoc 签名。`--ui-test` 构建测试变体 |
+| CI | `.github/workflows/build-mac.yml`，单作业，15 分钟上限。说明见 [CI.md](CI.md) |
 | 旧方案 | Go 采集器、`fetch_status.py`、1 Hz 界面定时器已删除 |
 
-实时网速与 CPU 曲线是从阶段 2 提前的仅显示功能。CPU 的健康规则仍属阶段 2。
-
-> **注意**：CI 结果是回归门禁，不是真机验收。不要写成“验收通过”。虚拟机是软件渲染，不能证明真机帧率、观感、菜单栏位置和通知授权框。见 [VERIFICATION.md](VERIFICATION.md) 条目 3。
+> **注意**：CI 结果是回归门禁，不是真机验收。不要写成“验收通过”。虚拟机是软件渲染，不能证明真机帧率、观感、菜单栏位置和通知授权框。见 [VERIFICATION.md](VERIFICATION.md) 条目 3 至 6。
 
 ## 范围
 
 - 工具不增加清理按钮、自动删除、sudo、特权 helper、SMC 写入或风扇控制。
-- 磁盘短期大量增长和剩余空间低发系统通知。问题消失后，不发通知，界面和 CLI 也不显示"已恢复"。
+- 问题消失后，工具不发恢复通知，界面和 CLI 也不显示“已恢复”。
 - 电池循环次数和每应用耗电排行都不做。
 - 当前没有安装到 Applications、设置登录启动、公证或发布二进制 Release。
 - 自有代码采用 GPL-3.0-only。接手时不变更许可证。
 
-阶段 1 之后的计划：
+## 已完成
 
-1. 阶段 2：CPU 健康规则、内存、泄漏检测、前 5 名应用。实时网速与 CPU 曲线已提前完成。
-2. 阶段 3：温度与热状态，自绘比熊。
-3. 阶段 4：睡眠掉电。
+| 项 | 内容 |
+|---|---|
+| 阶段 1 | 磁盘采样、`status.json`、CLI、磁盘通知、CI 回归门禁 |
+| 阶段 2 | CPU 与内存规则、占用 App 前 5 名、实时网速与整机 CPU 曲线 |
+| 阶段 3 | 温度与热状态规则、自绘比熊、菜单栏图标动画 |
+| 阶段 4 | 睡眠掉电与整机耗电规则 |
+| 状态卡重设计 | 问题优先版面、三档高度、2 小时趋势、复制给 Agent |
+| 位图比熊 | 8 张位图、淡入、地面阴影、门禁 BA 至 BF |
 
-阶段计划见 [PROJECT.md](PROJECT.md) 的第 10 节。
+## 未做
+
+| 项 | 说明 |
+|---|---|
+| 位图比熊的连续动画 | 推迟，等真机 CPU 数据 |
+| 真机验收 | 见下文“下一步”的清单 |
+| 素材版权确认 | 用户须决定 [ASSETS.md](ASSETS.md) 的 A1 至 A5 |
+| 安装、登录启动、公证、Release | 按用户具体授权执行 |
+| 电池基线耗电 | 延后，两周使用后再决定 |
 
 ## 可用命令
 
@@ -61,6 +80,7 @@ dist/MoleMonitor.app/Contents/MacOS/MoleMonitor --self-test
 codesign --verify --deep --strict dist/MoleMonitor.app
 dist/MoleMonitor.app/Contents/MacOS/MoleMonitor --diagnose --seconds 22
 dist/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status --brief
+dist/MoleMonitor.app/Contents/Helpers/molemonitor-cli prompt
 ```
 
 构建界面测试变体，输出到 `dist-uitest/`：
@@ -87,20 +107,37 @@ gh run download -n molemonitor-ci
 
 ## 下一步
 
-用户先在自己的 Mac 上过一遍，然后进入阶段 2。
+用户在自己的 Mac 上构建并验收。
 
-1. 在 Mac 上运行 `python3 scripts/build.py`。
-2. 如果编译失败，把完整编译错误粘贴回 Claude。Claude 在 VPS 上修改源码。
-3. 运行 `--self-test`、`codesign --verify` 和 `--diagnose --seconds 22`。
-4. 获得用户授权后，打开 `dist/MoleMonitor.app`。检查以下 5 项：
-   - 点击菜单栏图标，状态卡打开。检查磁盘趋势图和实时卡。
-   - 通知授权框是否弹出。
-   - 动效手感：第一次打开的入场动画，之后的 150 ms 淡入。
-   - 系统深色与浅色外观。
-   - 菜单栏图标的外观和红色角标。
-5. 按 [PROJECT.md](PROJECT.md) 第 11 节验证 V10、V11、V17、V19、V22。
-6. 把结果写入 [VERIFICATION.md](VERIFICATION.md) 的新条目，不覆盖旧记录。
-7. 真机检查完成后，开始阶段 2：CPU 健康规则、内存、泄漏检测、前 5 名应用。
+### 构建
+
+1. 在 Mac 上打开终端，进入项目根目录。
+2. 运行 `python3 scripts/build.py`。
+3. 如果编译失败，把完整编译错误粘贴回 Claude。Claude 在 VPS 上修改源码。
+4. 运行 `dist/MoleMonitor.app/Contents/MacOS/MoleMonitor --self-test`。
+5. 运行 `codesign --verify --deep --strict dist/MoleMonitor.app`。
+6. 运行 `dist/MoleMonitor.app/Contents/MacOS/MoleMonitor --diagnose --seconds 22`。
+7. 获得用户授权后，打开 `dist/MoleMonitor.app`。
+
+### 真机验收清单
+
+按下表逐项检查。把结果写入 [VERIFICATION.md](VERIFICATION.md) 的新条目，不覆盖旧记录。
+
+| 编号 | 检查项 |
+|---|---|
+| 1 | 动效手感与 ProMotion 流畅度：面板打开的入场，比熊姿态切换的 0.22 秒淡入。位图阶段没有连续动画，这是已知取舍 |
+| 2 | 真实通知授权框，以及点击通知后展开状态卡 |
+| 3 | 菜单栏图标在真实壁纸上的观感：1x 下喘气与耳朵抬起的轮廓，温度计与闪电角标偏弱 |
+| 4 | 状态卡打开时，Activity Monitor 里的 CPU 和闲置 CPU。CI 虚拟机是软件渲染，0.02% 不能外推 |
+| 5 | “复制给 Agent”按钮的真实剪贴板路径 |
+| 6 | 真实电池行（台式机没有电池） |
+| 7 | Reduce Motion（系统设置 → 辅助功能 → 显示） |
+| 8 | 提示词里的系统命令 `pmset`、`sysctl`、`vm_stat`、`ps` 在真机上的输出与权限（V23），耗电阈值（V24） |
+| 9 | 红色角标的可辨度门槛是 0.30。原目标 0.35，已决定接受 |
+| 10 | 浅色与深色壁纸下，比熊的地面阴影与边缘（白毛） |
+| 11 | AI 素材的版权与使用条款：[ASSETS.md](ASSETS.md) 第 4 节 A1 至 A5 需要用户确认 |
+
+PROJECT.md 第 11 节的验证项（例如 V10、V11、V17、V19、V22）也仍需真机结果。
 
 ## 代码与第三方来源
 
