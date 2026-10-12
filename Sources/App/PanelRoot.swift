@@ -111,17 +111,19 @@ struct PanelRoot: View {
     }
 
     private var plan: PanelLayoutPlan { model.layoutPlan }
+    /// Previews and tests without a window draw the sidebar beside the main column. In the app the window hosts it (`PanelSidebar`).
+    private var inlineSidebar: Bool { model.chrome == nil }
     private var edge: SidebarEdge { model.chrome?.sidebarEdge ?? .right }
 
     var body: some View {
         let tok = PanelTokens(scheme: scheme)
         HStack(spacing: 0) {
-            if let item = model.sidebarItem, edge == .left {
+            if let item = model.sidebarItem, edge == .left, inlineSidebar {
                 sidebar(item)
                 divider(tok)
             }
             mainColumn
-            if let item = model.sidebarItem, edge == .right {
+            if let item = model.sidebarItem, edge == .right, inlineSidebar {
                 divider(tok)
                 sidebar(item)
             }
@@ -129,7 +131,7 @@ struct PanelRoot: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge == .right ? .topLeading : .topTrailing)
         .environment(\.tok, tok)
         .onHover { inside in
-            if !inside { model.pointerLeft() }
+            if !inside, model.chrome == nil { model.pointerLeft() }
         }
         .onAppear {
             if !revealed { revealed = true }

@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Model of the open status card. Created on open, released on close.
     private(set) var panelModel: PanelModel?
     private var planObserver: AnyCancellable?
+    private var keyMonitor: Any?
 #if UITEST
     /// Test only: while true, the engine does not change the menu bar icon (the icon check drives it by hand).
     var suspendIconUpdates = false
@@ -137,11 +138,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 #endif
         let root = AnyView(PanelRoot(model: model, entrance: entrance))
         let spot = PanelWindow.makePlacement(anchor: button, height: model.layoutPlan.height)
-        // The sidebar content of WP-C goes into the `sidebar:` argument (for example AnyView(PanelSidebar(model: model))).
-        let window = PanelWindow(placement: spot.placement, visibleMinY: spot.visibleMinY, main: root, sidebar: nil)
+        let window = PanelWindow(placement: spot.placement, visibleMinY: spot.visibleMinY, main: root,
+                                 sidebar: AnyView(PanelSidebar(model: model)))
         window.statusItemWindow = button.window
-        // The model of the content serves the window as PanelPinning once WP-C implements it. Until then the cast gives nil.
-        window.pinning = (model as AnyObject) as? PanelPinning
+        // The model serves the window as PanelPinning, and it controls the sidebar through the window as PanelChrome.
+        window.pinning = model
+        model.chrome = window
+        installKeyMonitor(model: model, window: window)
         window.onClosed = { [weak self] in self?.panelDidClose() }
         panelWindow = window
         planObserver = model.$layoutPlan
@@ -154,6 +157,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.post(name: NSPopover.willShowNotification, object: popover)
 #endif
         window.present()
+    }
+
+    /// Forwards the keys of the open panel to `PanelModel.handleKey` (DESIGN_V2.md 10.10). Esc stays with the window.
+    /// The monitor is local and exists only while the panel is open.
+    private func installKeyMonitor(model: PanelModel, window: PanelWindow) {
+        removeKeyMonitor()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak model, weak window] event in
+            MainActor.assumeIsolated {
+                guard let model, let window, window.isKeyWindow else { return event }
+                let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                var key: PanelKey?
+                switch event.keyCode {
+                case 126 where flags.isEmpty: key = .up
+                case 125 where flags.isEmpty: key = .down
+                case 123 where flags.isEmpty: key = .left
+                case 124 where flags.isEmpty: key = .right
+                case 48 where flags.isEmpty: key = .tab
+                case 48 where flags == .shift: key = .backTab
+                case 36 where flags.isEmpty, 76 where flags.isEmpty: key = .returnKey
+                case 49 where flags.isEmpty: key = .space
+                default:
+                    if flags == .command, event.charactersIgnoringModifiers == "c" { key = .copy }
+                }
+                guard let key else { return event }
+                return model.handleKey(key) ? nil : event
+            }
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let monitor = keyMonitor { NSEvent.removeMonitor(monitor) }
+        keyMonitor = nil
     }
 
     private func makePanelModel(for button: NSView) -> PanelModel {
@@ -183,6 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The window has closed and released its content. Release the model and tell the engine: nothing renders while the card is closed.
     private func panelDidClose() {
+        removeKeyMonitor()
         planObserver = nil
         panelModel?.detach()
         panelModel = nil

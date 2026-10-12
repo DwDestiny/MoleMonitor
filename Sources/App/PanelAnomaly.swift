@@ -81,7 +81,7 @@ struct PanelAnomalySection: View {
             .accessibilityIdentifier("btn.notifyAuth")
             .uiTestFrame("btn.notifyAuth")
         } else if let records, records > 0 {
-            Button(action: { model.pinSidebar(.anomalyLog) }) {
+            Button(action: { model.userOpen(.anomalyLog) }) {
                 Text(PanelAreaState.recordsText(records) + " \u{203A}")
                     .font(PanelType.rowNote)
                     .foregroundStyle(tok.textSecondary)
@@ -110,7 +110,7 @@ struct PanelAnomalySection: View {
     /// The whole line opens the anomaly log.
     private var anomalyLine: some View {
         let summary = model.anomalySummary
-        return Button(action: { model.pinSidebar(.anomalyLog) }) {
+        return Button(action: { model.userOpen(.anomalyLog) }) {
             HStack(spacing: 0) {
                 Text(summary)
                     .font(PanelType.anomalyTitle)

@@ -106,7 +106,7 @@ private struct SidebarHeader: View {
                     .accessibilityIdentifier("side.pinned")
             }
             Spacer(minLength: 0)
-            Button(action: { model.unpinSidebar() }) {
+            Button(action: { model.userClose() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(tok.textSecondary)
@@ -490,5 +490,27 @@ struct PanelSidebarView: View {
         .clipped()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sidebar")
+    }
+}
+
+/// The sidebar slot of the window (`PanelWindow(... sidebar:)`). It follows `model.sidebarItem`. During the fade-out the model has
+/// no item any more, so the slot keeps the last one on screen.
+struct PanelSidebar: View {
+    @ObservedObject var model: PanelModel
+    @Environment(\.colorScheme) private var scheme
+    @State private var held: SidebarItem = .cpu
+
+    var body: some View {
+        let item = model.sidebarItem ?? held
+        PanelSidebarView(model: model, item: item)
+            .environment(\.tok, PanelTokens(scheme: scheme))
+            .frame(width: PanelMetrics.sidebarWidth, alignment: .top)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .hoverRegion(.sidebar, model: model)
+            .uiTestFrame("sidebar")
+            .onChange(of: model.sidebarItem) { _, new in
+                if let new { held = new }
+            }
+            .onAppear { if let now = model.sidebarItem { held = now } }
     }
 }

@@ -146,6 +146,7 @@ extension UITestRunner {
 
     func openFixture(_ c: PreviewCase, copyBox: UITestTextBox) async -> PanelModel? {
         let model = PanelModel.fixture(c, full: true, now: Date())
+        model.testDrive = true
         model.onCopyText = { text in
             copyBox.value = text
             return true
@@ -593,6 +594,7 @@ extension UITestRunner {
     func stepColdFirstFrame(copyBox: UITestTextBox) async {
         let t0 = now()
         let model = PanelModel.fixture(.allGreen, full: true, now: Date())
+        model.testDrive = true
         model.onCopyText = { text in
             copyBox.value = text
             return true

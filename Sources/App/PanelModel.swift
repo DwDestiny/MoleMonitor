@@ -156,6 +156,11 @@ final class PanelModel: ObservableObject, PanelPinning {
     /// Opens the "…" menu at its anchor. Set by the footer view.
     var onShowMoreMenu: (() -> Void)?
 
+    /// Tests set this to true: the model then runs its own hover rules and opens the window sidebar itself, as before the
+    /// window took over. In the app it stays false and the window decides (DESIGN_V2.md 10.6).
+    var testDrive = false
+    private var windowDrives: Bool { chrome != nil && !testDrive }
+
     private var intent = HoverIntent()
     private var pointer = PointerTracker()
     private var deadlineWork: DispatchWorkItem?
@@ -281,8 +286,12 @@ final class PanelModel: ObservableObject, PanelPinning {
 
     /// The pointer moved over a region. `point` is in any fixed coordinate space of the panel.
     func pointerMoved(_ region: HoverRegion, at point: CGPoint) {
-        let speed = pointer.speed(to: point, at: clock())
         if case .row(let item) = region { if hoverRow != item { hoverRow = item } } else if hoverRow != nil { hoverRow = nil }
+        if windowDrives {
+            chrome?.reportHover(region)
+            return
+        }
+        let speed = pointer.speed(to: point, at: clock())
         apply(intent.handle(.moved(region, speed: speed), at: clock()))
         scheduleDeadline()
     }
@@ -290,12 +299,17 @@ final class PanelModel: ObservableObject, PanelPinning {
     func pointerLeft() {
         pointer.reset()
         if hoverRow != nil { hoverRow = nil }
+        if windowDrives { return }
         apply(intent.handle(.moved(.outside, speed: 0), at: clock()))
         scheduleDeadline()
     }
 
     /// A click on a row or on an anomaly bar: open and pin, or close when this row is pinned already.
     func rowClicked(_ item: SidebarItem) {
+        if windowDrives {
+            chrome?.reportClick(item)
+            return
+        }
         let wasPinned = (pinnedItem == item)
         if wasPinned { unpinSidebar() } else { pinSidebar(item) }
         // The intent keeps its own state. Its commands are idempotent: they cannot undo the choice above.
@@ -346,19 +360,37 @@ final class PanelModel: ObservableObject, PanelPinning {
         if item == .battery {
             engine?.readSleepBlockers { [weak self] list in self?.data.sleepBlockers = list }
         }
-        if wasOpen != (item != nil) {
+        if wasOpen != (item != nil) && !windowDrives {
             chrome?.setSidebar(open: item != nil, animated: !(chrome?.isReduceMotion ?? true))
         }
     }
 
+    /// The window calls it when it pins an item (and the notification path does). The window has opened the frame already.
     func pinSidebar(_ item: SidebarItem) {
         pinnedItem = item
         setSidebar(item)
     }
 
+    /// The window calls it when the pin ends. A hover preview may stay: the window closes it with `previewSidebar(nil)`.
     func unpinSidebar() {
         pinnedItem = nil
+        if windowDrives { return }
         setSidebar(nil)
+    }
+
+    /// The window shows or clears a hover preview. It never changes the pin.
+    func previewSidebar(_ item: SidebarItem?) {
+        guard pinnedItem == nil || item != nil else { return }
+        setSidebar(item)
+    }
+
+    /// An action of the content itself (the records line, a key, the sidebar close button). The window applies its rules to it.
+    func userOpen(_ item: SidebarItem) {
+        if windowDrives { chrome?.reportClick(item) } else { pinSidebar(item) }
+    }
+
+    func userClose() {
+        if windowDrives { chrome?.reportCloseButton() } else { unpinSidebar() }
     }
 
     /// The window calls this when it closes the panel. All state of one opening ends here.
@@ -413,7 +445,7 @@ final class PanelModel: ObservableObject, PanelPinning {
             let next: Int
             if index < 0 { next = (key == .down) ? 0 : rows.count - 1 } else { next = max(0, min(rows.count - 1, index + (key == .down ? 1 : -1))) }
             setKeyFocus(.row(rows[next]))
-            if sidebarItem != nil, pinnedItem != nil { pinSidebar(rows[next]) }
+            if sidebarItem != nil, pinnedItem != nil { userOpen(rows[next]) }
             return true
         case .tab, .backTab:
             let order = focusOrder
@@ -427,16 +459,16 @@ final class PanelModel: ObservableObject, PanelPinning {
             return true
         case .right:
             if keyFocus == .sidebarRange { stepRange(by: 1); return true }
-            if case .row(let item)? = keyFocus { pinSidebar(item); return true }
+            if case .row(let item)? = keyFocus { userOpen(item); return true }
             return false
         case .returnKey, .space:
             return activateFocus()
         case .left:
             if keyFocus == .sidebarRange { stepRange(by: -1); return true }
-            if sidebarItem != nil { unpinSidebar(); return true }
+            if sidebarItem != nil { userClose(); return true }
             return false
         case .escape:
-            if sidebarItem != nil { unpinSidebar(); return true }
+            if sidebarItem != nil { userClose(); return true }
             chrome?.closePanel()
             return true
         case .copy:
@@ -448,14 +480,14 @@ final class PanelModel: ObservableObject, PanelPinning {
     private func activateFocus() -> Bool {
         guard let focus = keyFocus else { return false }
         switch focus {
-        case .row(let item): pinSidebar(item)
-        case .records: pinSidebar(.anomalyLog)
+        case .row(let item): userOpen(item)
+        case .records: userOpen(.anomalyLog)
         case .primary: copy(.primary)
         case .more: onShowMoreMenu?()
         case .sidebarRange: stepRange(by: 1)
         case .sidebarClose:
             keyFocus = nil
-            unpinSidebar()
+            userClose()
         }
         return true
     }
@@ -485,7 +517,7 @@ final class PanelModel: ObservableObject, PanelPinning {
         let item = SidebarItem(row.item)
         sidebarRanges[item] = SidebarRange.covering(start: row.start, now: data.now, item: item)
         recordHighlight = row.start...(row.end ?? data.now)
-        pinSidebar(item)
+        userOpen(item)
     }
 
     /// The content of the sidebar for `item`. Cached: a hover change does not rebuild the chart.
