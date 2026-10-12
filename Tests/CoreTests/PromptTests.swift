@@ -146,10 +146,10 @@ private func v2Env() -> PromptEnvironment {
                       dataDir: "/Users/tester/Library/Application Support/MoleMonitor")
 }
 
-private func verdicts(_ red: [(HealthItem, HealthLevel, String, String, TimeInterval)], now t: Date) -> [ItemVerdict] {
+private func verdicts(_ red: [(HealthItem, HealthLevel, String, String, Int)], now t: Date) -> [ItemVerdict] {
     HealthItem.allCases.map { item in
         if let r = red.first(where: { $0.0 == item }) {
-            return ItemVerdict(item: item, level: r.1, reasonCode: r.2, headline: r.3, since: t.addingTimeInterval(-r.4),
+            return ItemVerdict(item: item, level: r.1, reasonCode: r.2, headline: r.3, since: t.addingTimeInterval(-Double(r.4)),
                                levelChangedAt: nil, alert: nil)
         }
         return ItemVerdict(item: item, level: .green, reasonCode: "ok", headline: "", since: nil, levelChangedAt: nil, alert: nil)
