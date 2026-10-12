@@ -7,6 +7,7 @@
 //      (24 h per app), thermal serious 5 min or critical (1 h), sleep drain red (6 h), awake drain red (6 h, a design
 //      addition), disk (the disk engine decides). No recovery message. The budget is consumed in problem order and
 //      the posts are delivered in the reverse order, so the most serious one is on top of the notification centre.
+//      v2 (WP-B, R-14): a tap on a notification opens the panel and pins the sidebar of `sidebarItem(for:)`.
 
 import Foundation
 
@@ -124,6 +125,19 @@ enum NotificationPlanner {
         let run = TrendMath.run(points, now: now)
         let value: (TrendPoint) -> Double? = { $0.cpu }
         return TrendMath.meanStreak(run, window: 300, value: value, test: { $0 >= cpuLoadMean }) != nil
+    }
+
+    /// The sidebar that a tap on the notification of `item` pins (docs/DESIGN_V2.md 14.3 boundary "通知点击 R-14").
+    /// The power item shows in the battery sidebar. Nil means the panel opens without a pinned sidebar.
+    static func sidebarItem(for item: HealthItem?) -> SidebarItem? {
+        guard let item else { return nil }
+        switch item {
+        case .cpu: return .cpu
+        case .memory: return .memory
+        case .disk: return .disk
+        case .thermal: return .thermal
+        case .power: return .battery
+        }
     }
 
     /// Consumes the budget in priority order and returns the posts in delivery order (reverse of priority).
