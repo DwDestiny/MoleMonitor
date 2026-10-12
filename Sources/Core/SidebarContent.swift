@@ -647,6 +647,8 @@ struct RankRow: Equatable, Identifiable {
     var fraction: Double
     /// Spoken detail that does not fit the row.
     var detail: String?
+    /// True when the value is a label (a sleep blocker kind), not a measured number: it is drawn small and in secondary color.
+    var quietValue: Bool = false
 }
 
 struct RankTable: Equatable {
@@ -729,7 +731,7 @@ enum SidebarRanking {
         let title = "阻止睡眠的 App"
         guard let blockers else { return RankTable(title: title, rows: [], emptyText: "\u{2014} 没有读到睡眠断言", plain: true) }
         let rows = blockers.prefix(5).map { b in
-            RankRow(id: b.name, name: b.name, bundleID: nil, isSystem: false, value: b.kindText, fraction: 0, detail: nil)
+            RankRow(id: b.name, name: b.name, bundleID: nil, isSystem: false, value: b.kindText, fraction: 0, detail: nil, quietValue: true)
         }
         return RankTable(title: title, rows: Array(rows), emptyText: rows.isEmpty ? "没有 App 阻止睡眠" : nil)
     }

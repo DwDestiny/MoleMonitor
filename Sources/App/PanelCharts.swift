@@ -227,8 +227,14 @@ struct ChartMain: View, Equatable {
                 }
             }
             if let top = topLabel(), let bottom = bottomLabel(), data.isEmpty == false {
-                Text(top).font(PanelType.axis).foregroundStyle(tok.textTertiary).offset(x: 4, y: 2)
-                Text(bottom).font(PanelType.axis).foregroundStyle(tok.textTertiary).offset(x: 4, y: ChartMetrics.plotHeight - 14)
+                Text(top).font(PanelType.axis).foregroundStyle(tok.textSecondary)
+                    .padding(.horizontal, 3)
+                    .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(tok.labelPlate))
+                    .offset(x: 3, y: 3)
+                Text(bottom).font(PanelType.axis).foregroundStyle(tok.textSecondary)
+                    .padding(.horizontal, 3)
+                    .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(tok.labelPlate))
+                    .offset(x: 3, y: ChartMetrics.plotHeight - 17)
             }
             HStack(spacing: 0) {
                 ForEach(Array(axisLabels().enumerated()), id: \.offset) { index, label in

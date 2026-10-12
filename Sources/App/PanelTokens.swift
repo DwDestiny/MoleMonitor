@@ -65,6 +65,8 @@ struct PanelTokens {
     var chartThreshold: Color { pick(Color(.sRGB, white: 0, opacity: 0.25), Color(.sRGB, white: 1, opacity: 0.25)) }
     /// Neutral gray, so a selected row adds no hue on a tinted row (design check 2026-10-12).
     var fillSelected: Color { pick(Color(.sRGB, white: 0, opacity: 0.09), Color(.sRGB, white: 1, opacity: 0.14)) }
+    /// Plate behind the axis labels inside the plot, so a curve never runs through the text.
+    var labelPlate: Color { pick(Color(.sRGB, white: 1, opacity: 0.80), Color(.sRGB, white: 0.14, opacity: 0.80)) }
     /// The 3 pt bar at the left edge of the selected row. Neutral too.
     var selectedBar: Color { pick(Color(.sRGB, white: 0, opacity: 0.55), Color(.sRGB, white: 1, opacity: 0.65)) }
 

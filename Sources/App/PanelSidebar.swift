@@ -26,7 +26,7 @@ enum AppIconCache {
             return nil
         }
         let image = NSWorkspace.shared.icon(forFile: url.path)
-        image.size = NSSize(width: 16, height: 16)
+        image.size = NSSize(width: 18, height: 18)
         icons[bundleID] = image
         return image
     }
@@ -91,20 +91,34 @@ private struct SidebarHeader: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(state.item.label)
-                .font(PanelType.sideTitle)
-                .foregroundStyle(tok.textPrimary)
-                .lineLimit(1)
-                .accessibilityIdentifier("side.title")
-                .uiTestFrame("side.title")
-            if let tag = levelTag {
-                Text(tag.0).font(PanelType.rowNote).foregroundStyle(tag.1)
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(state.item.label)
+                        .font(PanelType.sideTitle)
+                        .foregroundStyle(tok.textPrimary)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("side.title")
+                        .uiTestFrame("side.title")
+                    if let tag = levelTag {
+                        Text(tag.0).font(PanelType.rowNote).foregroundStyle(tag.1)
+                    }
+                    if model.pinnedItem == state.item {
+                        Text("已固定").font(PanelType.rowNote).foregroundStyle(tok.textSecondary)
+                            .accessibilityIdentifier("side.pinned")
+                    }
+                }
+                .frame(height: 24, alignment: .leading)
+                if let episode = state.episode {
+                    Text(episode)
+                        .font(PanelType.rowNote)
+                        .foregroundStyle(tok.textSecondary)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("side.episode")
+                        .uiTestFrame("side.episode")
+                }
             }
-            if model.pinnedItem == state.item {
-                Text("已固定").font(PanelType.rowNote).foregroundStyle(tok.textSecondary)
-                    .accessibilityIdentifier("side.pinned")
-            }
+            .padding(.top, 4)
             Spacer(minLength: 0)
             Button(action: { model.userClose() }) {
                 Image(systemName: "xmark")
@@ -120,7 +134,7 @@ private struct SidebarHeader: View {
             .accessibilityIdentifier("btn.sideClose")
             .uiTestFrame("btn.sideClose")
         }
-        .frame(width: PanelMetrics.sidebarContentWidth, height: 44)
+        .frame(width: PanelMetrics.sidebarContentWidth, height: 44, alignment: .top)
     }
 }
 
@@ -310,23 +324,22 @@ private struct RankIcon: View {
     let row: RankRow
     let table: RankTable
     @Environment(\.tok) private var tok
-    @Environment(\.panelSnapshot) private var snapshot
 
     private var symbol: String {
         if table.plain && row.bundleID == nil && table.title.hasPrefix("网卡") { return "network" }
         if row.isSystem { return "gearshape" }
-        return row.bundleID == nil ? "app" : "app.fill"
+        return "app.dashed"
     }
 
     var body: some View {
         Group {
-            if !snapshot, let image = AppIconCache.icon(bundleID: row.bundleID) {
+            if let image = AppIconCache.icon(bundleID: row.bundleID) {
                 Image(nsImage: image).resizable().interpolation(.high)
             } else {
-                Image(systemName: symbol).font(.system(size: 12)).foregroundStyle(tok.textSecondary)
+                Image(systemName: symbol).font(.system(size: 14, weight: .light)).foregroundStyle(tok.textSecondary)
             }
         }
-        .frame(width: 16, height: 16)
+        .frame(width: 18, height: 18)
         .accessibilityHidden(true)
     }
 }
@@ -358,16 +371,16 @@ private struct RankingView: View {
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text(row.value)
-                        .font(PanelType.duration)
-                        .foregroundStyle(tok.textPrimary)
+                        .font(row.quietValue ? PanelType.rowNote : PanelType.duration)
+                        .foregroundStyle(row.quietValue ? tok.textSecondary : tok.textPrimary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
                 .frame(width: PanelMetrics.sidebarContentWidth, height: 28)
                 .overlay(alignment: .bottomLeading) {
-                    if row.fraction > 0 {
+                    if row.fraction >= 0.01 {
                         Capsule().fill(tok.chartLine.opacity(0.5))
-                            .frame(width: max(2, PanelMetrics.sidebarContentWidth * CGFloat(row.fraction)), height: 2)
+                            .frame(width: max(6, PanelMetrics.sidebarContentWidth * CGFloat(row.fraction)), height: 2)
                     }
                 }
                 .accessibilityElement(children: .ignore)
