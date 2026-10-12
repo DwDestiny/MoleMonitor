@@ -102,7 +102,7 @@ run([
     swiftc, "-swift-version", "5", "-O", "-parse-as-library", "-target", target,
     *(["-D", "UITEST"] if ui_test else []),
     *core, *app_files, *generated, entry, sensors,
-    "-framework", "AppKit", "-framework", "SwiftUI", "-framework", "IOKit",
+    "-framework", "AppKit", "-framework", "SwiftUI", "-framework", "IOKit", "-framework", "SystemConfiguration",
     "-framework", "UserNotifications", "-framework", "Combine", "-framework", "Charts",
     "-o", macos / "MoleMonitor",
 ])

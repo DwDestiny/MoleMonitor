@@ -42,6 +42,9 @@ final class MonitorEngine: ObservableObject {
     @Published private(set) var coverage = ProcessCoverage(readable: 0, unreadable: 0)
     /// Top 5 disk writers of the last 5 minutes (DESIGN_V2.md 6.5). Empty until two scans exist. Writes are not disk growth.
     @Published private(set) var diskWriters: [AppDiskWriteTracker.Row] = []
+    /// Speed and totals per physical interface, updated by the 2 s tick while the panel is open and by the 30 s tick
+    /// otherwise (DESIGN_V2.md D9). Empty until the counters are read.
+    @Published private(set) var interfaces: [InterfaceRate] = []
     @Published private(set) var dataState: DataState = .collecting
     /// Latest sleep records, for the power item.
     @Published private(set) var sleeps: [SleepRecord] = []
@@ -142,6 +145,7 @@ final class MonitorEngine: ObservableObject {
     private var liveBuffer = LiveBuffer()
     private var latestCPU: Double?
     private var latestRate: NetworkRate?
+    private var latestInterfaces = [InterfaceRate]()
     /// Newest memory pressure percent and memory split. Nil after a failed read, so a failure is never shown as a value.
     private var latestPressurePercent: Int?
     /// Anomaly records (events.json) and the end of the last 5 minute window written to rollup-YYYY-MM.ndjson.
@@ -388,6 +392,7 @@ final class MonitorEngine: ObservableObject {
         liveBuffer.add(at: now, rate: reading.rate, cpuPercent: reading.cpuPercent)
         if reading.cpuPercent != nil { latestCPU = reading.cpuPercent }
         if reading.rate != nil { latestRate = reading.rate }
+        if let list = reading.interfaces { latestInterfaces = list }
         fineCount += 1
         if fineCount % 2 == 0 { scanProcesses(now: now) }
         // The SMC reading is for display only and costs an IOKit call, so it runs every 10 s and only while the card is open.
@@ -401,9 +406,11 @@ final class MonitorEngine: ObservableObject {
         let basis = basisText(now: now)
         let cover = latestCoverage
         let writers = diskTracker.top(now: now)
+        let nics = latestInterfaces
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isCurrent(session: session) else { return }
             if self.diskWriters != writers { self.diskWriters = writers }
+            if self.interfaces != nics { self.interfaces = nics }
             if self.live != liveSnapshot { self.live = liveSnapshot }
             if self.trend != series { self.trend = series }
             if self.current != snapshot { self.current = snapshot }
@@ -597,6 +604,7 @@ final class MonitorEngine: ObservableObject {
         trendBuffer.appendCoarse(point)
         if reading.cpuPercent != nil { latestCPU = reading.cpuPercent }
         latestRate = reading.rate
+        if let list = reading.interfaces { latestInterfaces = list }
     }
 
     /// Reads the battery every 60 s on battery power and every 5 minutes on AC. Returns true when it read now.
@@ -882,11 +890,13 @@ final class MonitorEngine: ObservableObject {
         let cover = latestCoverage
         let records = sleepRecords
         let writers = diskTracker.top(now: now)
+        let nics = latestInterfaces
         let summary = trendBuffer.cpuSummary(now: now)
         let state: DataState = trendBuffer.latest == nil ? .collecting : .fresh
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.diskWriters != writers { self.diskWriters = writers }
+            if self.interfaces != nics { self.interfaces = nics }
             self.status = file
             self.publishedCPUSummary = summary
             if self.diskLevel != level { self.diskLevel = level }
