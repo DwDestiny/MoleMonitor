@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: PanelModel (its layout plan, data and UI state) and the entrance kind.
-// Output: The whole status card: pinned hero, scrolling middle area, pinned footer. Size 328 pt x plan height.
-// Pos: Root of the SwiftUI tree (docs/DESIGN.md 8.3). It renders the plan in order and never sorts.
-//      The height is set by AppKit through NSPopover.contentSize. SwiftUI never animates the height.
-//      No Timer and no TimelineView here. The view tree is destroyed when the popover closes.
+// Output: The whole panel: the main column (352 pt: hero, six rows, anomaly area, footer) and, when open, the sidebar (320 pt).
+// Pos: Root of the SwiftUI tree (docs/DESIGN_V2.md 2, 14.3). It renders the plan in order and never sorts.
+//      The window (WP-B) sets the size. The content sticks to the main column side and the window clips the rest.
+//      No Timer and no TimelineView here. The view tree is destroyed when the panel closes.
 
 import AppKit
 import SwiftUI
@@ -71,12 +71,36 @@ private extension View {
 
 // MARK: - Root
 
+extension PanelSection {
+    /// Stable identity of a section, for the UI regression registry.
+    var key: String {
+        switch self {
+        case .hero: return "hero"
+        case .rows: return "rows"
+        case .anomaly: return "anomaly"
+        case .footer: return "footer"
+        case .problemCard(let item, _, _): return "card." + item.rawValue
+        case .problemRow(let item, _): return "row." + item.rawValue
+        }
+    }
+
+    /// Entrance group: hero, rows, anomaly area, footer.
+    var group: Int {
+        switch self {
+        case .hero: return 0
+        case .rows: return 1
+        case .anomaly: return 2
+        case .footer: return 3
+        case .problemCard, .problemRow: return 1
+        }
+    }
+}
+
 struct PanelRoot: View {
     @ObservedObject var model: PanelModel
     var entrance: PanelEntrance = .none
 
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.panelSnapshot) private var snapshot
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var revealed: Bool
 
@@ -87,137 +111,72 @@ struct PanelRoot: View {
     }
 
     private var plan: PanelLayoutPlan { model.layoutPlan }
+    /// Previews and tests without a window draw the sidebar beside the main column. In the app the window hosts it (`PanelSidebar`).
+    private var inlineSidebar: Bool { model.chrome == nil }
+    private var edge: SidebarEdge { model.chrome?.sidebarEdge ?? .right }
 
     var body: some View {
         let tok = PanelTokens(scheme: scheme)
-        content
-            .frame(width: PanelMetrics.width, height: plan.height, alignment: .top)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .environment(\.tok, tok)
-            .animation(PanelMotion.spring, value: plan.sections)
-            .onAppear {
-                if !revealed { revealed = true }
+        HStack(spacing: 0) {
+            if let item = model.sidebarItem, edge == .left, inlineSidebar {
+                sidebar(item)
+                divider(tok)
             }
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("panel.root")
-            .uiTestFrame("panel.root")
+            mainColumn
+            if let item = model.sidebarItem, edge == .right, inlineSidebar {
+                divider(tok)
+                sidebar(item)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge == .right ? .topLeading : .topTrailing)
+        .environment(\.tok, tok)
+        .onHover { inside in
+            if !inside, model.chrome == nil { model.pointerLeft() }
+        }
+        .onAppear {
+            if !revealed { revealed = true }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("panel.root")
+        .uiTestFrame("panel.root")
     }
 
-    // MARK: Layout
-
-    private var heroSection: PanelSection? {
-        guard let first = plan.sections.first, case .hero = first else { return nil }
-        return first
+    private func divider(_ tok: PanelTokens) -> some View {
+        Rectangle().fill(tok.separator).frame(width: 0.5, height: plan.height)
     }
 
-    private var footerSection: PanelSection? {
-        guard let last = plan.sections.last, case .footer = last else { return nil }
-        return last
+    private func sidebar(_ item: SidebarItem) -> some View {
+        PanelSidebarView(model: model, item: item)
+            .frame(width: PanelMetrics.sidebarWidth, height: plan.height, alignment: .top)
+            .hoverRegion(.sidebar, model: model)
+            .uiTestFrame("sidebar")
     }
 
-    private var middleSections: [PanelSection] {
-        var list = plan.sections
-        if heroSection != nil { list.removeFirst() }
-        if footerSection != nil, !list.isEmpty { list.removeLast() }
-        return list
-    }
+    // MARK: Main column
 
-    private func gap(before section: PanelSection) -> Double {
-        guard let index = plan.sections.firstIndex(of: section), index > 0 else { return 0 }
-        return PanelGeometry.gap(plan.sections[index - 1], section)
-    }
-
-    @ViewBuilder
-    private var content: some View {
+    private var mainColumn: some View {
         VStack(spacing: 0) {
-            if let hero = heroSection {
-                staged(hero)
-                    .padding(.horizontal, PanelMetrics.padding)
-                    .padding(.top, PanelMetrics.padding)
+            Color.clear.frame(height: PanelMetrics.topPadding)
+            staged(.hero) {
+                PanelHero(data: model.data, quiet: plan.quiet)
+                    .frame(width: PanelMetrics.contentWidth, height: PanelMetrics.hero)
+                    .hoverRegion(.neutral, model: model)
             }
-            middle
-            if let footer = footerSection {
-                staged(footer)
-                    .padding(.horizontal, PanelMetrics.padding)
-                    .padding(.top, gap(before: footer))
-                    .padding(.bottom, PanelMetrics.padding)
-            }
+            Color.clear.frame(height: PanelMetrics.heroGap)
+            staged(.rows) { PanelRowsSection(model: model) }
+            Color.clear.frame(height: PanelMetrics.rowsToAnomalyGap)
+            staged(.anomaly) { PanelAnomalySection(model: model) }
+            Color.clear.frame(height: PanelMetrics.anomalyToFooterGap)
+            staged(.footer) { PanelFooter(model: model) }
+            Color.clear.frame(height: PanelMetrics.bottomPadding)
         }
+        .frame(width: PanelMetrics.width, height: plan.height, alignment: .top)
+        .uiTestFrame("column.main")
     }
 
-    @ViewBuilder
-    private var middle: some View {
-        let sections = middleSections
-        if snapshot {
-            VStack(spacing: 0) {
-                middleStack(sections)
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        } else {
-            ScrollViewReader { proxy in
-                ScrollView(.vertical, showsIndicators: false) {
-                    middleStack(sections)
-                        .frame(maxWidth: .infinity, alignment: .top)
-                }
-                .scrollBounceBehavior(.basedOnSize)
-                .onChange(of: model.scrollTarget) { _, target in
-                    guard let target else { return }
-                    withAnimation(PanelMotion.spring) { proxy.scrollTo(target, anchor: .top) }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        }
-    }
-
-    private func middleStack(_ sections: [PanelSection]) -> some View {
-        VStack(spacing: 0) {
-            ForEach(sections, id: \.key) { section in
-                staged(section)
-                    .padding(.top, gap(before: section))
-                    .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, PanelMetrics.padding)
-    }
-
-    private func staged(_ section: PanelSection) -> some View {
-        sectionView(section)
+    private func staged<Content: View>(_ section: PanelSection, @ViewBuilder _ content: () -> Content) -> some View {
+        content()
             .uiTestFrame("sec." + section.key)
-            .stage(PanelGeometry.group(section), revealed: revealed, entrance: entrance, reduceMotion: reduceMotion)
+            .stage(section.group, revealed: revealed, entrance: entrance, reduceMotion: reduceMotion)
     }
-
-    // MARK: One section
-
-    @ViewBuilder
-    private func sectionView(_ section: PanelSection) -> some View {
-        switch section {
-        case .hero(let quiet):
-            PanelHero(data: model.data, quiet: quiet)
-        case .trendStrip:
-            TrendStrip(data: model.data)
-        case .problemCard(let item, let compact, let evidence):
-            ProblemCard(model: model, item: item, compact: compact, evidenceHeight: evidence)
-        case .problemRow(let item, let compact):
-            ProblemRow(model: model, item: item, compact: compact)
-        case .copyCTA(let item):
-            CopyCTA(model: model, item: item)
-        case .normalSummary(let items):
-            NormalSummary(items: items)
-        case .appsDisclosure(let expanded):
-            AppsDisclosure(model: model, expanded: expanded, compact: plan.compressions.contains(.disclosure26))
-        case .moreDisclosure(let expanded, let apps, let auth):
-            MoreDisclosure(model: model, expanded: expanded, includesApps: apps, includesAuthorization: auth,
-                           compact: plan.compressions.contains(.disclosure26))
-        case .authorization:
-            AuthorizationRow(model: model)
-        case .footer(let quiet):
-            PanelFooter(model: model, quiet: quiet)
-        }
-    }
-}
-
-extension PanelSection {
-    /// Stable identity for ForEach and transitions.
-    var key: String { PanelGeometry.key(self) }
 }

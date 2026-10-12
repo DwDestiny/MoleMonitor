@@ -56,6 +56,44 @@ struct PanelTokens {
     var plotBackground: Color { pick(Color(.sRGB, white: 0, opacity: 0.04), Color(.sRGB, white: 1, opacity: 0.05)) }
     var separator: Color { pick(Color(.sRGB, white: 0, opacity: 0.10), Color(.sRGB, white: 1, opacity: 0.12)) }
 
+    // v2 tokens (DESIGN_V2.md 3.3)
+    var textTertiary: Color { pick(Color(.sRGB, white: 0, opacity: 0.40), Color(.sRGB, white: 1, opacity: 0.38)) }
+    var dotNeutral: Color { pick(Color(.sRGB, white: 0, opacity: 0.28), Color(.sRGB, white: 1, opacity: 0.30)) }
+    var chartLine: Color { pick(Color(.sRGB, white: 0, opacity: 0.55), Color(.sRGB, white: 1, opacity: 0.55)) }
+    var chartFill: Color { pick(Color(.sRGB, white: 0, opacity: 0.06), Color(.sRGB, white: 1, opacity: 0.08)) }
+    var chartGrid: Color { pick(Color(.sRGB, white: 0, opacity: 0.08), Color(.sRGB, white: 1, opacity: 0.10)) }
+    var chartThreshold: Color { pick(Color(.sRGB, white: 0, opacity: 0.25), Color(.sRGB, white: 1, opacity: 0.25)) }
+    /// Neutral gray, so a selected row adds no hue on a tinted row (design check 2026-10-12).
+    var fillSelected: Color { pick(Color(.sRGB, white: 0, opacity: 0.09), Color(.sRGB, white: 1, opacity: 0.14)) }
+    /// Plate behind the axis labels inside the plot, so a curve never runs through the text.
+    var labelPlate: Color { pick(Color(.sRGB, white: 1, opacity: 0.80), Color(.sRGB, white: 0.14, opacity: 0.80)) }
+    /// The 3 pt bar at the left edge of the selected row. Neutral too.
+    var selectedBar: Color { pick(Color(.sRGB, white: 0, opacity: 0.55), Color(.sRGB, white: 1, opacity: 0.65)) }
+
+    /// Value color of a row: level color for a problem, primary gray otherwise (DESIGN_V2.md 5.1).
+    func valueColor(_ level: HealthLevel, problem: Bool) -> Color {
+        guard problem else { return textPrimary }
+        return level == .red ? textDanger : textWarning
+    }
+
+    /// Dot color of a problem level. Other dots use `dotNeutral`.
+    func dotColor(_ dot: PanelDot) -> Color {
+        switch dot {
+        case .red: return lampDanger
+        case .yellow: return lampWarning
+        default: return dotNeutral
+        }
+    }
+
+    /// Row background of a problem: the 6 % (light) or 10 % (dark) tint of its level. Other rows have none.
+    func rowTint(_ dot: PanelDot) -> Color {
+        switch dot {
+        case .red: return tintDanger
+        case .yellow: return tintWarning
+        default: return Color.clear
+        }
+    }
+
     /// Lamp color of a level. Unknown, stale and not-applicable share the gray lamp.
     func lamp(_ level: HealthLevel) -> Color {
         switch level {
@@ -157,19 +195,27 @@ enum PanelMotion {
     static let stagger = 0.04
 }
 
-/// Sizes that are not in PanelMetrics (Core).
-enum PanelSize {
-    static let contentWidth = PanelMetrics.width - 2 * PanelMetrics.padding   // 296
-    static let cardPadding = 12.0
-    static let cardRadius = 12.0
-    static let chartRadius = 6.0
-    static let ctaRadius = 8.0
-    static let iconButton = 24.0
-    static let chartHeight = 60.0
-    static let chartHeightCompact = 48.0
-    static let miniChartHeight = 28.0
-    static let appColumnCPU = 48.0
-    static let appColumnMemory = 60.0
+/// Type sizes of the v2 panel (DESIGN_V2.md 3.2). A screen of the main column uses only 17, 13, 11 and 10 pt.
+enum PanelType {
+    static let bubble = Font.system(size: 13, weight: .medium)
+    static let rowName = Font.system(size: 13, weight: .medium)
+    static let rowNote = Font.system(size: 11)
+    static let rowValue = Font.system(size: 17, weight: .semibold).monospacedDigit()
+    /// Value of a normal row: same size, lighter weight (design check 2026-10-12).
+    static let rowValueQuiet = Font.system(size: 17, weight: .regular).monospacedDigit()
+    static let rowPrefix = Font.system(size: 11)
+    static let section = Font.system(size: 11, weight: .semibold)
+    static let anomalyTitle = Font.system(size: 13, weight: .medium)
+    static let duration = Font.system(size: 13, weight: .medium).monospacedDigit()
+    static let sideTitle = Font.system(size: 17, weight: .semibold)
+    static let sideStat = Font.system(size: 17, weight: .semibold).monospacedDigit()
+    static let sideStatLabel = Font.system(size: 10)
+    static let readout = Font.system(size: 11, weight: .semibold).monospacedDigit()
+    static let axis = Font.system(size: 10).monospacedDigit()
+    static let button = Font.system(size: 13, weight: .semibold)
+    static let buttonSub = Font.system(size: 11)
+    /// The sizes in pt that the rows, the anomaly area and the footer may use (gate W02).
+    static let allowedSizes: Set<Double> = [17, 13, 11, 10]
 }
 
 // MARK: - Slots (the text boxes whose longest string must fit at 1.25 times the font size, check M6)
@@ -184,31 +230,34 @@ struct PanelSlot {
     var lines: Int
     /// The longest string that can appear in this slot.
     var sample: String
+    /// Text in 11 pt before the sample (value prefix, with a gap of 3 pt). Empty when the slot has none.
+    var prefix: String = ""
+    /// Smallest scale the view may apply to the sample text (`minimumScaleFactor`). 1 means no scaling.
+    var minScale: CGFloat = 1
 }
 
 enum PanelSlots {
-    static let heroTextWidth = PanelSize.contentWidth - 60 - 12     // beside the problem-mode dog (72 pt box, 12 pt pulled left)
-    static let quietTextWidth = PanelSize.contentWidth - 104 - 12    // beside the quiet-mode dog
-    static let cardInnerWidth = PanelSize.contentWidth - 2 * PanelSize.cardPadding
-
     static let all: [PanelSlot] = [
-        PanelSlot(name: "hero.title.problem", size: 20, weight: .semibold, rounded: true, width: heroTextWidth, lines: 1, sample: "4 项需要处理"),
-        PanelSlot(name: "hero.title.single", size: 20, weight: .semibold, rounded: true, width: heroTextWidth, lines: 1, sample: "耗电需留意"),
-        PanelSlot(name: "hero.title.quiet", size: 13, weight: .semibold, rounded: false, width: quietTextWidth, lines: 1, sample: "一切正常"),
-        PanelSlot(name: "hero.subtitle", size: 11, weight: .regular, rounded: false, width: heroTextWidth, lines: 2, sample: "睡眠掉电 3.3%/小时 · 已持续 2 小时 10 分"),
-        PanelSlot(name: "hero.subtitle.quiet", size: 11, weight: .regular, rounded: false, width: quietTextWidth, lines: 2, sample: "最后数据 13:40，25 分钟前"),
-        PanelSlot(name: "lamp.quiet.value", size: 11, weight: .regular, rounded: false, width: quietTextWidth - 8 - 6 - 30 - 6, lines: 1, sample: "正常 · swap 12.8 GB"),
-        PanelSlot(name: "card.title", size: 13, weight: .semibold, rounded: false, width: cardInnerWidth - 24 - 60, lines: 1, sample: "磁盘 · 需留意"),
-        PanelSlot(name: "card.figure", size: 28, weight: .semibold, rounded: true, width: 142, lines: 1, sample: "+314 GB"),
-        PanelSlot(name: "card.caption", size: 11, weight: .regular, rounded: false, width: cardInnerWidth - 142 - 8, lines: 2, sample: "上次睡眠的掉电速率"),
-        PanelSlot(name: "card.evidence.line", size: 11, weight: .regular, rounded: false, width: cardInnerWidth, lines: 1, sample: "睡眠 6 小时 20 分 · 82% → 61%"),
-        PanelSlot(name: "row.title", size: 13, weight: .semibold, rounded: false, width: 150, lines: 1, sample: "耗电 · 需留意"),
-        PanelSlot(name: "row.detail", size: 11, weight: .regular, rounded: false, width: 200, lines: 1, sample: "电池供电 · 掉电 34%/小时"),
-        PanelSlot(name: "cta.label", size: 13, weight: .semibold, rounded: false, width: PanelSize.contentWidth - 40, lines: 1, sample: "复制给 Agent · 耗电"),
-        PanelSlot(name: "summary", size: 11, weight: .regular, rounded: false, width: PanelSize.contentWidth - 8, lines: 1, sample: "其余正常：温度、内存、CPU"),
-        PanelSlot(name: "disclosure.preview", size: 11, weight: .regular, rounded: false, width: 190, lines: 1, sample: "磁盘可用 412 GB · 今天 1.2 GB"),
-        PanelSlot(name: "app.name", size: 13, weight: .regular, rounded: false, width: cardInnerWidth - 14 - PanelSize.appColumnCPU - PanelSize.appColumnMemory - 18, lines: 1, sample: "Orchard Browser"),
-        PanelSlot(name: "footer.time", size: 11, weight: .regular, rounded: false, width: 150, lines: 1, sample: "数据 14:05（已过期）"),
+        PanelSlot(name: "row.name", size: 13, weight: .medium, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "磁盘"),
+        PanelSlot(name: "row.note", size: 11, weight: .regular, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "已用 593 / 995 GB"),
+        PanelSlot(name: "row.note.cpu", size: 11, weight: .regular, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "10 分钟均值 94%"),
+        PanelSlot(name: "row.note.battery", size: 11, weight: .regular, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "睡眠每小时 3.3%"),
+        PanelSlot(name: "row.note.network", size: 11, weight: .regular, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "\u{2193}1.1 MB/s \u{2191}96 KB/s", minScale: 0.8),
+        PanelSlot(name: "row.value", size: 17, weight: .semibold, rounded: false, width: PanelMetrics.valueColumn, lines: 1, sample: "+314 GB"),
+        PanelSlot(name: "row.value.swap", size: 17, weight: .semibold, rounded: false, width: PanelMetrics.valueColumn, lines: 1, sample: "+3.1 GB",
+                  prefix: "swap", minScale: 0.75),
+        PanelSlot(name: "row.value.available", size: 17, weight: .semibold, rounded: false, width: PanelMetrics.valueColumn, lines: 1, sample: "402 GB",
+                  prefix: "可用", minScale: 0.75),
+        PanelSlot(name: "row.value.pressure", size: 17, weight: .semibold, rounded: false, width: PanelMetrics.valueColumn, lines: 1, sample: "100%",
+                  prefix: "压力", minScale: 0.75),
+        PanelSlot(name: "row.value.stale", size: 17, weight: .semibold, rounded: false, width: PanelMetrics.valueColumn, lines: 1, sample: "402 GB",
+                  prefix: "11:00", minScale: 0.75),
+        PanelSlot(name: "anomaly.title", size: 13, weight: .medium, rounded: false, width: 188, lines: 1, sample: "内存 · 留意"),
+        PanelSlot(name: "anomaly.reason", size: 11, weight: .regular, rounded: false, width: 188, lines: 1, sample: "swap 30 分钟增长"),
+        PanelSlot(name: "anomaly.duration", size: 13, weight: .medium, rounded: false, width: 120, lines: 1, sample: "1 天 3 小时"),
+        PanelSlot(name: "anomaly.start", size: 11, weight: .regular, rounded: false, width: 120, lines: 1, sample: "开始 昨天 22:10"),
+        PanelSlot(name: "button.title", size: 13, weight: .semibold, rounded: false, width: PanelMetrics.primaryButtonWidth - 24, lines: 1, sample: "让 Agent 做一次日常巡检"),
+        PanelSlot(name: "button.sub", size: 11, weight: .regular, rounded: false, width: PanelMetrics.primaryButtonWidth - 24, lines: 1, sample: "粘贴给你的 Agent"),
     ]
 }
 

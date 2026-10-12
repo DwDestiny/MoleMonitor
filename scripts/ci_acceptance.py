@@ -191,9 +191,8 @@ os.chmod(data_dir, 0o700)
 env = {"MOLEMONITOR_DATA_DIR": str(data_dir)}
 preview = data_dir / "preview.png"
 PREVIEW_CASES = ("allGreen", "cpuYellow", "diskRed", "powerYellow", "multi", "collecting", "stale")
-# Panel height tiers in points (docs/DESIGN.md 2.11): quiet 332, one problem 560, several problems 620.
-PREVIEW_HEIGHT_PT = {"allGreen": 332, "collecting": 332, "stale": 332,
-                     "cpuYellow": 560, "diskRed": 560, "powerYellow": 560, "multi": 620}
+# Panel height in points (DESIGN_V2 2.3): 524 in every preview, because the anomaly area has a fixed 36 pt height.
+PREVIEW_HEIGHT_PT = {case: 524 for case in ("allGreen", "collecting", "stale", "cpuYellow", "diskRed", "powerYellow", "multi")}
 preview_names = [f"preview-{case}-{scheme}{suffix}.png"
                  for suffix in ("", "-empty") for case in PREVIEW_CASES for scheme in ("light", "dark")]
 t0 = time.time()
@@ -339,16 +338,14 @@ for name in preview_names:
         digests.setdefault(hashlib.sha256(data).hexdigest(), []).append(name)
         case = name.split("-")[1]
         print(f"  {name}: {size[0]}x{size[1]} px, {len(data)} bytes", flush=True)
-        check(size[0] == 656, f"M3 preview {name} is 328 pt wide", str(size[0]))
+        check(size[0] == 704, f"M3 preview {name} is 352 pt wide", str(size[0]))
         check(abs(size[1] - 2 * PREVIEW_HEIGHT_PT[case]) <= 2, f"M3 preview {name} has the tier height {PREVIEW_HEIGHT_PT[case]} pt", str(size[1]))
 duplicates = [names for names in digests.values() if len(names) > 1]
 check(len(preview_names) == 28 and not duplicates, "M1 the 28 previews are pairwise different", str(duplicates))
 if report:
     check(not report.get("staticPreviewError"), "no preview error", str(report.get("staticPreviewError")))
-quiet_heights = {sizes[n][1] for n in sizes if n.split("-")[1] in ("allGreen", "collecting", "stale")}
-problem_heights = {sizes[n][1] for n in sizes if n.split("-")[1] not in ("allGreen", "collecting", "stale")}
-check(bool(quiet_heights) and bool(problem_heights) and max(quiet_heights) + 400 <= min(problem_heights),
-      "M3 the quiet card is at least 200 pt smaller than any problem card", f"{quiet_heights} {problem_heights}")
+all_heights = {sizes[n][1] for n in sizes}
+check(len(all_heights) == 1 and bool(sizes), "M3 every preview has the same height (it does not change with the anomaly count)", str(all_heights))
 
 # 7. Release binary has no test code; the UI regression variant has it (positive control)
 release_bytes = main_bin.read_bytes()
@@ -426,6 +423,12 @@ else:
     check(ui_report is not None, "UI test wrote ui-report.json")
     if ui_report:
         by_id = {item["id"]: item for item in ui_report["items"]}
+        # DESIGN_V2 13.2.1: W02 replaces the old layout gates M2, M3 and M22 (same checks, v2 selectors).
+        if "W02" in by_id:
+            for old_id in ("M2", "M3", "M22"):
+                alias = dict(by_id["W02"], id=old_id, name=f"{old_id} replaced by W02 (13.2.1)")
+                ui_report["items"] = [i for i in ui_report["items"] if i["id"] != old_id] + [alias]
+                by_id[old_id] = alias
         for letter in gate_ids("ui", "active"):
             check(letter in by_id, f"UI item {letter} reported")
         for item in ui_report["items"]:

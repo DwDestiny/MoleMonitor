@@ -619,6 +619,11 @@ final class UITestRunner {
                 let more = UITestAX.nodes(root: NSApp)
                 if more.count > best.count { best = more; source = "application" }
             }
+            // The window hosts the sidebar in its own view. Add its nodes to the tree of the main column.
+            if let side = delegate.panelWindow?.sidebarHost, side.superview != nil {
+                let known = Set(best.map { $0.id }.filter { !$0.isEmpty })
+                best += UITestAX.nodes(root: side).filter { $0.id.isEmpty || !known.contains($0.id) }
+            }
             info["axSource"] = source
             axCache = best
             return best
@@ -1144,51 +1149,39 @@ final class UITestRunner {
         await sleepMs(200)
     }
 
-    // G: authorization row and accessibility audit
+    // G: authorization entries and accessibility audit (v2, DESIGN_V2.md 13.2.1: btn.notifyAuth in the anomaly area, menu.notify in the "..." menu)
     func stepG() async {
         let t0 = now()
         let auth = engine.authorization
-        let enable = locate("btn.enableNotifications")
-        let note = locate("label.authorization")
+        let enable = locate("btn.notifyAuth")
         let nodes = axNodes()
-        let texts = ["unavailable": "此环境无法发送通知，提醒只显示在这里", "denied": "通知已关闭，可在系统设置 > 通知中打开"]
         info["authorization"] = auth
+        var menuItem: NSMenuItem?
+        if let model = delegate.panelModel {
+            let menu = PanelMoreMenu.makeMenu(model: model, handler: PanelMenuHandler(model: model))
+            menuItem = menu.items.first { $0.identifier?.rawValue == "menu.notify" }
+        }
+        let menuText = menuItem.map { "menu.notify '\($0.title)'" } ?? "no menu.notify"
         switch auth {
-        case "unavailable", "denied":
-            let expected = texts[auth] ?? ""
-            let textNode = nodes.first { $0.id == "label.authorization" }
-            let textOk = textNode.map { $0.label.contains(expected) || $0.value.contains(expected) } ?? (note != nil)
-            let how = textNode == nil ? "layout registry only, the text itself is not read" : "text read from the accessibility tree"
-            record("G", "按钮交互与降级文案", enable == nil && note != nil && textOk, since: t0,
-                   "authorization=\(auth); enable button shown=\(enable != nil); fallback text shown=\(note != nil) (\(how)); expected text: \(expected)")
-        case "not_determined":
-            if let enable {
+        case "unavailable", "denied", "not_determined":
+            let menuOk = menuItem != nil && UITestAX.hasChinese(menuItem?.title ?? "")
+            if auth == "not_determined", let enable {
                 let look = await pressLook(enable, saveAs: "ui-button-pressed.png")
-                record("G", "按钮交互与降级文案", look.worked != nil && popover.isShown, since: t0,
-                       "authorization=not_determined; 开启通知 located by \(enable.source); pressed look seen by \(look.worked?.rawValue ?? "no method"); \(look.state); changed share in the button \(look.shares); popover still shown=\(popover.isShown)")
+                record("G", "按钮交互与降级文案", look.worked != nil && menuOk && popover.isShown, since: t0,
+                       "authorization=not_determined; 开启通知 located by \(enable.source); pressed look seen by \(look.worked?.rawValue ?? "no method"); \(look.state); changed share in the button \(look.shares); \(menuText); panel still shown=\(popover.isShown)")
             } else {
-                record("G", "按钮交互与降级文案", false, since: t0, "authorization=not_determined but the enable button has no frame.")
+                record("G", "按钮交互与降级文案", menuOk, since: t0,
+                       "authorization=\(auth); \(menuText); btn.notifyAuth shown=\(enable != nil) (it lives in the quiet line only, so it is absent while problems show)")
             }
         case "authorized":
-            record("G", "按钮交互与降级文案", enable == nil && note == nil, since: t0, "authorization=authorized; no enable button and no fallback text expected; enable shown=\(enable != nil) text shown=\(note != nil)")
+            record("G", "按钮交互与降级文案", enable == nil && menuItem == nil, since: t0, "authorization=authorized; no authorization entry expected; btn.notifyAuth shown=\(enable != nil), \(menuText)")
         default:
             record("G", "按钮交互与降级文案", nil, since: t0, "authorization=\(auth): no check defined for this state.")
         }
 
-        // G3: the quit button reacts to a press. The pointer is released outside the button, so the app keeps running.
-        let t3 = now()
-        if let quit = locate("btn.quit") {
-            let look = await pressLook(quit, saveAs: "ui-quit-pressed.png")
-            quitPressWorked = look.worked != nil
-            quitNeedsActivation = look.activationNeeded
-            info["quitPressState"] = look.state
-            let note = "btn.quit located by \(quit.source); pressed look seen by \(look.worked?.rawValue ?? "no method"); activation needed=\(look.activationNeeded); \(look.state); changed share in the button \(look.shares); popover still shown=\(popover.isShown)"
-            // A press that no method makes visible cannot tell a product defect from an event SwiftUI ignores in this VM.
-            record("G3", "退出按钮按下反馈", look.worked != nil ? true : nil, since: t3,
-                   look.worked != nil ? note : note + ". Synthetic presses did not change the button here; not proof of a product defect.")
-        } else {
-            record("G3", "退出按钮按下反馈", nil, since: t3, "btn.quit has no frame.")
-        }
+        // G3: v2 has no quit button. Quit is the menu item menu.quit (checked in K).
+        quitPressWorked = false
+        record("G3", "退出按钮按下反馈", nil, since: now(), "v2 has no quit button. The quit action is the menu item menu.quit (gate K).")
 
         // Accessibility audit
         let t1 = now()
@@ -1203,7 +1196,7 @@ final class UITestRunner {
             return
         }
         var problems = [String]()
-        for id in ["btn.quit", "chart.disk", "card.disk"] {
+        for id in ["btn.copy", "btn.more", "row.disk"] {
             guard let node = nodes.first(where: { $0.id == id }) else { problems.append("\(id): missing"); continue }
             if !UITestAX.hasChinese(node.label) { problems.append("\(id): label '\(node.label)' has no Chinese text") }
         }
@@ -1338,11 +1331,19 @@ final class UITestRunner {
                 "renderP50": render.p50, "renderP95": render.p95, "renderMax": render.max])
     }
 
-    // K: quit through the button
+    // K: quit through the menu item menu.quit (v2, DESIGN_V2.md 13.2.1). NSMenu.performActionForItem(at:) triggers it.
     func stepK() async {
         let t0 = now()
-        guard hostView != nil, let loc = locate("btn.quit") else {
-            record("K", "退出", false, since: t0, "btn.quit has no frame; cannot click it.")
+        guard let model = delegate.panelModel else {
+            record("K", "退出", false, since: t0, "no panel model; cannot build the menu.")
+            finish(abort: nil, exitCode: 1)
+            return
+        }
+        // NSMenuItem.target is weak. Keep the handler alive until the action ran.
+        let handler = PanelMenuHandler(model: model)
+        let menu = PanelMoreMenu.makeMenu(model: model, handler: handler)
+        guard let index = menu.items.firstIndex(where: { $0.identifier?.rawValue == "menu.quit" }) else {
+            record("K", "退出", false, since: t0, "menu.quit is not in the menu.")
             finish(abort: nil, exitCode: 1)
             return
         }
@@ -1350,37 +1351,17 @@ final class UITestRunner {
         if let date = (try? FileManager.default.attributesOfItem(atPath: statusURL.path))?[.modificationDate] as? Date {
             statusMtimeBeforeQuit = date.timeIntervalSince1970
         }
-        record("K", "退出", nil, since: t0, "Clicking 退出 (\(loc.source)). The acceptance script checks the exit code 0 and that status.json was written at exit.", pending: true)
+        record("K", "退出", nil, since: t0, "Triggering menu.quit with performActionForItem. The acceptance script checks the exit code 0 and that status.json was written at exit.", pending: true)
         info["footprintOpenMB"] = footprintMB().map { String(format: "%.1f", $0) } ?? "n/a"
         writeReport()
-        let center = CGPoint(x: loc.rect.midX, y: loc.rect.midY)
-        // terminate(_:) ends the process. Still here after a click means that click did not reach the button.
-        var tried = [String]()
-        for activate in [false, true] {
-            if activate {
-                activateApp()
-                await sleepMs(300)
-            }
-            for method in [ClickMethod.appKitEvent, ClickMethod.systemEvent] {
-                tried.append("\(activate ? "activated" : "not activated") \(method.rawValue)")
-                press(at: center, method: method)
-                await sleepMs(120)
-                release(at: center, method: method)
-                await sleepMs(1500)
-            }
-        }
-        if let index = items.firstIndex(where: { $0.id == "K" }) {
-            if quitPressWorked {
-                items[index].status = "fail"
-                items[index].note = "The click on 退出 did not end the process although a press changes the button (G3); tried \(tried)."
-                log("[FAIL] K the process is still running after the clicks.")
-                finish(abort: nil, exitCode: 1)
-            } else {
-                items[index].status = "skipped"
-                items[index].note = "Synthetic clicks do not reach the SwiftUI button in this VM (G3 shows no pressed look); tried \(tried). The quit action is the closure NSApplication.terminate(nil) in Sources/MoleMonitor.swift. Verify on a Mac by hand."
-                log("[SKIP] K synthetic clicks did not reach the button.")
-                finish(abort: nil, exitCode: 0)
-            }
+        withExtendedLifetime(handler) { menu.performActionForItem(at: index) }
+        // terminate(_:) ends the process. Still here after the call means the action did not quit.
+        await sleepMs(2000)
+        if let k = items.firstIndex(where: { $0.id == "K" }) {
+            items[k].status = "fail"
+            items[k].note = "menu.quit was triggered but the process is still running."
+            log("[FAIL] K the process is still running after menu.quit.")
+            finish(abort: nil, exitCode: 1)
         }
     }
 

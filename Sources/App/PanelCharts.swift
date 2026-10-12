@@ -1,829 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: PanelData trend series, the problem start time, the disk series and the color tokens.
-// Output: The trend strip (two neutral mini lines), the problem chart (2 hour, layered coarse and fine charts), and the 30 day disk chart.
-// Pos: Every chart of the status card (docs/DESIGN.md 2.7). Swift Charts only. No Timer and no TimelineView: the charts redraw when new points arrive.
+// Input: Series data of the sidebar (C2) and small helpers shared by the panel.
+// Output: The number transition modifier. The sidebar charts are added in C2.
+// Pos: Charts of the v2 panel. They are drawn by hand with Path (no Swift Charts), so a static ImageRenderer render matches the live view
+//      and the readout layer can change without a redraw of the main chart (gate W07).
 
-import Charts
+import Accessibility
 import SwiftUI
-
-// MARK: - Plot data (pure values, built outside the view bodies)
-
-struct PlotPoint: Identifiable, Equatable {
-    var id: Int
-    /// Index of the unbroken run. A gap starts a new run, so the line does not connect across it.
-    var seg: Int
-    var t: Date
-    var v: Double
-}
-
-struct PlotBand: Identifiable, Equatable {
-    enum Kind: Equatable { case warning, danger, neutral }
-    var id: Int
-    var kind: Kind
-    var x0: Date
-    var x1: Date
-    var y0: Double
-    var y1: Double
-}
-
-enum PlotUnit: Equatable { case percent, gigabytes }
-
-struct ProblemPlot: Equatable {
-    var baseCoarse = [PlotPoint]()
-    var hotCoarse = [PlotPoint]()
-    var baseFine = [PlotPoint]()
-    var hotFine = [PlotPoint]()
-    var bands = [PlotBand]()
-    var thresholds = [Double]()
-    var domainX: ClosedRange<Date>
-    var domainY: ClosedRange<Double>
-    var last: PlotPoint?
-    var lastIsHot = false
-    var unit: PlotUnit = .percent
-
-    var hasData: Bool { last != nil }
-
-    /// All points in time order, for the hover lookup.
-    var everyPoint: [PlotPoint] {
-        let merged = baseCoarse + hotCoarse + baseFine + hotFine
-        return merged.sorted { $0.t < $1.t }
-    }
-}
-
-private struct PlotSample {
-    var t: Date
-    var v: Double
-}
-
-private struct PlotLayers {
-    var baseCoarse = [PlotPoint]()
-    var hotCoarse = [PlotPoint]()
-    var baseFine = [PlotPoint]()
-    var hotFine = [PlotPoint]()
-    var nextId = 0
-
-    mutating func add(_ s: PlotSample, seg: Int, fine: Bool, hot: Bool) {
-        let p = PlotPoint(id: nextId, seg: seg, t: s.t, v: s.v)
-        nextId += 1
-        switch (fine, hot) {
-        case (false, false): baseCoarse.append(p)
-        case (false, true): hotCoarse.append(p)
-        case (true, false): baseFine.append(p)
-        case (true, true): hotFine.append(p)
-        }
-    }
-}
-
-private struct BandStyle: Equatable {
-    var kind: PlotBand.Kind
-    var heightPt: Double?
-}
-
-enum ProblemPlotBuilder {
-    static let windowSeconds: TimeInterval = 7200
-    static let fineSeconds: TimeInterval = 300
-
-    static func value(_ item: HealthItem, _ p: TrendPoint) -> Double? {
-        switch item {
-        case .cpu, .thermal: return p.cpu
-        case .memory: return p.swapUsed.map { Double($0) / 1e9 }
-        case .power: return p.battery
-        case .disk: return nil
-        }
-    }
-
-    /// Splits the 2 hour series into the coarse and the fine layer, and into the neutral part and the abnormal part.
-    static func make(item: HealthItem, data: PanelData, since: Date?, plotHeight: Double) -> ProblemPlot {
-        let end = data.now.addingTimeInterval(2)
-        let start = data.now.addingTimeInterval(-windowSeconds)
-
-        // Runs of points that have a value.
-        var runs = [[PlotSample]]()
-        var maxValue = 0.0
-        for segment in data.trend.segments {
-            var run = [PlotSample]()
-            for p in segment where p.t >= start {
-                if let v = value(item, p) {
-                    run.append(PlotSample(t: p.t, v: v))
-                    maxValue = max(maxValue, v)
-                } else if !run.isEmpty {
-                    runs.append(run)
-                    run = []
-                }
-            }
-            if !run.isEmpty { runs.append(run) }
-        }
-
-        let latest = data.trend.latest?.t ?? data.now
-        let fineCut = latest.addingTimeInterval(-fineSeconds)
-        var layers = PlotLayers()
-        var lastSample: PlotSample?
-        var lastHot = false
-        for (segIndex, run) in runs.enumerated() {
-            for (i, s) in run.enumerated() {
-                let fine = s.t > fineCut
-                var hot = false
-                if let since { hot = s.t >= since }
-                if i > 0 {
-                    let prev = run[i - 1]
-                    let prevFine = prev.t > fineCut
-                    var prevHot = false
-                    if let since { prevHot = prev.t >= since }
-                    // When the layer or the color changes, the new part starts with the previous point, so the line stays continuous.
-                    if fine != prevFine || hot != prevHot { layers.add(prev, seg: segIndex, fine: fine, hot: hot) }
-                }
-                layers.add(s, seg: segIndex, fine: fine, hot: hot)
-                lastSample = s
-                lastHot = hot
-            }
-        }
-
-        var domainY: ClosedRange<Double> = 0...100
-        var unit = PlotUnit.percent
-        if item == .memory {
-            domainY = 0...max(maxValue * 1.3, 1)
-            unit = .gigabytes
-        }
-        var plot = ProblemPlot(domainX: start...end, domainY: domainY)
-        plot.baseCoarse = layers.baseCoarse
-        plot.hotCoarse = layers.hotCoarse
-        plot.baseFine = layers.baseFine
-        plot.hotFine = layers.hotFine
-        plot.unit = unit
-        plot.thresholds = item == .cpu ? [70, 90] : []
-        if let lastSample {
-            plot.last = PlotPoint(id: -1, seg: max(0, runs.count - 1), t: lastSample.t, v: lastSample.v)
-            plot.lastIsHot = lastHot
-        }
-        plot.bands = bands(item: item, data: data, domainX: start...end, domainY: domainY, plotHeight: plotHeight)
-        return plot
-    }
-
-    private static func style(_ item: HealthItem, _ p: TrendPoint) -> BandStyle? {
-        switch item {
-        case .memory:
-            guard let pressure = p.pressure else { return nil }
-            switch pressure {
-            case .normal: return nil
-            case .warning: return BandStyle(kind: .warning, heightPt: nil)
-            case .critical: return BandStyle(kind: .danger, heightPt: nil)
-            }
-        case .thermal:
-            guard let thermal = p.thermal else { return nil }
-            switch thermal {
-            case .nominal: return nil
-            case .fair: return BandStyle(kind: .warning, heightPt: 2)
-            case .serious: return BandStyle(kind: .danger, heightPt: 4)
-            case .critical: return BandStyle(kind: .danger, heightPt: 6)
-            }
-        case .power:
-            guard let source = p.power, source == .ac else { return nil }
-            return BandStyle(kind: .neutral, heightPt: 2)
-        default:
-            return nil
-        }
-    }
-
-    private static func bands(item: HealthItem, data: PanelData, domainX: ClosedRange<Date>,
-                              domainY: ClosedRange<Double>, plotHeight: Double) -> [PlotBand] {
-        guard item == .memory || item == .thermal || item == .power else { return [] }
-        let span = domainY.upperBound - domainY.lowerBound
-        var out = [PlotBand]()
-        var nextId = 0
-        for seg in data.trend.segments {
-            var i = 0
-            while i < seg.count {
-                let current = style(item, seg[i])
-                var j = i
-                while j + 1 < seg.count && style(item, seg[j + 1]) == current { j += 1 }
-                if let current, seg[j].t >= domainX.lowerBound {
-                    let x0 = max(seg[i].t, domainX.lowerBound)
-                    var x1 = seg[j].t.addingTimeInterval(TrendBuffer.coarseInterval)
-                    if j + 1 < seg.count { x1 = seg[j + 1].t }
-                    x1 = min(x1, domainX.upperBound)
-                    var top = domainY.upperBound
-                    if let h = current.heightPt { top = domainY.lowerBound + h / plotHeight * span }
-                    out.append(PlotBand(id: nextId, kind: current.kind, x0: x0, x1: x1, y0: domainY.lowerBound, y1: top))
-                    nextId += 1
-                }
-                i = j + 1
-            }
-        }
-        return out
-    }
-}
-
-// MARK: - Problem chart (two layered charts)
-
-/// The 2 hour chart of a problem card. The coarse chart draws the old points and redraws only for a new coarse point.
-/// The fine chart on top draws the last 5 minutes and redraws every 2 seconds (docs/DESIGN.md 2.7).
-struct ProblemChart: View {
-    let item: HealthItem
-    let plot: ProblemPlot
-    let level: HealthLevel
-    let compact: Bool
-
-    @Environment(\.tok) private var tok
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.panelSnapshot) private var snapshot
-    @State private var hovered: PlotPoint?
-
-    static let labelRowHeight = 14.0
-
-    private var plotHeight: Double { compact ? PanelSize.chartHeightCompact - Self.labelRowHeight : PanelSize.chartHeight - Self.labelRowHeight }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                CoarseLayer(plot: plot, level: level, tok: tok, snapshot: snapshot, hovered: $hovered)
-                    .equatable()
-                if plot.hasData {
-                    FineLayer(plot: plot, level: level, tok: tok, hovered: hovered, reduceMotion: reduceMotion)
-                        .allowsHitTesting(false)
-                } else {
-                    EmptyTrendHint()
-                }
-            }
-            .frame(height: plotHeight)
-            .uiTestFrame("chart.problem")
-            HStack {
-                Text("2 小时前")
-                Spacer()
-                Text("现在")
-            }
-            .font(PanelFont.caption)
-            .foregroundStyle(tok.textSecondary)
-            .frame(height: Self.labelRowHeight, alignment: .bottom)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier("chart.problem")
-        .accessibilityLabel(Text("\(item.label)近 2 小时趋势图"))
-        .accessibilityValue(Text(accessibilityValue))
-    }
-
-    private var accessibilityValue: String {
-        guard let last = plot.last else { return "暂无数据" }
-        return valueText(last.v)
-    }
-
-    private func valueText(_ v: Double) -> String {
-        switch plot.unit {
-        case .percent: return String(format: "%.0f%%", v)
-        case .gigabytes: return String(format: "%.1f GB", v)
-        }
-    }
-}
-
-private struct EmptyTrendHint: View {
-    @Environment(\.tok) private var tok
-
-    var body: some View {
-        ZStack {
-            DashedBaseline()
-                .stroke(tok.textSecondary.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            Text("趋势从现在开始记录，30 秒一个点")
-                .font(PanelFont.caption)
-                .foregroundStyle(tok.textSecondary)
-                .uiTestFrame("txt.chart.empty")
-        }
-    }
-}
-
-struct DashedBaseline: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: rect.minX, y: rect.maxY - 1))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - 1))
-        return p
-    }
-}
-
-private struct CoarseLayer: View, Equatable {
-    let plot: ProblemPlot
-    let level: HealthLevel
-    let tok: PanelTokens
-    let snapshot: Bool
-    @Binding var hovered: PlotPoint?
-
-    static func == (a: CoarseLayer, b: CoarseLayer) -> Bool {
-        a.plot.baseCoarse == b.plot.baseCoarse && a.plot.hotCoarse == b.plot.hotCoarse && a.plot.bands == b.plot.bands
-            && a.plot.domainX == b.plot.domainX && a.plot.domainY == b.plot.domainY && a.level == b.level
-            && a.tok.dark == b.tok.dark
-    }
-
-    private func bandColor(_ kind: PlotBand.Kind) -> Color {
-        switch kind {
-        case .warning: return tok.lampWarning.opacity(0.10)
-        case .danger: return tok.lampDanger.opacity(0.14)
-        case .neutral: return tok.chartNeutral
-        }
-    }
-
-    var body: some View {
-        let hotColor = tok.lamp(level)
-        let hotLine = tok.chartHot(level)
-        let neutral = tok.chartNeutral
-        let floor = plot.domainY.lowerBound
-        Chart {
-            ForEach(plot.bands) { b in
-                RectangleMark(xStart: .value("起", b.x0), xEnd: .value("止", b.x1),
-                              yStart: .value("下", b.y0), yEnd: .value("上", b.y1))
-                    .foregroundStyle(bandColor(b.kind))
-            }
-            ForEach(plot.thresholds, id: \.self) { th in
-                RuleMark(y: .value("阈值", th))
-                    .foregroundStyle(tok.textSecondary.opacity(0.4))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    .annotation(position: .bottom, alignment: .leading, spacing: 0) {
-                        // Only the warning threshold has a label. The higher one would touch it.
-                        Text(th == plot.thresholds.first ? String(format: "%.0f", th) : "")
-                            .font(PanelFont.caption)
-                            .foregroundStyle(tok.textSecondary)
-                    }
-            }
-            ForEach(plot.hotCoarse) { p in
-                AreaMark(x: .value("时间", p.t), yStart: .value("下", floor), yEnd: .value("值", p.v),
-                         series: .value("区", "a\(p.seg)"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(hotColor.opacity(0.15))
-            }
-            ForEach(plot.baseCoarse) { p in
-                LineMark(x: .value("时间", p.t), y: .value("值", p.v), series: .value("线", "b\(p.seg)"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(neutral)
-                    .lineStyle(StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
-            }
-            ForEach(plot.hotCoarse) { p in
-                LineMark(x: .value("时间", p.t), y: .value("值", p.v), series: .value("线", "h\(p.seg)"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(hotLine)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-            }
-        }
-        .chartXScale(domain: plot.domainX)
-        .chartYScale(domain: plot.domainY)
-        .chartXAxis(.hidden)
-        .chartYAxis(.hidden)
-        .chartLegend(.hidden)
-        .chartPlotStyle { area in
-            area
-                .background(tok.plotBackground)
-                .clipShape(RoundedRectangle(cornerRadius: PanelSize.chartRadius, style: .continuous))
-        }
-        .chartOverlay { proxy in hoverLayer(proxy) }
-    }
-
-    @ViewBuilder
-    private func hoverLayer(_ proxy: ChartProxy) -> some View {
-        if snapshot {
-            Color.clear
-        } else {
-            GeometryReader { geo in
-                Rectangle()
-                    .fill(Color.clear)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location):
-                            guard let frame = proxy.plotFrame else { hovered = nil; return }
-                            let x = location.x - geo[frame].origin.x
-                            if let date: Date = proxy.value(atX: x) { hovered = nearest(to: date) }
-                        case .ended:
-                            hovered = nil
-                        }
-                    }
-            }
-        }
-    }
-
-    private func nearest(to date: Date) -> PlotPoint? {
-        plot.everyPoint.min { abs($0.t.timeIntervalSince(date)) < abs($1.t.timeIntervalSince(date)) }
-    }
-}
-
-private struct FineLayer: View {
-    let plot: ProblemPlot
-    let level: HealthLevel
-    let tok: PanelTokens
-    let hovered: PlotPoint?
-    let reduceMotion: Bool
-
-    private func tooltipText(_ p: PlotPoint) -> String {
-        let value: String
-        switch plot.unit {
-        case .percent: value = String(format: "%.0f%%", p.v)
-        case .gigabytes: value = String(format: "%.1f GB", p.v)
-        }
-        return PanelFormat.clock(p.t) + " · " + value
-    }
-
-    var body: some View {
-        let hotColor = tok.lamp(level)
-        let hotLine = tok.chartHot(level)
-        let neutral = tok.chartNeutral
-        let dotColor = plot.lastIsHot ? hotLine : neutral
-        Chart {
-            ForEach(plot.hotFine) { p in
-                AreaMark(x: .value("时间", p.t), yStart: .value("下", plot.domainY.lowerBound), yEnd: .value("值", p.v),
-                         series: .value("区", "fa\(p.seg)"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(hotColor.opacity(0.15))
-            }
-            ForEach(plot.baseFine) { p in
-                LineMark(x: .value("时间", p.t), y: .value("值", p.v), series: .value("线", "fb\(p.seg)"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(neutral)
-                    .lineStyle(StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
-            }
-            ForEach(plot.hotFine) { p in
-                LineMark(x: .value("时间", p.t), y: .value("值", p.v), series: .value("线", "fh\(p.seg)"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(hotLine)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-            }
-            if let last = plot.last {
-                PointMark(x: .value("时间", last.t), y: .value("值", last.v))
-                    .symbolSize(25)
-                    .foregroundStyle(dotColor)
-            }
-            if let h = hovered {
-                RuleMark(x: .value("时间", h.t))
-                    .foregroundStyle(tok.textSecondary)
-                    .lineStyle(StrokeStyle(lineWidth: 1))
-                    .annotation(position: .top, spacing: 2,
-                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                        Text(tooltipText(h))
-                            .font(PanelFont.caption)
-                            .monospacedDigit()
-                            .foregroundStyle(tok.textPrimary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.regularMaterial))
-                    }
-                PointMark(x: .value("时间", h.t), y: .value("值", h.v))
-                    .symbolSize(30)
-                    .foregroundStyle(tok.textPrimary)
-            }
-        }
-        .chartXScale(domain: plot.domainX)
-        .chartYScale(domain: plot.domainY)
-        .chartXAxis(.hidden)
-        .chartYAxis(.hidden)
-        .chartLegend(.hidden)
-        .animation(reduceMotion ? nil : Animation.easeOut(duration: 0.25), value: plot.last?.t)
-    }
-}
-
-// MARK: - Mini lines (trend strip, neutral only)
-
-struct MiniLine: View {
-    let primary: [PlotPoint]
-    var secondary = [PlotPoint]()
-    let domainX: ClosedRange<Date>
-    let domainY: ClosedRange<Double>
-    @Environment(\.tok) private var tok
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let neutral = tok.chartNeutral
-        let floor = domainY.lowerBound
-        Chart {
-            ForEach(primary) { p in
-                AreaMark(x: .value("时间", p.t), yStart: .value("下", floor), yEnd: .value("值", p.v),
-                         series: .value("区", "a\(p.seg)"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(tok.chartNeutralFill)
-            }
-            ForEach(primary) { p in
-                LineMark(x: .value("时间", p.t), y: .value("值", p.v), series: .value("线", "p\(p.seg)"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(neutral)
-                    .lineStyle(StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
-            }
-            ForEach(secondary) { p in
-                LineMark(x: .value("时间", p.t), y: .value("值", p.v), series: .value("线", "q\(p.seg)"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(neutral)
-                    .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round, dash: [2, 2]))
-            }
-        }
-        .chartXScale(domain: domainX)
-        .chartYScale(domain: domainY)
-        .chartXAxis(.hidden)
-        .chartYAxis(.hidden)
-        .chartLegend(.hidden)
-        .chartPlotStyle { area in
-            area.background(tok.plotBackground).clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-        }
-        .animation(reduceMotion ? nil : Animation.easeOut(duration: 0.25), value: primary.last?.t)
-    }
-}
-
-enum MiniPlot {
-    /// Keeps about one point per 30 seconds (the coarse part). Falls back to all points when that leaves fewer than two.
-    static func coarse(_ points: [TrendPoint]) -> [TrendPoint] {
-        var kept = [TrendPoint]()
-        var lastKept: Date?
-        for p in points {
-            if let l = lastKept, p.t.timeIntervalSince(l) < 25 { continue }
-            kept.append(p)
-            lastKept = p.t
-        }
-        return kept.count >= 2 ? kept : points
-    }
-
-    static func points(_ series: TrendSeries, from start: Date, value: (TrendPoint) -> Double?) -> [PlotPoint] {
-        var out = [PlotPoint]()
-        var nextId = 0
-        var seg = 0
-        for segment in series.segments {
-            var openRun = false
-            for p in coarse(segment) where p.t >= start {
-                if let v = value(p) {
-                    out.append(PlotPoint(id: nextId, seg: seg, t: p.t, v: v))
-                    nextId += 1
-                    openRun = true
-                } else if openRun {
-                    seg += 1
-                    openRun = false
-                }
-            }
-            seg += 1
-        }
-        return out
-    }
-}
-
-/// The trend strip of the quiet mode: CPU and network, 2 hours, both neutral.
-struct TrendStrip: View {
-    let data: PanelData
-    @Environment(\.tok) private var tok
-
-    private var domainX: ClosedRange<Date> {
-        data.now.addingTimeInterval(-ProblemPlotBuilder.windowSeconds)...data.now.addingTimeInterval(2)
-    }
-
-    var body: some View {
-        let start = domainX.lowerBound
-        // A restored trend shows while the first readings are still collected (docs/DESIGN.md D5). Without a trend the strip shows a hint.
-        let cpu: [PlotPoint] = MiniPlot.points(data.trend, from: start) { $0.cpu }
-        let rx: [PlotPoint] = MiniPlot.points(data.trend, from: start) { $0.rx }
-        let tx: [PlotPoint] = MiniPlot.points(data.trend, from: start) { $0.tx }
-        let netMax = max(rx.map { $0.v }.max() ?? 0, tx.map { $0.v }.max() ?? 0)
-        let cpuMax = cpu.map { $0.v }.max() ?? 0
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 16) {
-                column(title: "CPU · 2 小时", value: PanelFormat.percent(data.current.cpuPercent), id: "cpu") {
-                    MiniLine(primary: cpu, domainX: domainX, domainY: 0...max(30, cpuMax * 1.25))
-                }
-                column(title: "网速 · 2 小时", value: downloadText, id: "net") {
-                    MiniLine(primary: rx, secondary: tx, domainX: domainX, domainY: 0...max(netMax * 1.2, 100_000))
-                }
-            }
-            if cpu.isEmpty && rx.isEmpty {
-                Text("趋势从现在开始记录，30 秒一个点")
-                    .font(PanelFont.caption)
-                    .foregroundStyle(tok.textSecondary)
-                    .padding(.top, 4)
-                    .uiTestFrame("txt.trend.empty")
-            }
-        }
-        .frame(height: PanelMetrics.trendStrip, alignment: .top)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("section.trend")
-    }
-
-    private var downloadText: String {
-        guard let rx = data.current.rx else { return "—" }
-        return "↓ " + RateText.text(rx)
-    }
-
-    private func column<Plot: View>(title: String, value: String, id: String,
-                                    @ViewBuilder chart: () -> Plot) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(title)
-                    .font(PanelFont.caption)
-                    .foregroundStyle(tok.textSecondary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Text(value)
-                    .font(PanelFont.callout)
-                    .monospacedDigit()
-                    .foregroundStyle(tok.textPrimary)
-                    .lineLimit(1)
-                    .numericChange(value)
-            }
-            .frame(height: 16)
-            chart()
-                .frame(height: PanelSize.miniChartHeight)
-                .uiTestFrame("chart." + id)
-                .accessibilityElement(children: .ignore)
-                .accessibilityIdentifier("chart." + id)
-                .accessibilityLabel(Text(title + "趋势图"))
-                .accessibilityValue(Text(value))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-// MARK: - Disk 30 day chart
-
-/// Capacity-neutral 30 day used-space chart. The base line is neutral. The trigger segment takes the level color.
-struct DiskChart: View {
-    let series: [DiskPoint]
-    let trigger: DiskTrigger?
-    let level: HealthLevel
-    let totalBytes: Int64?
-    let compact: Bool
-
-    @Environment(\.tok) private var tok
-    @Environment(\.panelSnapshot) private var snapshot
-    @State private var hovered: DiskPoint?
-
-    private var plotHeight: Double { (compact ? PanelSize.chartHeightCompact : PanelSize.chartHeight) - ProblemChart.labelRowHeight }
-    private var now: Date { series.last?.t ?? Date() }
-
-    private var baseArea: [DiskPoint] {
-        guard let trigger else { return series }
-        return series.filter { $0.t <= trigger.from } + [DiskPoint(t: trigger.from, used: trigger.fromUsed)]
-    }
-
-    private var segment: [DiskPoint] {
-        guard let trigger else { return [] }
-        return DiskSeries.triggerPoints(series: series, trigger: trigger)
-    }
-
-    private var domainX: ClosedRange<Date> {
-        let first = series.first?.t ?? now
-        let start = min(first, now.addingTimeInterval(-86400))
-        let span = now.timeIntervalSince(start)
-        return start...now.addingTimeInterval(span * 0.04)
-    }
-
-    /// The vertical range is never narrower than 6% of the capacity, so small noise stays small.
-    private var domainY: ClosedRange<Double> {
-        var values = series.map { $0.gb }
-        if let trigger { values.append(Double(trigger.fromUsed) / 1e9) }
-        guard let lo = values.min(), let hi = values.max() else { return 0...1 }
-        let pad = max((hi - lo) * 0.18, 0.5)
-        var low = lo - pad
-        var high = hi + pad
-        if let totalBytes, totalBytes > 0 {
-            let minSpan = Double(totalBytes) / 1e9 * 0.06
-            if high - low < minSpan {
-                let mid = (high + low) / 2
-                low = max(0, mid - minSpan / 2)
-                high = low + minSpan
-            }
-        }
-        return low...high
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                if series.count < 2 {
-                    EmptyDiskHint()
-                } else {
-                    chart
-                }
-            }
-            .frame(height: plotHeight)
-            .uiTestFrame("chart.disk")
-            HStack {
-                Text("30 天前")
-                Spacer()
-                Text("今天")
-            }
-            .font(PanelFont.caption)
-            .foregroundStyle(tok.textSecondary)
-            .frame(height: ProblemChart.labelRowHeight, alignment: .bottom)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier("chart.disk")
-        .accessibilityLabel(Text("磁盘近 30 天已用空间趋势图"))
-        .accessibilityValue(Text(accessibilityValue))
-    }
-
-    private var accessibilityValue: String {
-        guard let first = series.first, let last = series.last else { return "暂无数据" }
-        return "从 \(Int(first.gb.rounded())) GB 到 \(Int(last.gb.rounded())) GB"
-    }
-
-    private var chart: some View {
-        let yRange = domainY
-        let tint = tok.lamp(trigger?.level ?? level)
-        let hotLine = tok.chartHot(trigger?.level ?? level)
-        let neutral = tok.chartNeutral
-        return Chart {
-            ForEach(baseArea) { p in
-                AreaMark(x: .value("时间", p.t), yStart: .value("基线", yRange.lowerBound), yEnd: .value("已用", p.gb),
-                         series: .value("区", "base"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(tok.chartNeutralFill)
-            }
-            ForEach(series) { p in
-                LineMark(x: .value("时间", p.t), y: .value("已用", p.gb), series: .value("线", "base"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(neutral)
-                    .lineStyle(StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
-            }
-            ForEach(segment) { p in
-                AreaMark(x: .value("时间", p.t), yStart: .value("基线", yRange.lowerBound), yEnd: .value("已用", p.gb),
-                         series: .value("区", "trigger"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(tint.opacity(0.15))
-            }
-            ForEach(segment) { p in
-                LineMark(x: .value("时间", p.t), y: .value("已用", p.gb), series: .value("线", "trigger"))
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(hotLine)
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-            }
-            if let last = series.last {
-                PointMark(x: .value("时间", last.t), y: .value("已用", last.gb))
-                    .symbolSize(25)
-                    .foregroundStyle(trigger == nil ? neutral : hotLine)
-            }
-            if let h = hovered {
-                RuleMark(x: .value("时间", h.t))
-                    .foregroundStyle(tok.textSecondary)
-                    .lineStyle(StrokeStyle(lineWidth: 1))
-                    .annotation(position: .top, spacing: 2,
-                                overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                        tooltip(h)
-                    }
-                PointMark(x: .value("时间", h.t), y: .value("已用", h.gb))
-                    .symbolSize(30)
-                    .foregroundStyle(tok.textPrimary)
-            }
-        }
-        .chartXScale(domain: domainX)
-        .chartYScale(domain: yRange)
-        .chartXAxis(.hidden)
-        .chartYAxis(.hidden)
-        .chartLegend(.hidden)
-        .chartPlotStyle { area in
-            area
-                .background(tok.plotBackground)
-                .clipShape(RoundedRectangle(cornerRadius: PanelSize.chartRadius, style: .continuous))
-        }
-        .chartOverlay { proxy in hoverLayer(proxy) }
-    }
-
-    @ViewBuilder
-    private func hoverLayer(_ proxy: ChartProxy) -> some View {
-        if snapshot {
-            Color.clear
-        } else {
-            GeometryReader { geo in
-                Rectangle()
-                    .fill(Color.clear)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location):
-                            guard let frame = proxy.plotFrame else { hovered = nil; return }
-                            let x = location.x - geo[frame].origin.x
-                            if let date: Date = proxy.value(atX: x) { hovered = nearest(to: date) }
-                        case .ended:
-                            hovered = nil
-                        }
-                    }
-            }
-        }
-    }
-
-    private func nearest(to date: Date) -> DiskPoint? {
-        series.min { abs($0.t.timeIntervalSince(date)) < abs($1.t.timeIntervalSince(date)) }
-    }
-
-    private func tooltip(_ p: DiskPoint) -> some View {
-        VStack(spacing: 0) {
-            Text(PanelFormat.dateTime(p.t)).font(PanelFont.caption).foregroundStyle(tok.textSecondary)
-            Text(ByteText.gb(p.used)).font(PanelFont.footnote).monospacedDigit().foregroundStyle(tok.textPrimary)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.regularMaterial))
-    }
-}
-
-private struct EmptyDiskHint: View {
-    @Environment(\.tok) private var tok
-
-    var body: some View {
-        ZStack {
-            DashedBaseline()
-                .stroke(tok.textSecondary.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            Text("历史数据积累中")
-                .font(PanelFont.caption)
-                .foregroundStyle(tok.textSecondary)
-        }
-    }
-}
 
 // MARK: - Number transition
 
@@ -839,8 +22,389 @@ private struct NumericChange: ViewModifier {
 }
 
 extension View {
-    /// Rolls the digits when the text changes (docs/DESIGN.md 5.3). Direct replacement under Reduce Motion.
+    /// Rolls the digits when the text changes. Direct replacement under Reduce Motion.
     func numericChange(_ value: String) -> some View {
         modifier(NumericChange(value: value))
+    }
+}
+
+// MARK: - Probe (test only)
+
+#if UITEST
+/// Counts how often the main chart is evaluated, and keeps the live readout model for the synthetic drag of gate W07.
+@MainActor
+final class ChartProbe {
+    static let shared = ChartProbe()
+    var mainDraws = 0
+    weak var readout: ChartReadout?
+    func reset() { mainDraws = 0 }
+}
+#endif
+
+/// Called from the body of the main chart. It does nothing in the release build.
+@MainActor
+enum ChartProbeHook {
+    static func bodyEvaluated() {
+        #if UITEST
+        ChartProbe.shared.mainDraws += 1
+        #endif
+    }
+}
+
+// MARK: - Geometry
+
+enum ChartMetrics {
+    static let width: CGFloat = 287
+    static let height: CGFloat = 160
+    /// The plot area. The rest below holds the time axis (10 pt).
+    static let plotHeight: CGFloat = 142
+    static let axisHeight: CGFloat = 18
+}
+
+private func chartPoint(_ p: ChartPoint, in data: ChartData, line: ChartLine?) -> CGPoint {
+    let x = CGFloat(data.x(p.t)) * ChartMetrics.width
+    let y = ChartMetrics.plotHeight - CGFloat(data.y(p.v, line: line)) * ChartMetrics.plotHeight
+    return CGPoint(x: x, y: y)
+}
+
+// MARK: - Shapes
+
+private struct ChartLineShape: Shape {
+    let data: ChartData
+    let line: ChartLine
+    let style: ChartStyle
+    /// True: close the path down to the baseline (area fill).
+    let closed: Bool
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        for run in line.runs where !run.isEmpty {
+            let points = run.map { chartPoint($0, in: data, line: line) }
+            if points.count == 1 {
+                if !closed { p.addEllipse(in: CGRect(x: points[0].x - 1.5, y: points[0].y - 1.5, width: 3, height: 3)) }
+                continue
+            }
+            p.move(to: points[0])
+            for i in 1..<points.count {
+                if style == .step {
+                    p.addLine(to: CGPoint(x: points[i].x, y: points[i - 1].y))
+                }
+                p.addLine(to: points[i])
+            }
+            if closed {
+                p.addLine(to: CGPoint(x: points[points.count - 1].x, y: ChartMetrics.plotHeight))
+                p.addLine(to: CGPoint(x: points[0].x, y: ChartMetrics.plotHeight))
+                p.closeSubpath()
+            }
+        }
+        return p
+    }
+}
+
+private struct ChartBarsShape: Shape {
+    let data: ChartData
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        for bar in data.bars {
+            let x0 = CGFloat(data.x(bar.start)) * ChartMetrics.width
+            let x1 = CGFloat(data.x(bar.end)) * ChartMetrics.width
+            let h = CGFloat(data.y(bar.bytes)) * ChartMetrics.plotHeight
+            p.addRect(CGRect(x: x0 + 0.5, y: ChartMetrics.plotHeight - h, width: max(1, x1 - x0 - 1), height: h))
+        }
+        return p
+    }
+}
+
+private struct ChartHorizontalShape: Shape {
+    let y: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: 0, y: y))
+        p.addLine(to: CGPoint(x: ChartMetrics.width, y: y))
+        return p
+    }
+}
+
+// MARK: - Main chart
+
+/// The main chart. It is Equatable and sits inside `.equatable()`, so a readout move or a hover elsewhere does not evaluate it again (gate W07).
+struct ChartMain: View, Equatable {
+    let data: ChartData
+    let level: HealthLevel
+    @Environment(\.tok) private var tok
+
+    static func == (a: ChartMain, b: ChartMain) -> Bool {
+        a.data == b.data && a.level == b.level
+    }
+
+    private var lineColor: Color {
+        level == .yellow || level == .red ? tok.chartHot(level) : tok.chartLine
+    }
+
+    private func bandColor(_ kind: ChartBandKind) -> Color {
+        switch kind {
+        case .acPower: return tok.fillSelected
+        case .sleep: return tok.chartGrid
+        case .pressureWarning: return tok.tintWarning
+        case .pressureCritical: return tok.tintDanger
+        case .highlight: return level == .yellow ? tok.tintWarning : tok.tintDanger
+        }
+    }
+
+    private func axisLabels() -> [String] {
+        let zone = TimeZone.current
+        let from = data.window.lowerBound
+        let to = data.window.upperBound
+        let mid = from.addingTimeInterval(to.timeIntervalSince(from) / 2)
+        func text(_ d: Date) -> String {
+            if data.range == .h2 || data.range == .h24 { return TextFormat.clock(d, timeZone: zone) }
+            return TextFormat.dateTime(d, timeZone: zone).components(separatedBy: " ").first ?? ""
+        }
+        return [text(from), text(mid), text(to)]
+    }
+
+    private func topLabel() -> String? {
+        guard let line = data.lines.first else { return nil }
+        switch line.unit {
+        case .percent: return String(format: "%.0f%%", data.domain.upperBound)
+        case .gigabytes: return String(format: "%.0f GB", data.domain.upperBound)
+        case .bytesPerSecond: return SidebarText.rate(data.domain.upperBound)
+        case .thermal: return nil
+        }
+    }
+
+    private func bottomLabel() -> String? {
+        guard let line = data.lines.first else { return nil }
+        switch line.unit {
+        case .percent: return String(format: "%.0f%%", data.domain.lowerBound)
+        case .gigabytes: return String(format: "%.0f GB", data.domain.lowerBound)
+        case .bytesPerSecond: return "0"
+        case .thermal: return nil
+        }
+    }
+
+    var body: some View {
+        let _ = ChartProbeHook.bodyEvaluated()
+        let headWidth = CGFloat(data.emptyHead) * ChartMetrics.width
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(tok.plotBackground)
+                .frame(width: ChartMetrics.width, height: ChartMetrics.plotHeight)
+            ForEach(0..<3, id: \.self) { i in
+                ChartHorizontalShape(y: ChartMetrics.plotHeight * CGFloat(i) / 2)
+                    .stroke(tok.chartGrid, lineWidth: 0.5)
+            }
+            ForEach(Array(data.bands.enumerated()), id: \.offset) { _, band in
+                Rectangle().fill(bandColor(band.kind))
+                    .frame(width: max(1, CGFloat(data.x(band.to) - data.x(band.from)) * ChartMetrics.width), height: ChartMetrics.plotHeight)
+                    .offset(x: CGFloat(data.x(band.from)) * ChartMetrics.width)
+            }
+            if headWidth > 1 {
+                Rectangle().fill(tok.chartFill).frame(width: headWidth, height: ChartMetrics.plotHeight)
+                if data.isEmpty || headWidth > 90 {
+                    Text("还没有数据")
+                        .font(PanelType.rowNote)
+                        .foregroundStyle(tok.textTertiary)
+                        .frame(width: headWidth, height: ChartMetrics.plotHeight)
+                }
+            }
+            ForEach(Array(data.thresholds.enumerated()), id: \.offset) { _, value in
+                ChartHorizontalShape(y: ChartMetrics.plotHeight - CGFloat(data.y(value)) * ChartMetrics.plotHeight)
+                    .stroke(tok.chartThreshold, style: StrokeStyle(lineWidth: 0.75, dash: [3, 3]))
+            }
+            ChartBarsShape(data: data).fill(lineColor.opacity(0.7))
+            ForEach(Array(data.lines.enumerated()), id: \.offset) { _, line in
+                if line.secondary {
+                    ChartLineShape(data: data, line: line, style: .line, closed: false)
+                        .stroke(tok.textTertiary, style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+                } else {
+                    if data.style == .area {
+                        ChartLineShape(data: data, line: line, style: .area, closed: true).fill(tok.chartFill)
+                    }
+                    ChartLineShape(data: data, line: line, style: data.style, closed: false)
+                        .stroke(lineColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                }
+            }
+            if let top = topLabel(), let bottom = bottomLabel(), data.isEmpty == false {
+                Text(top).font(PanelType.axis).foregroundStyle(tok.textSecondary)
+                    .padding(.horizontal, 3)
+                    .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(tok.labelPlate))
+                    .offset(x: 3, y: 3)
+                Text(bottom).font(PanelType.axis).foregroundStyle(tok.textSecondary)
+                    .padding(.horizontal, 3)
+                    .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(tok.labelPlate))
+                    .offset(x: 3, y: ChartMetrics.plotHeight - 17)
+            }
+            HStack(spacing: 0) {
+                ForEach(Array(axisLabels().enumerated()), id: \.offset) { index, label in
+                    Text(label)
+                        .font(PanelType.axis)
+                        .foregroundStyle(tok.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: index == 0 ? .leading : (index == 1 ? .center : .trailing))
+                }
+            }
+            .frame(width: ChartMetrics.width, height: ChartMetrics.axisHeight)
+            .offset(y: ChartMetrics.plotHeight + 2)
+        }
+        .frame(width: ChartMetrics.width, height: ChartMetrics.height, alignment: .topLeading)
+    }
+}
+
+// MARK: - Readout
+
+/// The state of the readout layer. It changes with the pointer. The main chart never reads it.
+@MainActor
+final class ChartReadout: ObservableObject {
+    @Published private(set) var x: Double?
+    @Published private(set) var y: Double?
+    @Published private(set) var text: String?
+    /// How many moves changed the readout. The synthetic drag of gate W07 counts it.
+    private(set) var updates = 0
+    private var snapped: Date?
+
+    /// The pointer is at `fraction` (0 to 1) of the chart width. The readout snaps to the nearest data point.
+    func move(to fraction: Double, in data: ChartData, timeZone: TimeZone) {
+        let span = data.window.upperBound.timeIntervalSince(data.window.lowerBound)
+        let t = data.window.lowerBound.addingTimeInterval(min(1, max(0, fraction)) * span)
+        if !data.bars.isEmpty {
+            guard let bar = data.bars.min(by: { abs($0.start.timeIntervalSince(t)) < abs($1.start.timeIntervalSince(t)) }) else { return clear() }
+            if snapped == bar.start { return }
+            snapped = bar.start
+            x = data.x(bar.start.addingTimeInterval(bar.end.timeIntervalSince(bar.start) / 2))
+            y = data.y(bar.bytes)
+            text = data.readout(at: bar.start, timeZone: timeZone)
+            updates += 1
+            return
+        }
+        guard let point = data.nearest(to: t) else { return clear() }
+        if snapped == point.t { return }
+        snapped = point.t
+        x = data.x(point.t)
+        y = data.y(point.v, line: data.lines.first)
+        text = data.readout(at: point.t, timeZone: timeZone)
+        updates += 1
+    }
+
+    func clear() {
+        snapped = nil
+        if x != nil { x = nil }
+        if y != nil { y = nil }
+        if text != nil { text = nil }
+    }
+}
+
+/// The vertical line, the dot and the reading. A separate view: only this layer changes during a drag.
+struct ChartReadoutLayer: View {
+    @ObservedObject var readout: ChartReadout
+    @Environment(\.tok) private var tok
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if let x = readout.x, let y = readout.y, let text = readout.text {
+                let px = CGFloat(x) * ChartMetrics.width
+                let py = ChartMetrics.plotHeight - CGFloat(y) * ChartMetrics.plotHeight
+                Rectangle().fill(tok.textTertiary).frame(width: 0.5, height: ChartMetrics.plotHeight).offset(x: px)
+                Circle().fill(tok.accent).frame(width: 6, height: 6).offset(x: px - 3, y: py - 3)
+                Text(text)
+                    .font(PanelType.readout)
+                    .foregroundStyle(tok.textPrimary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(PanelTokens.surface(dark: tok.dark)))
+                    .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(tok.separator, lineWidth: 0.5))
+                    .fixedSize()
+                    .frame(width: ChartMetrics.width, alignment: x < 0.5 ? .leading : .trailing)
+                    .padding(.leading, x < 0.5 ? px + 6 : 0)
+                    .padding(.trailing, x < 0.5 ? 0 : ChartMetrics.width - px + 6)
+                    .offset(y: 4)
+                    .accessibilityHidden(true)
+                    .uiTestFrame("chart.readout")
+            }
+        }
+        .frame(width: ChartMetrics.width, height: ChartMetrics.height, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Accessibility
+
+/// The data series for VoiceOver (DESIGN_V2.md 10.10). At most 60 points.
+struct ChartDescriptorProvider: AXChartDescriptorRepresentable {
+    let data: ChartData
+    let timeZone: TimeZone
+
+    func makeChartDescriptor() -> AXChartDescriptor {
+        let minutes = data.range.seconds / 60
+        let xAxis = AXNumericDataAxisDescriptor(title: "时间", range: 0...minutes, gridlinePositions: []) { value in
+            let ago = Int((minutes - value).rounded())
+            return ago <= 0 ? "现在" : (ago < 120 ? "\(ago) 分钟前" : "\(ago / 60) 小时前")
+        }
+        let unit = data.lines.first?.unit ?? .percent
+        let yAxis = AXNumericDataAxisDescriptor(title: data.item.label, range: data.domain, gridlinePositions: []) { value in
+            SidebarText.valueText(value, unit: unit, label: nil)
+        }
+        var series = [AXDataSeriesDescriptor]()
+        for line in data.lines where !line.secondary {
+            let all = line.runs.flatMap { $0 }
+            let sampled = ChartSampling.lttb(all, limit: 60)
+            let points = sampled.map { p in
+                AXDataPoint(x: p.t.timeIntervalSince(data.window.lowerBound) / 60, y: p.v)
+            }
+            series.append(AXDataSeriesDescriptor(name: line.name, isContinuous: true, dataPoints: points))
+        }
+        if series.isEmpty {
+            let points = data.bars.map { AXDataPoint(x: $0.start.timeIntervalSince(data.window.lowerBound) / 60, y: $0.bytes) }
+            series.append(AXDataSeriesDescriptor(name: "流量", isContinuous: false, dataPoints: points))
+        }
+        return AXChartDescriptor(title: data.item.label, summary: data.summary(timeZone: timeZone), xAxis: xAxis, yAxis: yAxis,
+                                 additionalAxes: [], series: series)
+    }
+
+    func updateChartDescriptor(_ descriptor: AXChartDescriptor) {
+        descriptor.summary = data.summary(timeZone: timeZone)
+    }
+}
+
+// MARK: - Interactive chart
+
+/// The chart with the readout. The pointer or a drag moves the readout layer only.
+struct ChartPanel: View {
+    let data: ChartData
+    let level: HealthLevel
+    @StateObject private var readout = ChartReadout()
+
+    private func handle(_ x: CGFloat) {
+        readout.move(to: Double(x / ChartMetrics.width), in: data, timeZone: TimeZone.current)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ChartMain(data: data, level: level).equatable()
+            ChartReadoutLayer(readout: readout)
+        }
+        .frame(width: ChartMetrics.width, height: ChartMetrics.height)
+        .contentShape(Rectangle())
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            switch phase {
+            case .active(let point): handle(point.x)
+            case .ended: readout.clear()
+            }
+        }
+        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { value in handle(value.location.x) }
+            .onEnded { _ in readout.clear() })
+        .onAppear {
+            #if UITEST
+            ChartProbe.shared.readout = readout
+            #endif
+        }
+        .onChange(of: data) { _, _ in readout.clear() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(data.summary(timeZone: TimeZone.current)))
+        .accessibilityChartDescriptor(ChartDescriptorProvider(data: data, timeZone: TimeZone.current))
+        .accessibilityIdentifier("chart.main")
+        .uiTestFrame("chart.main")
     }
 }
