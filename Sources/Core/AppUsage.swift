@@ -29,6 +29,9 @@ struct AppUsage: Codable, Equatable, Identifiable {
     var memoryBasis: String     // "footprint" or "rss"
     var processCount: Int
     var isSystem: Bool
+    /// Bytes written to disk since the previous scan (`ri_diskio_byteswritten` difference). Nil when not measured.
+    /// Writes are not disk growth: deletes and overwrites count too (DESIGN_V2.md 6.4).
+    var diskWrittenBytes: Int64?
     var id: String { key }
 }
 

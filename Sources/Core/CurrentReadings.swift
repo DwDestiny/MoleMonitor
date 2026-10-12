@@ -26,6 +26,15 @@ struct CurrentReadings: Codable, Equatable {
     var fanRPMs: [Double]?
     /// Disk available capacity for important usage, bytes (prompt line and status.json).
     var diskAvailable: Int64?
+    /// Memory pressure percent, 0 to 100 (100 - `kern.memorystatus_level`). Nil when unreadable: the card shows "—", not 0.
+    var memoryPressurePercent: Int?
+    /// Disk capacity triple from `DiskItem` (DESIGN_V2.md 6.3): total, real used (total - available for important usage)
+    /// and purgeable estimate, bytes. Nil means "not measured".
+    var diskTotal: Int64?
+    var diskUsed: Int64?
+    var diskPurgeable: Int64?
+    /// Memory split for the capacity area (DESIGN_V2.md 6.3). Nil when the page counts could not be read.
+    var memory: MemoryBreakdown?
     var sampledAt: Date?
 }
 

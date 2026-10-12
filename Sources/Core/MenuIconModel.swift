@@ -13,7 +13,24 @@ struct MenuIconState: Hashable {
     var badge: MenuBadge?
 }
 
+/// The five states of the v2 menu bar icon (DESIGN_V2.md 9.2). Named `MenuIconKind` because `MenuIconState`
+/// is the existing posture-and-badge value used by the renderer. WP-E may map one to the other.
+enum MenuIconKind: String, CaseIterable {
+    case normal, caution, alert, collecting, stale
+}
+
 enum MenuIconModel {
+    /// The v2 state: collecting and stale are separate, yellow is `caution`, red is `alert`.
+    static func kind(_ verdicts: [ItemVerdict], dataState: DataState) -> MenuIconKind {
+        switch dataState {
+        case .collecting: return .collecting
+        case .stale: return .stale
+        case .fresh: break
+        }
+        guard let first = ProblemOrder.problems(verdicts).first else { return .normal }
+        return first.level == .red ? .alert : .caution
+    }
+
     /// Collecting or stale: hollow, no badge. Otherwise the worst level picks the posture and the first problem item
     /// in ProblemOrder picks the badge (DESIGN.md 3.2).
     static func state(_ verdicts: [ItemVerdict], dataState: DataState) -> MenuIconState {

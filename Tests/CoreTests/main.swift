@@ -572,12 +572,20 @@ runLiveTests()
 
 runPromptTests()
 runTrendTests()
+runTrendCompatTests()
 runHealthRuleTests()
 runPowerTests()
 runLayoutTests()
 runDogTests()
 runDogArtPoseTests()
 runPipelineTests()
+runStorageTests()
+runMemoryTests()
+runHoverIntentTests()
+runDogActionTests()
+runBubbleCopyTests()
+runMenuIconTests()
+runCapacityTests()
 
 // MARK: - Summary
 

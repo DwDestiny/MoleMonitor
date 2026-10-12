@@ -20,6 +20,30 @@ enum PanelMetrics {
     static let appsExpanded = 156.0, moreExpanded = 188.0                      // Inner scroll content, does not change the height
 }
 
+/// What the sidebar shows (DESIGN_V2.md 6): the 6 breakdown items and the anomaly log.
+enum SidebarItem: String, Codable, CaseIterable {
+    case cpu, memory, disk, network, battery, thermal
+    case anomalyLog = "anomaly_log"
+
+    /// Chinese name on the sidebar title.
+    var label: String {
+        switch self {
+        case .cpu: return "CPU"
+        case .memory: return "内存"
+        case .disk: return "磁盘"
+        case .network: return "网络"
+        case .battery: return "电池"
+        case .thermal: return "温度"
+        case .anomalyLog: return "异常记录"
+        }
+    }
+}
+
+/// Side on which the sidebar opens (DESIGN_V2.md 10.4). It is fixed while the panel is open.
+enum SidebarEdge: String, Equatable {
+    case left, right
+}
+
 enum PanelSection: Equatable {
     case hero(quiet: Bool)
     case trendStrip

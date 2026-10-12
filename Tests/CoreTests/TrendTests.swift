@@ -255,3 +255,16 @@ func runAppRankingTests() {
     memory.reset()
     expect(memory.stats(now: now).isEmpty && !memory.hasCoverage(now: now), "reset clears the tracker")
 }
+
+/// Old trend data has no pressure percent: it decodes as nil (not measured), never as 0.
+func runTrendCompatTests() {
+    section("TrendPoint pressure percent compatibility")
+    let old = Data(#"{"t":0,"cpu":12.5}"#.utf8)
+    let dec = JSONDecoder()
+    let p = try? dec.decode(TrendPoint.self, from: old)
+    expect(p != nil && p?.pressurePercent == nil, "a point without pp decodes with nil pressure percent")
+    var q = TrendPoint(t: now)
+    q.pressurePercent = 23
+    let json = String(data: (try? JSONEncoder().encode(q)) ?? Data(), encoding: .utf8) ?? ""
+    expect(json.contains("\"pp\":23"), "the JSON key is pp")
+}
