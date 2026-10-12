@@ -94,6 +94,12 @@ enum UITestWindowChecks {
         return (r.delegate.panelWindow, before, (after - before) * 1000)
     }
 
+    /// The CI VM can report Reduce Motion as on. The window checks need the real motion, so they force it off.
+    @MainActor
+    private static func motionOn() {
+        PanelWindow.testReduceMotion = false
+    }
+
     @MainActor
     private static func ensureClosed(_ r: UITestRunner) async {
         if r.delegate.panelWindow != nil { await r.closePanelQuietly() }
@@ -146,13 +152,13 @@ enum UITestWindowChecks {
     private static func w03(_ r: UITestRunner) async {
         let t0 = r.now()
         await ensureClosed(r)
+        motionOn()
         let opened = openReal(r)
         guard let window = opened.window else {
             r.record("W03", "open speed and no white flash", false, since: t0, "The panel did not open.")
             return
         }
         let host = window.mainHost
-        // The first window frame with a visible window, and the first frame with enough opaque pixels to judge the brightness.
         var firstVisibleMs: Double?
         var firstLuma: Double?
         var firstOpaqueShare = 0.0
@@ -164,10 +170,11 @@ enum UITestWindowChecks {
         var captureWorked = false
         var serverAlphaAtFirst = 0.0
         while (r.now() - opened.before) * 1000 < 500 {
-            let started = r.now()
-            let elapsed = (started - opened.before) * 1000
+            let elapsed = (r.now() - opened.before) * 1000
+            // The place of the dog is known (cheap check, no capture).
+            if dogReadyMs == nil, let dog = r.panelRect("dog"), dog.width > 1 { dogReadyMs = elapsed }
             // The first visible frame: the window server shows the window with an alpha above 0.02. The image of the window
-            // at that moment must be the finished content, not black and not white.
+            // at that moment must be the finished content, not black and not white, and the dog must be in it.
             if firstVisibleMs == nil, let server = serverAlpha(window), server.onscreen, server.alpha > 0.02 {
                 firstVisibleMs = elapsed
                 serverAlphaAtFirst = server.alpha
@@ -176,18 +183,18 @@ enum UITestWindowChecks {
                     let l = luma(frame)
                     firstLuma = l.mean
                     firstOpaqueShare = l.opaqueShare
+                    if let dog = r.panelRect("dog"), let stats = UITestDogStats.measure(frame, region: dog, surface: surface), stats.area > 0 {
+                        dogShare = Double(stats.ink) / Double(stats.area)
+                    }
                 }
-            }
-            let detected = (r.now() - opened.before) * 1000
-            if dogReadyMs == nil, let dog = r.panelRect("dog"), dog.width > 1, let shot = r.capture(host) {
-                dogReadyMs = detected
-                if let stats = UITestDogStats.measure(shot, region: dog, surface: surface), stats.area > 0 {
-                    dogShare = Double(stats.ink) / Double(stats.area)
+                if let shot = r.capture(host) {
+                    contentFirstLuma = luma(shot).mean
+                    if dogShare == nil, let dog = r.panelRect("dog"), let stats = UITestDogStats.measure(shot, region: dog, surface: surface), stats.area > 0 {
+                        dogShare = Double(stats.ink) / Double(stats.area)
+                    }
                 }
-                contentFirstLuma = luma(shot).mean
+                break
             }
-            if firstLuma != nil && dogReadyMs != nil { break }
-            if r.windowCaptureUnavailable && firstVisibleMs != nil && dogReadyMs != nil { break }
             await r.sleepMs(3)
         }
         // Steady state one second after the click.
@@ -477,6 +484,7 @@ enum UITestWindowChecks {
     private static func w05(_ r: UITestRunner) async {
         let t0 = r.now()
         await ensureClosed(r)
+        motionOn()
         var results = [W05Result]()
         var skipped = [String]()
         // Both directions on synthetic windows at the two sides of the screen.
@@ -496,7 +504,7 @@ enum UITestWindowChecks {
             PanelWindow.testReduceMotion = true
             await r.sleepMs(300)
             results.append(await sidebarCycle(r, w, label: "synthetic right, Reduce Motion", reduceMotion: true, probeRegion: nil))
-            PanelWindow.testReduceMotion = nil
+            PanelWindow.testReduceMotion = false
             w.closePanel()
             await r.sleepMs(200)
         }
@@ -534,6 +542,7 @@ enum UITestWindowChecks {
     private static func w06(_ r: UITestRunner) async {
         let t0 = r.now()
         await ensureClosed(r)
+        motionOn()
         let opened = openReal(r)
         guard let w = opened.window else {
             r.record("W06", "hover intent in the window", false, since: t0, "The panel did not open.")
@@ -650,6 +659,7 @@ enum UITestWindowChecks {
     private static func w10(_ r: UITestRunner) async {
         let t0 = r.now()
         await ensureClosed(r)
+        motionOn()
         var problems = [String]()
         var parts = [String]()
         var values = [String: Double]()
