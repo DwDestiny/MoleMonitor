@@ -288,14 +288,12 @@ extension UITestRunner {
                 if let rect = panelRect("dog"), let stats = UITestDogStats.measure(shot, region: rect, surface: surface) {
                     let share = Double(stats.ink) / Double(Swift.max(1, stats.area))
                     dogNotes.append("\(dogKey) \(Int(rect.width))x\(Int(rect.height)) ink \(stats.ink) (\(String(format: "%.1f", share * 100)) %), \(stats.colors) colors")
-                    // The static gray dog (collecting, stale) is drawn pale by design on a pale surface, so its ink share is small
-                    // (0.9 % in light mode in run 38142320682). It is judged by an absolute floor of 40 ink pixels plus the color count.
-                    // A blank region has no ink and 1 to 3 colors, so the floor still fails an empty or missing dog.
+                    // The static gray dog (collecting, stale) is drawn at 85 % alpha (I2, stage 2), so it needs 1.5 % of the region.
+                    // The live dog needs 1 %.
                     let staticDog = (c == .collecting || c == .stale)
-                    if staticDog {
-                        if stats.ink < 40 { dogProblems.append("\(dogKey): only \(stats.ink) ink pixels for the static dog, floor 40") }
-                    } else if share < 0.01 {
-                        dogProblems.append("\(dogKey): ink share \(String(format: "%.3f", share)) < 0.01")
+                    let minShare = staticDog ? 0.015 : 0.01
+                    if share < minShare {
+                        dogProblems.append("\(dogKey): ink share \(String(format: "%.3f", share)) < \(minShare)")
                     }
                     if stats.colors < 12 { dogProblems.append("\(dogKey): only \(stats.colors) colors, not a drawn dog") }
                 } else {

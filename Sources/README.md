@@ -38,6 +38,23 @@ last_updated: 2026-10-11
 | `LiveSnapshot.swift` | 实时卡的数据：60 秒窗口，2 秒间隔，最多 32 个点，速率文字 |
 | `DiskSeries.swift` | 30 天磁盘面积图的降采样序列和触发异常的增长段 |
 | `PreviewScenario.swift` | `--preview` 与测试用的虚构数据。App 运行时不调用 |
+| `CurrentReadings.swift` | 当前读数和状态卡数据状态的值类型。空值表示未测得，不是零 |
+| `HealthItems.swift` | 五个健康项、内存、温度、耗电和 swap 词汇、`ItemVerdict` |
+| `HealthRules.swift` | CPU、内存、温度、耗电的判定规则与迟滞状态，纯函数 |
+| `HealthAlerts.swift` | 判定对应的一句证据和一句给 Agent 的提示 |
+| `HealthPipeline.swift` | 引擎的纯逻辑部分：每次评估得出五项判定、问题顺序和补全的读数 |
+| `ProblemOrder.swift` | 灯、卡片、图标角标和提示共用的问题顺序 |
+| `PanelLayout.swift` | 状态卡版面计划：区块顺序、三档高度（332、560、620）和压缩步骤 |
+| `Prompt.swift` | “复制给 Agent”的中文提示文本与隐私文字脱敏 |
+| `StatusExtras.swift` | `status.json` 的新增字段，App 与 `molemonitor-cli prompt` 之间的约定 |
+| `AppUsage.swift` | 占用 App 的 CPU 与内存排行、窗口均值和单应用 CPU 规则的输入 |
+| `TrendBuffer.swift` | 内存环形趋势缓冲，输出按间隙分段的序列和 2 小时 CPU 摘要 |
+| `TrendStore.swift` | `trend.json` 的编码、原子写（0600）和容错读取 |
+| `SleepStore.swift` | 睡眠掉电记录的小型持久化，重启后恢复 |
+| `NotificationPlanner.swift` | 通知规则：按送达顺序决定要发的通知 |
+| `MenuIconModel.swift` | 健康状态到菜单栏图标状态（姿态与角标）及无障碍文字的映射，不含绘制 |
+| `DogArt.swift` | 比熊各部件、菜单栏头部和角标图形的贝塞尔路径数据，不含绘制 |
+| `DogRig.swift` | 比熊动画数学：每帧的部件变换参数与变换后的图层列表 |
 
 ## App 文件
 
@@ -46,8 +63,15 @@ last_updated: 2026-10-11
 | `Engine.swift` | `MonitorEngine`：一个 5 分钟 tick，睡眠与唤醒，写 `status.json`，`alert-state.json` 与 NDJSON。状态卡打开时启动 2 秒实时采样定时器，关闭时取消并清空缓冲 |
 | `Sampler.swift` | 读磁盘容量、`sysctl` 网卡计数器、开机时间。只读 |
 | `Notifier.swift` | `UNUserNotificationCenter` 授权与发送。无 App 包时报告 `unavailable` |
-| `StatusIcon.swift` | 菜单栏图标绘制与缓存，无障碍文字 |
-| `LiveSampler.swift` | 读 Mach 每核 CPU tick 与网卡计数器。状态卡打开时创建，关闭时释放 |
+| `StatusIcon.swift` | `StatusIconController`：把图标状态和提示文字应用到状态栏按钮，缓存图像 |
+| `Clipboard.swift` | 把文本写入通用剪贴板，触控板上给一次轻触反馈 |
+| `ProcessSampler.swift` | 用 libproc 读进程列表，输出 `ProcessSample` 与覆盖率。排名在 Core 的 `AppRanking` |
+| `SystemSampler.swift` | 读每核 CPU tick、网卡计数器、内存压力和机器信息。取代旧的 `LiveSampler` |
+| `DogView.swift` | 状态卡比熊视图。唯一可以用 `TimelineView` 的视图，调用方式 `DogView(input:size:)` |
+| `DogShapes.swift` | 用 Core Graphics 绘制状态卡比熊和菜单栏模板图标，路径只建一次并缓存 |
+| `GlyphPaths.swift` | 类别角标路径，菜单栏角标、气泡和卡片类别图标共用 |
+| `DogGallery.swift` | `--dog-gallery` 导出所有静态姿态、菜单栏图标和角标的 PNG 图册 |
+| `UITestDogChecks.swift` | 比熊动画门禁，输出 `dog-report.json`。整个文件在 `#if UITEST` 内 |
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
 | `PanelRoot.swift` | 状态卡根视图：固定的头部、滚动的中部、固定的底栏。按版面计划渲染，不排序。入场动画 |
 | `PanelHero.swift` | 头部：比熊、标题、灯列（安静模式与问题模式） |
@@ -58,7 +82,7 @@ last_updated: 2026-10-11
 | `PanelFooter.swift` | 按钮样式、复制按钮、授权行、底栏 |
 | `PanelTokens.swift` | 颜色、字号、动效、尺寸令牌，格式化函数，灯，流式布局 |
 | `PanelPreview.swift` | `--preview` 渲染 28 张静态图 |
-| `UITestPanelChecks.swift` | 状态卡的界面门禁 M2 至 M6、M11 至 M13。整个文件在 `#if UITEST` 内 |
+| `UITestPanelChecks.swift` | 状态卡的界面门禁 M2 至 M6、M11 至 M14、M19、N1、N2。整个文件在 `#if UITEST` 内 |
 | `UITestHarness.swift` | 界面回归测试代码（检查 A 至 L）。整个文件在 `#if UITEST` 内，只存在于 `scripts/build.py --ui-test` 的变体 |
 
 ## 入口模式
