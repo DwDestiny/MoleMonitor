@@ -92,7 +92,7 @@ struct PanelAnomalySection: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(Text(PanelAreaState.recordsText(records)))
+            .accessibilityLabel(Text("异常记录，" + PanelAreaState.recordsText(records)))
             .accessibilityIdentifier("btn.records")
             .uiTestFrame("btn.records")
         } else {

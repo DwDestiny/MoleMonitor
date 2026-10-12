@@ -619,6 +619,11 @@ final class UITestRunner {
                 let more = UITestAX.nodes(root: NSApp)
                 if more.count > best.count { best = more; source = "application" }
             }
+            // The window hosts the sidebar in its own view. Add its nodes to the tree of the main column.
+            if let side = delegate.panelWindow?.sidebarHost, side.superview != nil {
+                let known = Set(best.map { $0.id }.filter { !$0.isEmpty })
+                best += UITestAX.nodes(root: side).filter { $0.id.isEmpty || !known.contains($0.id) }
+            }
             info["axSource"] = source
             axCache = best
             return best
@@ -1334,7 +1339,9 @@ final class UITestRunner {
             finish(abort: nil, exitCode: 1)
             return
         }
-        let menu = PanelMoreMenu.makeMenu(model: model, handler: PanelMenuHandler(model: model))
+        // NSMenuItem.target is weak. Keep the handler alive until the action ran.
+        let handler = PanelMenuHandler(model: model)
+        let menu = PanelMoreMenu.makeMenu(model: model, handler: handler)
         guard let index = menu.items.firstIndex(where: { $0.identifier?.rawValue == "menu.quit" }) else {
             record("K", "退出", false, since: t0, "menu.quit is not in the menu.")
             finish(abort: nil, exitCode: 1)
@@ -1347,7 +1354,7 @@ final class UITestRunner {
         record("K", "退出", nil, since: t0, "Triggering menu.quit with performActionForItem. The acceptance script checks the exit code 0 and that status.json was written at exit.", pending: true)
         info["footprintOpenMB"] = footprintMB().map { String(format: "%.1f", $0) } ?? "n/a"
         writeReport()
-        menu.performActionForItem(at: index)
+        withExtendedLifetime(handler) { menu.performActionForItem(at: index) }
         // terminate(_:) ends the process. Still here after the call means the action did not quit.
         await sleepMs(2000)
         if let k = items.firstIndex(where: { $0.id == "K" }) {

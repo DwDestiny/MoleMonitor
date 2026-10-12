@@ -426,10 +426,9 @@ else:
         # DESIGN_V2 13.2.1: W02 replaces the old layout gates M2, M3 and M22 (same checks, v2 selectors).
         if "W02" in by_id:
             for old_id in ("M2", "M3", "M22"):
-                if old_id not in by_id:
-                    alias = dict(by_id["W02"], id=old_id, name=f"{old_id} replaced by W02 (13.2.1)")
-                    ui_report["items"].append(alias)
-                    by_id[old_id] = alias
+                alias = dict(by_id["W02"], id=old_id, name=f"{old_id} replaced by W02 (13.2.1)")
+                ui_report["items"] = [i for i in ui_report["items"] if i["id"] != old_id] + [alias]
+                by_id[old_id] = alias
         for letter in gate_ids("ui", "active"):
             check(letter in by_id, f"UI item {letter} reported")
         for item in ui_report["items"]:
