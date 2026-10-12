@@ -24,11 +24,11 @@ last_updated: 2026-10-12
 |---|---|
 | 文件 | 10 张 PNG 条带：`lie_idle`、`walk`、`trot`、`sprint`、`sniff`、`sit_gray`、`stand_up`、`wag`、`pant_lie`、`notice`，以及 `manifest.json` |
 | 格式 | PNG，透明底。每帧 320 × 240 px（@2x），帧横向排列。比熊面朝左，脚底线 y = 230 px |
-| 帧数 | 合计 57 帧，与 [DESIGN_V2.md 4.3](DESIGN_V2.md#43-动作清单首版) 一致。生成的条带 9 张。`sit_gray.png` 由 `dog_gray.png` 镜像得到，不生成 |
+| 帧数 | 合计 59 帧。`stand_up` 为 6 帧 18 fps，[DESIGN_V2.md 4.3](DESIGN_V2.md#43-动作清单首版) 写 4 帧 12 fps，时长同为 0.33 s。改动原因：4 帧时相邻帧差超过 W11 上限 0.25。其余动作与 4.3 一致。生成的条带 9 张。`sit_gray.png` 由 `dog_gray.png` 镜像得到，不生成 |
 | 清单 | `manifest.json` 记录每个动作的帧数、帧率、播放方式、静止帧、代表帧、着地帧、站立帧和面部区域 |
 | 用途 | 面板 v2 英雄区的序列帧动画，见 [DESIGN_V2.md 第 11 章](DESIGN_V2.md#11-动画引擎性能预算与降级) |
 | 打包 | `scripts/build.py` 目前只复制 `Resources/DogArt/`。复制 `Resources/DogSprites/` 的步骤由引擎工作包加入 |
-| 体积 | 10 张 PNG 共 2.26 MB（无损 PNG，不量化）。上限 4 MB（11.3）。全部 57 帧解码后约 17 MB，所以引擎只缓存当前动作与预取动作 |
+| 体积 | 10 张 PNG 共 2.34 MB（无损 PNG，不量化）。上限 4 MB（11.3）。全部 59 帧解码后约 18 MB，所以引擎只缓存当前动作与预取动作 |
 | 门禁 | `python3 scripts/check_sprites.py`（W11）。需要 Pillow 与 numpy。加 `--sheet-dir 目录` 输出白底、深色底、彩色底的联系表，供人工盲测 |
 
 生成方式、提示词、调用次数与后处理步骤见 [Resources/DogArt/PROVENANCE.md](../Resources/DogArt/PROVENANCE.md) 的“Action strips for panel v2”一节。
@@ -42,7 +42,7 @@ last_updated: 2026-10-12
 | 日期 | 2026-10-12 |
 | 提示词与处理步骤 | 见 [Resources/DogArt/PROVENANCE.md](../Resources/DogArt/PROVENANCE.md) |
 | 后处理 | 脚本清理透明度，统一缩放，底边对齐。`dog_gray.png` 由 `dog_stand.png` 去色得到 |
-| 动作条带 | 同一模型，同一中转站，2026-10-12。以 `dog_stand.png` 为唯一参考图，每个动作一次 `edit` 调用出一行条带，共 19 次调用。后处理：透明度下限 80、上限 200，镜像为面朝左，按眼鼻三角形大小统一比例，脚底线对齐，水平配准。不重画、不混合、不调色 |
+| 动作条带 | 同一模型，同一中转站，2026-10-12。以 `dog_stand.png` 为参考图（`stand_up` 另加 `lie_idle` 的一帧作第二张参考图），每个动作一次 `edit` 调用出一行条带，共 23 次调用。后处理：透明度下限 80、上限 200，镜像为面朝左，按眼鼻三角形大小统一比例，脚底线对齐，水平配准。不重画、不混合、不调色 |
 
 本项目的构建不调用任何模型，也不下载任何文件。素材已经生成，作为文件提交在仓库里。
 

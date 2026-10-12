@@ -145,21 +145,23 @@
   {
    "name": "stand_up",
    "file": "stand_up.png",
-   "frames": 4,
-   "fps": 12,
+   "frames": 6,
+   "fps": 18,
    "playback": "once",
-   "restFrame": 3,
-   "representativeFrame": 1,
+   "restFrame": 5,
+   "representativeFrame": 2,
    "contactFrames": [],
-   "groundedFrames": [0, 1, 2, 3],
-   "standingFrames": [3],
+   "groundedFrames": [0, 1, 2, 3, 4, 5],
+   "standingFrames": [5],
    "stance": "rise",
    "generated": true,
    "faceBoxes": [
-    [87, 152, 48, 36],
-    [92, 103, 49, 34],
-    [89, 79, 49, 34],
-    [82, 71, 48, 33]
+    [80, 163, 51, 35],
+    [84, 144, 50, 35],
+    [85, 133, 49, 35],
+    [85, 113, 49, 35],
+    [81, 92, 50, 35],
+    [75, 80, 47, 33]
    ]
   },
   {

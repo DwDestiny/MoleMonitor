@@ -40,10 +40,11 @@ HUE_CHROMA, HUE_BIN_SHARE, HUE_CLUSTERS_MAX = 8.0, 0.002, 6
 BUNDLE_MAX_BYTES = 4 * 1024 * 1024
 GENERATED_STRIPS = 9
 
-# Table 4.3 of docs/DESIGN_V2.md: the first-release actions and their frame counts (57 frames).
+# Table 4.3 of docs/DESIGN_V2.md: the first-release actions and their frame counts (59 frames).
+# stand_up has 6 frames at 18 fps (4.3 lists 4 at 12 fps, same 0.33 s), so each step stays below 0.25.
 EXPECTED = {
     "lie_idle": 6, "walk": 8, "trot": 8, "sprint": 6, "sniff": 8,
-    "sit_gray": 1, "stand_up": 4, "wag": 6, "pant_lie": 6, "notice": 4,
+    "sit_gray": 1, "stand_up": 6, "wag": 6, "pant_lie": 6, "notice": 4,
 }
 
 
@@ -198,9 +199,9 @@ def main():
     counts = {a.get("name"): a.get("frames") for a in actions}
     total = sum(int(a.get("frames", 0)) for a in actions)
     generated = sum(1 for a in actions if a.get("generated"))
-    ok = counts == EXPECTED and total == 57 and generated == GENERATED_STRIPS and len(names) == len(set(names))
+    ok = counts == EXPECTED and total == 59 and generated == GENERATED_STRIPS and len(names) == len(set(names))
     ok = ok and manifest.get("frameWidth") == FRAME_W and manifest.get("frameHeight") == FRAME_H
-    rep.add("manifest", ok, "%d actions, %d frames (expected 10, 57), %d generated strips (expected %d)"
+    rep.add("manifest", ok, "%d actions, %d frames (expected 10, 59), %d generated strips (expected %d)"
             % (len(actions), total, generated, GENERATED_STRIPS))
 
     frames = {}

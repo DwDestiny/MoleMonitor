@@ -64,23 +64,25 @@ Not hand drawn. Not covered by the GPL-3.0-only license of the code. The license
 
 ### How they were made
 
-1. Reference: `dog_stand.png` (this folder) is the only reference image for every strip.
+1. Reference: `dog_stand.png` (this folder) is the only reference image for every strip, except `stand_up`.
+   The `stand_up` call has two references: frame 6 of `lie_idle.png` mirrored back to face right, and `dog_stand.png`.
 2. One `edit` call per strip, size 1536 x 1024, `background=transparent`, one row of N frames.
-   19 calls in total: walk 1, trot 2, sprint 3, lie_idle 2, pant_lie 3, sniff 2, stand_up 3, wag 1, notice 2.
+   23 calls in total: walk 1, trot 2, sprint 3, lie_idle 2, pant_lie 3, sniff 2, stand_up 7, wag 1, notice 2.
    The table below names the call that is used. The other calls were rejected after review or measurement.
 3. Cleanup with a script: alpha floor 80, alpha ceiling 200, components under 3000 px removed,
    one connected component per frame, left to right.
 4. Each frame mirrored, so the dog faces left (`docs/DESIGN_V2.md` 4.2).
 5. One scale factor per strip, chosen so that the eye-nose triangle of the frames has the same size as in
-   `dog_stand.png` (head size match). Exception: `stand_up` uses the same rule, and its standing frame
-   is 209 px high (reference 210 px).
+   `dog_stand.png` (head size match). For `stand_up`, the area of the last frame first matches the
+   standing area, then the same head size rule applies. Its standing frame is 201 px high (reference 210 px).
 6. Each frame on a 320 x 240 px canvas, lowest opaque pixel on y = 230, centered on the upper body.
 7. Registration: horizontal shifts of at most 18 px, chosen so that the silhouette change between
    neighbouring frames is as small as possible. No frame is redrawn, blended or recolored.
 8. Frame order changes (only where noted): pant_lie uses strip frames 1, 5, 6, 2, 6, 5 (a ping-pong loop
-   with a smaller head movement), sprint uses strip frames 3 to 8 of 8, sniff moves strip frame 8 to position 2.
+   with a smaller head movement), sprint uses strip frames 3 to 8 of 8, sniff moves strip frame 8 to position 2,
+   stand_up uses strip frames 1, 3, 4, 5, 6, 8 of 8.
 9. `sit_gray.png` is `dog_gray.png` mirrored. It is not generated.
-10. PNG files are lossless (Pillow `optimize`). No quantization. 10 PNG files, 2.26 MB in total.
+10. PNG files are lossless (Pillow `optimize`). No quantization. 10 PNG files, 2.34 MB in total.
 
 ### Prompt (common part of every call)
 
@@ -93,7 +95,7 @@ all standing on the same invisible ground line, body in side view facing right, 
 viewer so both eyes and the nose are visible in every frame. Consecutive frames change smoothly, like real animation
 in-betweens. Transparent background. No shadows, no floor, no text, no frame numbers, no grid lines, no motion
 trails, no speed lines, no glow, no detached particles, no logos.
-(The calls for sprint, pant_lie, sniff and stand_up attempt 3 also ask for a wide empty margin at the left and right edges.)
+(The calls for sprint, pant_lie, sniff and stand_up attempts 3 to 7 also ask for a wide empty margin at the left and right edges.)
 
 ### Action parts (the calls that are used)
 
@@ -105,7 +107,7 @@ trails, no speed lines, no glow, no detached particles, no logos.
 | lie_idle.png | lie_idle 2 | 6 frames of one calm resting loop; lying on the belly, chin on the front paws, eyes open; visible slow breathing and a slow tail wag |
 | pant_lie.png | pant_lie 3 | 6 frames of one hot panting loop; lying flat with the hind legs stretched back, head raised, eyes open and gentle, mouth open with a long pink tongue; head moves up and down; no sweat drops |
 | sniff.png | sniff 2 | 8 frames of one curious sniffing loop; standing, head lowered, nose near the ground, small steps, tail wags; same bright white coat as the reference |
-| stand_up.png | stand_up 2 | 4 frames of getting up: lying with the chin on the paws, head and chest raised, back end half way up, standing |
+| stand_up.png | stand_up 6 | 8 frames of getting up slowly, each frame a little different from the previous one: the lying pose of the first reference, chin lifts, head up, front paws move out and chest lifts, chest higher with bent elbows, front legs almost straight, back end half way up, the standing pose of the second reference; hind paws stay in place, same size in every frame |
 | wag.png | wag 1 | 6 frames of one happy play-bow loop; front low, rear end raised, open-mouth smile; the tail wags from side to side |
 | notice.png | notice 2 | 4 frames of noticing something while sitting upright: relaxed, head lifts, head turns to the viewer, alert with wide eyes; ears stay long and floppy |
 | sit_gray.png | none | `dog_gray.png` mirrored |
