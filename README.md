@@ -92,6 +92,7 @@ dist/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 7
 | [Tests/](Tests) | Core 与 CLI 的测试源码 |
 | [scripts/](scripts/README.md) | 本地构建、测试与 CI 回归门禁脚本 |
 | [.github/workflows/build-mac.yml](.github/workflows/build-mac.yml) | GitHub Actions 回归门禁，说明见 [docs/CI.md](docs/CI.md) |
+| [docs/ASSETS.md](docs/ASSETS.md) | 比熊位图素材来源与许可说明 |
 | [Vendor/NOTICE.md](Vendor/NOTICE.md) | 第三方许可与归属 |
 | [docs/](docs/README.md) | 产品设计、验证摘要、接手说明、CI 说明 |
 | [AGENTS.md](AGENTS.md) | 开发协作约定 |
