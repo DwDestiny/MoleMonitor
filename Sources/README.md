@@ -61,7 +61,7 @@ last_updated: 2026-10-11
 
 | 文件 | 职责 |
 |---|---|
-| `Engine.swift` | `MonitorEngine`：一个 5 分钟 tick，睡眠与唤醒，写 `status.json`，`alert-state.json` 与 NDJSON。状态卡打开时启动 2 秒实时采样定时器，关闭时取消并清空缓冲 |
+| `Engine.swift` | `MonitorEngine`：一个 30 秒 tick，睡眠与唤醒，写 `status.json`，`alert-state.json` 与 NDJSON。状态卡打开时启动 2 秒实时采样定时器，关闭时取消并清空缓冲 |
 | `Sampler.swift` | 读磁盘容量、`sysctl` 网卡计数器、开机时间。只读 |
 | `Notifier.swift` | `UNUserNotificationCenter` 授权与发送。无 App 包时报告 `unavailable` |
 | `StatusIcon.swift` | `StatusIconController`：把图标状态和提示文字应用到状态栏按钮，缓存图像 |
