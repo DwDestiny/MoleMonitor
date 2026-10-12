@@ -135,6 +135,9 @@ final class MonitorEngine: ObservableObject {
     private var liveBuffer = LiveBuffer()
     private var latestCPU: Double?
     private var latestRate: NetworkRate?
+    /// Newest memory pressure percent and memory split. Nil after a failed read, so a failure is never shown as a value.
+    private var latestPressurePercent: Int?
+    private var latestMemory: MemoryBreakdown?
     private var cachedPower: PowerSnapshot?
     private var powerReadAt: Date?
     private var smc: SupplementalSample?
@@ -362,7 +365,10 @@ final class MonitorEngine: ObservableObject {
         point.cpu = reading.cpuPercent
         point.rx = reading.rate?.rxPerSecond
         point.tx = reading.rate?.txPerSecond
-        if reading.cpuPercent != nil || reading.rate != nil { trendBuffer.appendFine(point) }
+        point.pressurePercent = reading.pressurePercent
+        latestPressurePercent = reading.pressurePercent
+        latestMemory = reading.memory
+        if reading.cpuPercent != nil || reading.rate != nil || reading.pressurePercent != nil { trendBuffer.appendFine(point) }
         liveBuffer.add(at: now, rate: reading.rate, cpuPercent: reading.cpuPercent)
         if reading.cpuPercent != nil { latestCPU = reading.cpuPercent }
         if reading.rate != nil { latestRate = reading.rate }
@@ -556,6 +562,9 @@ final class MonitorEngine: ObservableObject {
         point.swapUsed = reading.swapUsed
         point.pressure = reading.pressure
         point.thermal = reading.thermal
+        point.pressurePercent = reading.pressurePercent
+        latestPressurePercent = reading.pressurePercent
+        latestMemory = reading.memory
         if let power = cachedPower, power.hasBattery {
             point.power = power.source
             if readNow { point.battery = power.percent }
@@ -594,6 +603,9 @@ final class MonitorEngine: ObservableObject {
         c.smcCPUTemperature = smc?.cpuTemperature
         c.fanRPMs = smc?.fanRPMs
         c.diskAvailable = lastResult?.items.disk.availableImportant.value
+        if let disk = lastResult?.items.disk { StatusExtras.applyDisk(disk, to: &c) }
+        c.memoryPressurePercent = latestPressurePercent
+        c.memory = latestMemory
         c.sampledAt = now
         return c
     }

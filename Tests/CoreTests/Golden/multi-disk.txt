@@ -2,14 +2,14 @@
 请作为我的 Mac 维护助手，根据以下只读监测数据排查问题，并给出优化建议。
 
 ## 环境
-- Mac14,15 · Apple M2 · 内存 16 GB · macOS 15.1
+- Mac14,15 · Apple M2 · 内存 64 GB · macOS 15.1
 - MoleMonitor 0.2.0 · 采样于 10月11日 12:00 · 数据新鲜
 - CLI：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli`
 
 ## 状态摘要
 | 项 | 等级 | 当前 | 已持续 |
 |---|---|---|---|
-| 磁盘 | 红 | 5 天 +314 GB，可用 402 GB | 3 小时 0 分 |
+| 磁盘 | 红 | 5 天 +314 GB，可用 120 GB | 3 小时 0 分 |
 
 ## 证据
 | 指标 | 值 |
