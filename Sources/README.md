@@ -54,7 +54,8 @@ last_updated: 2026-10-11
 | `NotificationPlanner.swift` | 通知规则：按送达顺序决定要发的通知 |
 | `MenuIconModel.swift` | 健康状态到菜单栏图标状态（姿态与角标）及无障碍文字的映射，不含绘制 |
 | `DogArt.swift` | 比熊各部件、菜单栏头部和角标图形的贝塞尔路径数据，不含绘制 |
-| `DogRig.swift` | 比熊动画数学：每帧的部件变换参数与变换后的图层列表 |
+| `DogRig.swift` | 比熊动画数学：每帧的部件变换参数与变换后的图层列表。`DogRig.bubbleLayers` 单独给出关注气泡的图层（位图比熊用） |
+| `DogArtPose.swift` | 位图比熊的选图：`DogArtPose`（8 个姿态）与 `DogArtSelector`（平滑、迟滞、最短保持 4 秒，无定时器，由调用方逐个数据点推进）。规则见 [DESIGN.md 4.9](../docs/DESIGN.md#49-位图阶段) |
 
 ## App 文件
 
@@ -67,11 +68,13 @@ last_updated: 2026-10-11
 | `Clipboard.swift` | 把文本写入通用剪贴板，触控板上给一次轻触反馈 |
 | `ProcessSampler.swift` | 用 libproc 读进程列表，输出 `ProcessSample` 与覆盖率。排名在 Core 的 `AppRanking` |
 | `SystemSampler.swift` | 读每核 CPU tick、网卡计数器、内存压力和机器信息。取代旧的 `LiveSampler` |
-| `DogView.swift` | 状态卡比熊视图。唯一可以用 `TimelineView` 的视图，调用方式 `DogView(input:size:)` |
+| `DogView.swift` | 状态卡比熊入口，调用方式 `DogView(input:size:)`。开关 `DogView.useBitmapArt`（默认 `true`）为真且 8 张位图都能加载时，转给 `DogBitmapView`。否则显示矢量比熊（回退，代码与门禁保留）。矢量路径是唯一可以用 `TimelineView` 的视图 |
+| `DogBitmapView.swift` | 位图比熊：`DogArtLibrary`（从 `Contents/Resources/DogArt` 加载 8 张图并缓存）、`DogBitmapView`（0.22 秒交叉淡入，减少动态效果时直接切换，关注姿态叠加矢量气泡，地面阴影（`groundShadow`，默认开））。无 `TimelineView`、`Canvas`、定时器 |
 | `DogShapes.swift` | 用 Core Graphics 绘制状态卡比熊和菜单栏模板图标，路径只建一次并缓存 |
 | `GlyphPaths.swift` | 类别角标路径，菜单栏角标、气泡和卡片类别图标共用 |
-| `DogGallery.swift` | `--dog-gallery` 导出所有静态姿态、菜单栏图标和角标的 PNG 图册 |
-| `UITestDogChecks.swift` | 比熊动画门禁，输出 `dog-report.json`。整个文件在 `#if UITEST` 内 |
+| `DogGallery.swift` | `--dog-gallery` 导出所有静态姿态、菜单栏图标和角标的 PNG 图册。图册判矢量渲染器，渲染 `DogView` 时临时关闭位图开关 |
+| `UITestDogChecks.swift` | 比熊动画门禁（矢量路径：DA 至 DE），输出 `dog-report.json`。整个文件在 `#if UITEST` 内 |
+| `UITestBitmapChecks.swift` | 位图比熊门禁 BA 至 BE，面板门禁 M19V 与 M20，8 姿态联系表。整个文件在 `#if UITEST` 内 |
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
 | `PanelRoot.swift` | 状态卡根视图：固定的头部、滚动的中部、固定的底栏。按版面计划渲染，不排序。入场动画 |
 | `PanelHero.swift` | 头部：比熊、标题、灯列（安静模式与问题模式） |
@@ -82,7 +85,7 @@ last_updated: 2026-10-11
 | `PanelFooter.swift` | 按钮样式、复制按钮、授权行、底栏 |
 | `PanelTokens.swift` | 颜色、字号、动效、尺寸令牌，格式化函数，灯，流式布局 |
 | `PanelPreview.swift` | `--preview` 渲染 28 张静态图 |
-| `UITestPanelChecks.swift` | 状态卡的界面门禁 M2 至 M6、M11 至 M14、M19、N1、N2。整个文件在 `#if UITEST` 内 |
+| `UITestPanelChecks.swift` | 状态卡的界面门禁 M2 至 M6、M11 至 M14、M19、M19V、M20、N1、N2。整个文件在 `#if UITEST` 内 |
 | `UITestHarness.swift` | 界面回归测试代码（检查 A 至 L）。整个文件在 `#if UITEST` 内，只存在于 `scripts/build.py --ui-test` 的变体 |
 
 ## 入口模式
@@ -97,4 +100,6 @@ last_updated: 2026-10-11
 
 > **注意**：`App/` 和 `MoleMonitor.swift` 已通过 CI 回归门禁（macOS 虚拟机），但没有真机验收。`Sensors.swift` 的运行行为尚未验证。验证状态见 [VERIFICATION.md](../docs/VERIFICATION.md)，CI 说明见 [CI.md](../docs/CI.md)。
 
-测试源码在 [Tests/](../Tests)：`CoreTests/` 测 Core，`CliTests/make_status/` 生成 CLI 测试数据。
+位图素材在 [Resources/DogArt/](../Resources/DogArt)（8 个 PNG 与 PROVENANCE.md，来源与许可见 [ASSETS.md](../docs/ASSETS.md)）。`scripts/build.py` 把它们复制到 `Contents/Resources/DogArt`。
+
+测试源码在 [Tests/](../Tests)：`CoreTests/` 测 Core（含 `DogArtPoseTests.swift`），`CliTests/make_status/` 生成 CLI 测试数据。

@@ -3,7 +3,8 @@
 // Input: PanelData and the mode (quiet or problem) from the layout plan.
 // Output: The hero block: the dog, the headline, the subtitle and the lamps.
 // Pos: First block of the status card (docs/DESIGN.md 2.2). Quiet mode: dog 104 x 78 and three lamp rows. Problem mode: dog 72 x 54, headline, lamp row.
-//      DogView is I2's view (static pose in stage 1). It draws the gray collecting and stale looks itself from `DogInput.isStatic`.
+//      DogView is I2's view. `DogView.useBitmapArt` (default true) routes it to DogBitmapView, the bitmap Bichon (docs/DESIGN.md 4.9);
+//      false, or a missing bitmap file, keeps the vector dog. The gray collecting and stale looks come from `DogInput.isStatic` in both.
 
 import SwiftUI
 

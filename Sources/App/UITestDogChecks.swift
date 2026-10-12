@@ -6,6 +6,10 @@
 // Pos: Test code. It exists only in the UITEST build; the release binary has none of it (checked by the I2 block of
 //      scripts/ci_acceptance.py). It shows one small window and one popover with a DogView for about 25 s. Owner I2.
 //
+// Bitmap stage: DA to DE and the benchmarks run with `DogView.useBitmapArt = false`, so they keep judging the vector dog.
+// BA to BE (UITestBitmapChecks.swift) judge the bitmap dog. DC (leg speed) does not apply to the bitmap path: it has no legs
+// in motion, only still pictures and a crossfade.
+//
 // Gates: (a) 60 to 80 frames in 3 s with the card open; (b) 0 frames in 3 s after close; (c) no leg moves faster than
 // DogGaitRules.maxLegRate across gait switches; (d) a menu switch has at most 8 frames, lasts at most 600 ms and leaves
 // no timer; (e) Reduce Motion gives no frame and no timer.
@@ -69,7 +73,7 @@ enum DogFrameProbe {
     }
 }
 
-private final class DogCheckModel: ObservableObject {
+final class DogCheckModel: ObservableObject {
     @Published var input: DogInput
     init(_ input: DogInput) { self.input = input }
 }
@@ -82,7 +86,7 @@ private struct DogCheckRoot: View {
     }
 }
 
-private struct DogCheckItem: Encodable {
+struct DogCheckItem: Encodable {
     var id: String
     var name: String
     var status: String
@@ -92,13 +96,13 @@ private struct DogCheckItem: Encodable {
 
 @MainActor
 final class UITestDogChecks {
-    private let outDir: URL
-    private var items = [DogCheckItem]()
-    private var info = [String: String]()
-    private var window: NSWindow?
-    private var anchor: NSView?
-    private var iconButton: NSButton?
-    private var popover: NSPopover?
+    let outDir: URL
+    var items = [DogCheckItem]()
+    var info = [String: String]()
+    var window: NSWindow?
+    var anchor: NSView?
+    var iconButton: NSButton?
+    var popover: NSPopover?
 
     private init(outDir: URL) { self.outDir = outDir }
 
@@ -118,31 +122,31 @@ final class UITestDogChecks {
 
     // MARK: Helpers
 
-    private func log(_ text: String) { FileHandle.standardOutput.write(Data((text + "\n").utf8)) }
+    func log(_ text: String) { FileHandle.standardOutput.write(Data((text + "\n").utf8)) }
 
-    private func record(_ id: String, _ name: String, _ ok: Bool, _ note: String, _ values: [String: Double] = [:]) {
+    func record(_ id: String, _ name: String, _ ok: Bool, _ note: String, _ values: [String: Double] = [:]) {
         items.append(DogCheckItem(id: id, name: name, status: ok ? "pass" : "fail", note: note, values: values))
         log("[\(ok ? "PASS" : "FAIL")] \(id) \(name) \(note)")
     }
 
-    private func sleep(_ seconds: Double) async {
+    func sleep(_ seconds: Double) async {
         try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
     }
 
     /// User plus system CPU time of the process, s.
-    private func processCPU() -> Double {
+    func processCPU() -> Double {
         var usage = rusage()
         getrusage(RUSAGE_SELF, &usage)
         func s(_ t: timeval) -> Double { Double(t.tv_sec) + Double(t.tv_usec) / 1_000_000 }
         return s(usage.ru_utime) + s(usage.ru_stime)
     }
 
-    private static func input(cpu: Double?, thermal: ThermalLevel = .nominal, problem: HealthItem? = nil,
+    static func input(cpu: Double?, thermal: ThermalLevel = .nominal, problem: HealthItem? = nil,
                               level: HealthLevel = .green) -> DogInput {
         DogInput(cpuPercent: cpu, thermal: thermal, memoryLevel: .green, worstProblem: problem, worstLevel: level, isStatic: false)
     }
 
-    private func setUpWindow() {
+    func setUpWindow() {
         let w = NSWindow(contentRect: NSRect(x: 240, y: 360, width: 240, height: 80), styleMask: [.titled],
                          backing: .buffered, defer: false)
         w.title = "MoleMonitor dog checks"
@@ -159,7 +163,7 @@ final class UITestDogChecks {
         iconButton = button
     }
 
-    private func open(_ model: DogCheckModel) {
+    func open(_ model: DogCheckModel) {
         guard let anchor else { return }
         let p = NSPopover()
         p.behavior = .applicationDefined
@@ -171,7 +175,7 @@ final class UITestDogChecks {
     }
 
     /// Same release as AppDelegate.popoverDidClose: the hosting controller and the SwiftUI tree go away.
-    private func close() {
+    func close() {
         popover?.close()
         popover?.contentViewController = nil
         popover = nil
@@ -191,11 +195,16 @@ final class UITestDogChecks {
         info["systemReduceMotion"] = String(sys.reduceMotion)
         info["systemScreenLocked"] = String(sys.screenLocked)
         info["systemDisplayAsleep"] = String(sys.displayAsleep)
+        // DA to DE and the benchmarks judge the vector dog: the bitmap switch is off for them (docs/DESIGN.md 4.9).
+        DogView.useBitmapArt = false
         await checkOpenAndClose()
         await checkGaitSwitch()
         await checkMenuSwitch()
         await checkReduceMotion()
         benchOffscreen()
+        // BA to BE judge the bitmap dog (UITestBitmapChecks.swift).
+        DogView.useBitmapArt = true
+        await checkBitmapAll()
         window?.orderOut(nil)
     }
 
@@ -218,7 +227,7 @@ final class UITestDogChecks {
         let fps = Double(n) / openWall
         let hits = entries.filter { $0.cached }.count
         let hitTotals = entries.filter { $0.cached }.map { Double($0.stepNs + $0.drawNs) / 1000 }.sorted()
-        record("DA", "card open: frames in 3 s", (60...80).contains(n),
+        record("DA", "card open: frames in 3 s (vector path)", (60...80).contains(n),
                "\(n) frames (\(String(format: "%.1f", fps)) fps), \(DogFrameProbe.redraws) extra redraws, "
                    + "\(hits) from the strip cache, \(DogFrameProbe.bitmaps) bitmaps",
                ["frames": Double(n), "fps": fps, "redraws": Double(DogFrameProbe.redraws),
@@ -255,7 +264,7 @@ final class UITestDogChecks {
         await sleep(3)
         let closedCPU = processCPU() - cpu1, closedWall = CACurrentMediaTime() - t1
         let after = DogFrameProbe.entries.count + DogFrameProbe.redraws
-        record("DB", "card closed: frame callbacks in 3 s", after == 0, "\(after) callbacks",
+        record("DB", "card closed: frame callbacks in 3 s (vector path)", after == 0, "\(after) callbacks",
                ["callbacks": Double(after), "processCpuPercentClosed": closedCPU / closedWall * 100,
                 "processCpuPercentDelta": (openCPU / openWall - closedCPU / closedWall) * 100])
     }
@@ -286,7 +295,7 @@ final class UITestDogChecks {
         if let first = entries.first, gaits.first != first.gait { gaits.insert(first.gait, at: 0) }
         let fades = entries.filter { $0.crossfade }.count
         let switched = gaits.count >= 2
-        record("DC", "gait switch: leg speed under the natural limit", switched && worstRate <= DogGaitRules.maxLegRate,
+        record("DC", "gait switch: leg speed under the natural limit (vector path)", switched && worstRate <= DogGaitRules.maxLegRate,
                "gaits \(gaits.map { $0.rawValue }.joined(separator: " -> ")), worst \(Int(worstRate)) deg/s "
                    + "(limit \(Int(DogGaitRules.maxLegRate))), worst frame jump \(String(format: "%.1f", worstJump)) deg, "
                    + "\(fades) crossfade frames",
@@ -359,7 +368,7 @@ final class UITestDogChecks {
         await sleep(0.8)
         DogFrameProbe.forceReduceMotion = false
         let ok = frames == 0 && events == [0, 0] && timerNow == 0 && controller.timerCount == 0
-        record("DE", "Reduce Motion: no frames, no timer", ok,
+        record("DE", "Reduce Motion: no frames, no timer (vector path)", ok,
                "card animated frames \(frames), menu images \(events), timers \(timerNow)/\(controller.timerCount)",
                ["cardFrames": Double(frames), "menuAnimatedFrames": Double(events.filter { $0 > 0 }.count),
                 "timers": Double(max(timerNow, controller.timerCount))])

@@ -11,6 +11,7 @@ on:
       - "Tests/**"
       - "scripts/**"
       - "Vendor/**"
+      - "Resources/**"
       - ".github/workflows/build-mac.yml"
   workflow_dispatch:
 
