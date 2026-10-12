@@ -69,34 +69,32 @@ struct PanelAnomalySection: View {
     @ViewBuilder
     private func rightLink(records: Int?) -> some View {
         if model.authorization != "authorized" {
-            Text("开启通知 \u{203A}")
-                .font(PanelType.rowNote)
-                .foregroundStyle(tok.accent)
-                .lineLimit(1)
-                .contentShape(Rectangle())
-                .onTapGesture { model.onEnableNotifications() }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text("开启通知"))
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction { model.onEnableNotifications() }
-                .accessibilityIdentifier("btn.notifyAuth")
-                .uiTestFrame("btn.notifyAuth")
+            Button(action: { model.onEnableNotifications() }) {
+                Text("开启通知 \u{203A}")
+                    .font(PanelType.rowNote)
+                    .foregroundStyle(tok.accent)
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("开启通知"))
+            .accessibilityIdentifier("btn.notifyAuth")
+            .uiTestFrame("btn.notifyAuth")
         } else if let records, records > 0 {
-            Text(PanelAreaState.recordsText(records) + " \u{203A}")
-                .font(PanelType.rowNote)
-                .foregroundStyle(tok.textSecondary)
-                .lineLimit(1)
-                .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(tok.accent, lineWidth: 1.5).padding(-3)
-                    .opacity(model.keyFocus == .records ? 1 : 0))
-                .contentShape(Rectangle())
-                .onTapGesture { model.pinSidebar(.anomalyLog) }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(Text(PanelAreaState.recordsText(records)))
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction { model.pinSidebar(.anomalyLog) }
-                .accessibilityIdentifier("btn.records")
-                .uiTestFrame("btn.records")
+            Button(action: { model.pinSidebar(.anomalyLog) }) {
+                Text(PanelAreaState.recordsText(records) + " \u{203A}")
+                    .font(PanelType.rowNote)
+                    .foregroundStyle(tok.textSecondary)
+                    .lineLimit(1)
+                    .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .strokeBorder(tok.accent, lineWidth: 1.5).padding(-3)
+                        .opacity(model.keyFocus == .records ? 1 : 0))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(PanelAreaState.recordsText(records)))
+            .accessibilityIdentifier("btn.records")
+            .uiTestFrame("btn.records")
         } else {
             Text(PanelAreaState.recordsText(records ?? 0))
                 .font(PanelType.rowNote)

@@ -122,7 +122,7 @@ enum PanelRows {
         case .collecting:
             state.status = .collecting
             if state.value == dash { state.value = "采集中" }
-            if state.value == "采集中" { state.note = "正在采集" }
+            if state.value == "采集中" || state.note.hasSuffix(dash) { state.note = "正在采集" }
         case .stale(let since):
             state.status = .stale
             // Only memory and disk show the clock time before the value. The other rows say it in the note.

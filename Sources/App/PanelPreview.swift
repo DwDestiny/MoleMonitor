@@ -21,6 +21,13 @@ enum PreviewOverlay {
         var d = input
         d.current = PanelEngineAdapter.withDiskTriple(d.current, status: d.status)
         guard full else { return d }
+        // DESIGN_V2.md 2.6: while collecting, the items that already have a live value show it (CPU and battery here).
+        if d.isCollecting {
+            d.current.cpuPercent = 23
+            d.current.batteryPercent = 82
+            d.current.powerSource = .battery
+            return d
+        }
         let pressure = d.current.pressure ?? .normal
         let percent: Int
         switch pressure {

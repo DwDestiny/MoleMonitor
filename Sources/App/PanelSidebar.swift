@@ -106,9 +106,7 @@ private struct SidebarHeader: View {
                     .accessibilityIdentifier("side.pinned")
             }
             Spacer(minLength: 0)
-            Button {
-                model.unpinSidebar()
-            } label: {
+            Button(action: { model.unpinSidebar() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(tok.textSecondary)
@@ -136,9 +134,7 @@ private struct SidebarRangeControl: View {
         HStack(spacing: 8) {
             HStack(spacing: 2) {
                 ForEach(options, id: \.rawValue) { option in
-                    Button {
-                        model.setRange(option, for: state.item)
-                    } label: {
+                    Button(action: { model.setRange(option, for: state.item) }) {
                         Text(option.label)
                             .font(PanelType.rowNote)
                             .foregroundStyle(option == state.range ? tok.accent : tok.textSecondary)
@@ -404,9 +400,7 @@ private struct RecordsView: View {
             ForEach(groups) { group in
                 Text(group.title).font(PanelType.section).foregroundStyle(tok.textSecondary).frame(height: 20, alignment: .leading)
                 ForEach(group.rows) { row in
-                    Button {
-                        model.openRecord(row)
-                    } label: {
+                    Button(action: { model.openRecord(row) }) {
                         HStack(spacing: 8) {
                             StatusDotView(dot: row.level == .red ? .red : .yellow).frame(width: 8)
                             VStack(alignment: .leading, spacing: 1) {

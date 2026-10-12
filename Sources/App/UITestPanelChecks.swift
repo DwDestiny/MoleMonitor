@@ -858,11 +858,12 @@ extension UITestRunner {
         box.value = nil
         let tCopy = now()
         model.copy(.primary)
-        await sleepMs(80)
-        let shownMs = (now() - tCopy) * 1000
-        if model.copied.isEmpty { problems.append("no copied state 100 ms after the click") }
-        if shownMs > 100 + 40 { problems.append("the copied state took \(Int(shownMs)) ms to check") }
-        await sleepMs(170)
+        // The state is set in the same call. Poll for it so that a slow VM does not count as a slow state.
+        let shownAt = await waitFor(timeoutMs: 300) { !model.copied.isEmpty }
+        let shownMs = shownAt ?? 300
+        if shownAt == nil { problems.append("no copied state 300 ms after the click") }
+        if shownMs > 100 { problems.append("the copied state needed \(Int(shownMs)) ms (limit 100 ms)") }
+        await sleepMs(250)
         let during = capture(hv)
         var changed = -1.0
         if let before, let during, let rect { changed = UITestPixels.compare(before, during, region: rect, threshold: 24).fraction }

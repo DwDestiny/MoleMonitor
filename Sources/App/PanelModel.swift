@@ -263,8 +263,8 @@ final class PanelModel: ObservableObject, PanelPinning {
     }
 
     func spark(for item: SidebarItem) -> SparkSeries {
-        // While collecting, the row shows only the dashed baseline. No measured curve exists yet.
-        if case .collecting = data.dataState { return .empty(now: data.now) }
+        // While collecting, a row without a value shows only the dashed baseline (DESIGN_V2.md 2.6). A row with a live value shows its curve.
+        if case .collecting = data.dataState, PanelRows.row(item, rowsInput).value == "采集中" { return .empty(now: data.now) }
         return SparkSeries.make(item, trend: data.trend, disk: data.diskSeries, now: data.now)
     }
 
