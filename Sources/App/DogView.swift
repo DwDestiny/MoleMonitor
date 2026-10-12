@@ -3,6 +3,8 @@
 // Input: A DogInput and a size (docs/DESIGN.md 4, 8.3, 8.4).
 // Output: The Bichon view of the status card.
 // Pos: The only view that may use TimelineView (docs/DESIGN.md 10.4). I3 calls `DogView(input:size:)`. Owner I2.
+//      Bitmap stage (docs/DESIGN.md 4.9): `DogView.useBitmapArt` (default true) routes to DogBitmapView. This file is then the
+//      vector fallback (switch false, or a missing bitmap file) and keeps all its code and gates.
 //
 // Stage 2: a TimelineView(.animation(minimumInterval: 1/24, paused: reduceMotion || isStatic)) drives DogMotor.
 // The motor lives in a @State reference object, so it keeps its gait, phase and smoothing across input changes.
@@ -141,7 +143,24 @@ struct DogView: View {
         return systemReduceMotion
     }
 
+    /// True (the default) shows the bitmap Bichon (DogBitmapView, docs/DESIGN.md 4.9) as long as all eight files load.
+    /// False, or a missing file, shows the vector dog below. The gates of the vector dog set this to false.
+    static var useBitmapArt = true
+
+    /// Whether this view shows the bitmap dog now.
+    static var showsBitmap: Bool { useBitmapArt && DogArtLibrary.shared.isComplete }
+
+    @ViewBuilder
     var body: some View {
+        if DogView.showsBitmap {
+            DogBitmapView(input: input, size: size)
+        } else {
+            vectorBody
+        }
+    }
+
+    @ViewBuilder
+    private var vectorBody: some View {
         let input = self.input
         let dark = (colorScheme == .dark)
         let still = reduceMotion || input.isStatic

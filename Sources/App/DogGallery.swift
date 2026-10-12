@@ -144,6 +144,10 @@ enum DogGallery {
 
     /// The real SwiftUI path (DogView in ImageRenderer), to check that Canvas draws the same dog. Not hash-checked.
     private static func renderDogView() {
+        // The gallery judges the vector dog: the bitmap switch is off while it renders (docs/DESIGN.md 4.9).
+        let savedBitmap = DogView.useBitmapArt
+        DogView.useBitmapArt = false
+        defer { DogView.useBitmapArt = savedBitmap }
         for dark in [false, true] {
             let size = cardSizes[0]
             let back = Color(cgColor: rgb(cardBackground[dark] ?? 0))

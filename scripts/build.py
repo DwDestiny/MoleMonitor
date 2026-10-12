@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (c) 2026 DwDestiny
 # Input: Swift sources under Sources/ and the license files.
-# Output: dist/MoleMonitor.app with the app, the molemonitor-cli helper and ad-hoc signatures; no download, no installation, no UI launch.
+# Output: dist/MoleMonitor.app with the app, the molemonitor-cli helper, the Bichon bitmaps (Resources/DogArt) and ad-hoc signatures;
+#         no download, no installation, no UI launch.
 #         With --ui-test: dist-uitest/MoleMonitor.app, built with -D UITEST (adds the UI regression harness; never shipped).
 # Pos: Reproducible local build; needs arm64 macOS 14+ and the Xcode command line tools.
 from pathlib import Path
@@ -98,6 +99,16 @@ shutil.copy2(root / "LICENSE", resources / "LICENSE-MoleMonitor")
 for name in ("LICENSE-SMCKit", "LICENSE-Stats"):
     shutil.copy2(root / "Vendor" / name, resources / name)
 shutil.copy2(root / "Vendor/NOTICE.md", resources / "Source-Attribution.md")
+
+# The eight Bichon bitmaps of the status card (docs/ASSETS.md). DogBitmapView reads them from Contents/Resources/DogArt.
+# A missing folder is a build error here; at run time a missing file makes the card fall back to the vector dog.
+dog_art = root / "Resources/DogArt"
+dog_files = sorted(dog_art.glob("dog_*.png"))
+if len(dog_files) != 8:
+    fail(f"expected 8 dog_*.png files in Resources/DogArt, found {len(dog_files)}")
+(resources / "DogArt").mkdir(parents=True, exist_ok=True)
+for png in dog_files:
+    shutil.copy2(png, resources / "DogArt" / png.name)
 
 info = {
     "CFBundleExecutable": "MoleMonitor",

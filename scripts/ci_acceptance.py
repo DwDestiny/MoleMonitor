@@ -52,6 +52,17 @@ version = re.search(r'static\s+let\s+version\s*=\s*"([^"]+)"', (root / "Sources/
 check(info.get("CFBundleShortVersionString") == version, "Info.plist version equals AppInfo.version", str(info.get("CFBundleShortVersionString")))
 check(info.get("LSUIElement") in (True, 1), "Info.plist LSUIElement is true")
 check(info.get("CFBundleIdentifier") == "io.github.dwdestiny.MoleMonitor", "bundle identifier", str(info.get("CFBundleIdentifier")))
+# The Bichon bitmaps of the status card (docs/ASSETS.md): all eight are in the bundle and equal the source files.
+dog_names = ["lie", "stand", "walk", "trot", "sprint", "pant", "alert", "gray"]
+for name in dog_names:
+    source = root / f"Resources/DogArt/dog_{name}.png"
+    bundled = app / f"Contents/Resources/DogArt/dog_{name}.png"
+    check(bundled.exists() and source.exists() and bundled.read_bytes() == source.read_bytes(), f"bundle has Resources/DogArt/dog_{name}.png")
+# The bitmap view draws only when its input changes: no timer, no timeline, no canvas, no display link (docs/DESIGN.md 4.9).
+bitmap_text = re.sub(r"//.*", "", (root / "Sources/App/DogBitmapView.swift").read_text(encoding="utf-8"))
+bitmap_hits = [word for word in ("Timer", "TimelineView", "Canvas", "CADisplayLink", "CVDisplayLink", "DispatchSource", "asyncAfter")
+               if re.search(r"\b" + word + r"\b", bitmap_text)]
+check(not bitmap_hits, "source audit: DogBitmapView.swift has no Timer, TimelineView, Canvas or display link", str(bitmap_hits))
 
 # 2. Self-test
 st = run([main_bin, "--self-test"])
@@ -300,7 +311,7 @@ else:
     check(ui_report is not None, "UI test wrote ui-report.json")
     if ui_report:
         by_id = {item["id"]: item for item in ui_report["items"]}
-        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19"]:
+        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M19V", "M20"]:
             check(letter in by_id, f"UI item {letter} reported")
         for item in ui_report["items"]:
             label = f"UI {item['id']} {item['name']}"
@@ -346,6 +357,9 @@ print("ACCEPTANCE PASSED")
 # and reads <dir>/dog-report.json: DA 60 to 80 frames in 3 s with the card open, DB 0 frame callbacks in 3 s after close,
 # DC leg speed under the natural limit across gait switches, DD menu switch <= 8 frames, <= 600 ms, no timer after it,
 # DE Reduce Motion gives no frames and no timer. DF: the release binary has none of the dog test code.
+# Bitmap stage (docs/DESIGN.md 4.9): DA to DE run with DogView.useBitmapArt = false and judge the vector dog. BA to BE judge the
+# bitmap dog (UITestBitmapChecks.swift): BA no callbacks open or closed, BB Reduce Motion has no crossfade, BC the eight files load,
+# BD pairwise XOR of the poses at 72 x 54 pt (gate 0.20), BE the share of non-background pixels (gray 1.5 %, others 1 %).
 def _dog_animation_checks():
     dog_failures = []
 
@@ -356,13 +370,15 @@ def _dog_animation_checks():
 
     print("\n---- dog animation checks (I2) ----", flush=True)
     release = main_bin.read_bytes()
-    for marker in (b"DogFrameProbe", b"UITestDogChecks", b"--dog-checks"):
+    for marker in (b"DogFrameProbe", b"UITestDogChecks", b"--dog-checks", b"DogBitmapProbe", b"UITestBitmapChecks"):
         dog_check(marker not in release, f"DF release binary does not contain {marker.decode()}")
     dog_ui_bin = root / "dist-uitest/MoleMonitor.app/Contents/MacOS/MoleMonitor"
     if not dog_ui_bin.exists():
         dog_check(False, "dog: dist-uitest/MoleMonitor.app exists")
         return dog_failures
-    dog_check(b"DogFrameProbe" in dog_ui_bin.read_bytes(), "DF UI test variant contains the dog probe (positive control)")
+    ui_bytes_dog = dog_ui_bin.read_bytes()
+    dog_check(b"DogFrameProbe" in ui_bytes_dog and b"DogBitmapProbe" in ui_bytes_dog,
+              "DF UI test variant contains the dog probes (positive control)")
     dog_out = Path(os.environ.get("MOLEMONITOR_CI_OUT") or tempfile.gettempdir()) / "molemonitor-dog"
     dog_out.mkdir(parents=True, exist_ok=True)
     report_path = dog_out / "dog-report.json"
@@ -381,7 +397,7 @@ def _dog_animation_checks():
     dog_check(dog_report is not None, "dog checks wrote dog-report.json")
     if dog_report:
         by_id = {item["id"]: item for item in dog_report.get("items", [])}
-        for item_id in ("DA", "DB", "DC", "DD", "DE"):
+        for item_id in ("DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE"):
             item = by_id.get(item_id)
             if item is None:
                 dog_check(False, f"dog {item_id} reported")
@@ -389,6 +405,10 @@ def _dog_animation_checks():
             dog_check(item["status"] == "pass", f"dog {item_id} {item['name']}", item["note"])
             print(f"      values {json.dumps(item.get('values', {}), sort_keys=True)}", flush=True)
         print("dog info:", json.dumps(dog_report.get("info", {}), sort_keys=True), flush=True)
+        for sheet in ("bitmap-sheet-light.png", "bitmap-sheet-dark.png", "bitmap-sheet-light-shadow.png", "bitmap-sheet-dark-shadow.png"):
+            path = dog_out / sheet
+            dog_check(path.exists() and path.stat().st_size > 8000, f"BS contact sheet {sheet} is written",
+                      f"{path.stat().st_size if path.exists() else 0} bytes")
     return dog_failures
 
 
