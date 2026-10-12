@@ -1930,8 +1930,8 @@ WP-F 在旧 DESIGN.md 的对应章节开头加“已被 DESIGN_V2.md 第 N 章�
 | 包 | 内容 | 建议模型 / effort | 里程碑 | 估计 |
 |---|---|---|---|---|
 | WP-A | 数据层、提示词、CLI，以及 A1 契约骨架 | sonnet / medium | A1 骨架（0.5 天），A2 实现 | 3 天 |
-| WP-B | NSPanel 窗口、定位、关闭、悬停意图、键盘 | sonnet / high | B1 窗口壳，B2 侧栏与悬停 | 2.5 天 |
-| WP-C | 版面、分项行、侧栏内容、图表、异常区、底部 | sonnet / medium | C1 主列，C2 侧栏与图表 | 3 天 |
+| WP-B | NSPanel 窗口、定位、关闭、事件监视器、Esc 分层、侧栏窗口动画、悬停意图状态机、通知 | sonnet / high | B1 窗口壳，B2 侧栏与悬停 | 2.5 天 |
+| WP-C | 面板根视图、版面、分项行、侧栏内容、图表、异常区、底部、键盘导航、钉住接口 | sonnet / medium | C1 主列，C2 侧栏与图表 | 3 天 |
 | WP-D | 比熊序列帧美术、动画引擎、气泡 | opus / high | D1 引擎与降级，D2 条带美术 | 4 天 |
 | WP-E | 菜单栏图标五态 | opus / medium | E1 五态与门禁 | 1.5 天 |
 | WP-F | 门禁集成、构建、CI 文档、旧文档标记 | sonnet / medium | F1 注册骨架（0.5 天），F2 集成 | 2 天 |
@@ -1944,8 +1944,10 @@ WP-F 在旧 DESIGN.md 的对应章节开头加“已被 DESIGN_V2.md 第 N 章�
 2. 合并 A1、F1 到 `main`。
 3. 阶段 2（并行 5 个，其中 opus 2 个）：A2、B、C、D、E。
 4. 合并顺序：A2 → E → D → B → C。每次合并后，协调者运行第 3 层检查（全量 Core、CLI 测试与 CI）。
-5. 阶段 3：F2 集成全部 W 门禁，更新 CI 文档与旧文档标记。
-6. 用户在 Mac 上做第 4 层真机验收（15.3）。
+5. WP-C 合并的前提：B1 窗口壳已通过 W03、W05、W10，并且用户已在 Mac 上完成真机冒烟 R-03（打开无白闪、无跳动）、R-09（点外关闭）、R-10（全屏与多屏）。理由：窗口方案如果要改（例如 10.5 方案 B），版面不应先合并。
+6. WP-C 在阶段 2 中按 `PanelChrome` 协议开发，不等 B1 完成。
+7. 阶段 3：F2 集成全部 W 门禁，更新 CI 文档与旧文档标记。
+8. 用户在 Mac 上做第 4 层真机验收（15.3）。
 
 A1 契约骨架包含：
 
@@ -1959,6 +1961,9 @@ A1 契约骨架包含：
 | `BubbleCopy.text(for:)` 签名 | `Sources/Core/BubbleCopy.swift`（A1 创建，合并后移交 WP-D） | D、C |
 | `HoverIntent` 状态机签名 | `Sources/Core/HoverIntent.swift`（A1 创建，合并后移交 WP-B） | B、C |
 | `MenuIconState` 五态枚举 | `Sources/Core/MenuIconModel.swift`（A1 修改，合并后移交 WP-E） | E |
+| `PanelChrome` 协议（窗口提供给内容）：`setSidebar(open:animated:)`、`sidebarEdge`、`closePanel()`、`isReduceMotion` | `Sources/App/PanelChrome.swift`（新，A1 创建，合并后移交 WP-B） | B 实现，C 调用 |
+| `PanelPinning` 协议（内容提供给窗口）：`pinSidebar(_ item: SidebarItem)`、`unpinSidebar()` | 同上文件 | C 在 `PanelModel` 中实现，B 调用 |
+| `SidebarItem` 枚举（6 个分项 + 异常记录） | `Sources/Core/PanelLayout.swift`（A1 修改，合并后移交 WP-C） | B、C |
 | 空测试文件与登记 | `Tests/CoreTests/main.swift` 与 14.3 节列出的新测试文件 | 全部 |
 
 ### 14.3 文件所有权
@@ -1968,11 +1973,21 @@ A1 契约骨架包含：
 | 包 | 拥有的文件 |
 |---|---|
 | WP-A | `Sources/Core/`：`RollupStore.swift`（新）、`EventLog.swift`（新）、`MemoryBreakdown.swift`（新）、`AppUsage.swift`、`CurrentReadings.swift`、`StatusExtras.swift`、`StatusFile.swift`、`TrendBuffer.swift`、`TrendStore.swift`、`HealthPipeline.swift`、`HealthRules.swift`、`HealthItems.swift`、`ProblemOrder.swift`、`Prompt.swift`、`Brief.swift`、`PreviewScenario.swift`、`SleepStore.swift`、`DiskSample.swift`、`DiskReport.swift`、`DiskSeries.swift`、`Paths.swift`。`Sources/App/`：`Engine.swift`、`SystemSampler.swift`、`ProcessSampler.swift`、`Sampler.swift`。`Sources/cli/main.swift`。`Tests/CoreTests/`：`main.swift`、`PromptTests.swift`、`TrendTests.swift`、`PipelineTests.swift`、`HealthRuleTests.swift`、`PowerTests.swift`、`NetworkTests.swift`、`LiveTests.swift`、`StorageTests.swift`（新）、`MemoryTests.swift`（新）、`Golden/*`。`Tests/CliTests/*` |
-| WP-B | `Sources/MoleMonitor.swift`、`Sources/App/PanelWindow.swift`（新）、`Sources/App/PanelRoot.swift`、`Sources/App/Notifier.swift`、`Sources/App/UITestWindowChecks.swift`（新）、`Sources/Core/HoverIntent.swift`、`Tests/CoreTests/HoverIntentTests.swift`（新） |
-| WP-C | `Sources/App/`：`PanelTokens.swift`、`PanelRows.swift`（新）、`PanelSidebar.swift`（新）、`PanelAnomaly.swift`（新）、`PanelCharts.swift`、`PanelFooter.swift`、`PanelModel.swift`、`PanelPreview.swift`、`Clipboard.swift`、`UITestPanelChecks.swift`。删除 `PanelProblem.swift`、`PanelMore.swift`、`PanelApps.swift`。`Sources/Core/PanelLayout.swift`、`Sources/Core/CapacityText.swift`（新）。`Tests/CoreTests/LayoutTests.swift`、`Tests/CoreTests/CapacityTests.swift`（新） |
+| WP-B | `Sources/MoleMonitor.swift`、`Sources/App/PanelWindow.swift`（新）、`Sources/App/PanelChrome.swift`（A1 创建）、`Sources/App/Notifier.swift`、`Sources/App/UITestWindowChecks.swift`（新）、`Sources/Core/HoverIntent.swift`、`Tests/CoreTests/HoverIntentTests.swift`（新） |
+| WP-C | `Sources/App/`：`PanelRoot.swift`、`PanelTokens.swift`、`PanelRows.swift`（新）、`PanelSidebar.swift`（新）、`PanelAnomaly.swift`（新）、`PanelCharts.swift`、`PanelFooter.swift`、`PanelModel.swift`、`PanelPreview.swift`、`Clipboard.swift`、`UITestPanelChecks.swift`。删除 `PanelProblem.swift`、`PanelMore.swift`、`PanelApps.swift`。`Sources/Core/PanelLayout.swift`、`Sources/Core/CapacityText.swift`（新）。`Tests/CoreTests/LayoutTests.swift`、`Tests/CoreTests/CapacityTests.swift`（新） |
 | WP-D | `Resources/DogSprites/*`（新）、`Resources/DogArt/*`、`docs/ASSETS.md`、`Sources/Core/DogAction.swift`、`Sources/Core/BubbleCopy.swift`、`Sources/Core/DogArtPose.swift`、`Sources/Core/DogRig.swift`、`Sources/App/DogSpriteView.swift`（新）、`Sources/App/PanelHero.swift`、`Sources/App/DogBitmapView.swift`、`Sources/App/DogView.swift`、`Sources/App/UITestSpriteChecks.swift`（新）、`Sources/App/UITestBitmapChecks.swift`、`Sources/App/UITestDogChecks.swift`、`scripts/check_sprites.py`（新）、`Tests/CoreTests/DogActionTests.swift`（新）、`Tests/CoreTests/BubbleCopyTests.swift`（新）、`Tests/CoreTests/DogArtPoseTests.swift`、`Tests/CoreTests/DogTests.swift` |
 | WP-E | `Sources/App/StatusIcon.swift`、`Sources/App/GlyphPaths.swift`、`Sources/App/DogShapes.swift`、`Sources/App/DogGallery.swift`、`Sources/App/UITestIconChecks.swift`（新）、`Sources/Core/MenuIconModel.swift`、`Sources/Core/DogArt.swift`、`Tests/CoreTests/MenuIconTests.swift`（新） |
 | WP-F | `scripts/ci_acceptance.py`、`scripts/build.py`、`scripts/test_core.py`、`scripts/test_cli.py`、`scripts/README.md`、`scripts/AGENTS.md`、`Sources/App/UITestHarness.swift`、`.github/workflows/build-mac.yml`、`docs/CI.md`、`docs/DESIGN.md`（只加取代标记）、`docs/VERIFICATION.md`（只加新条目）、`docs/PROJECT.md`、`docs/HANDOFF.md`、`README.md`、`docs/README.md`、`Sources/README.md`、`Sources/AGENTS.md` |
+
+边界说明：
+
+| 边界 | 规定 |
+|---|---|
+| 窗口与内容 | WP-B 只提供 `PanelWindow`（NSPanel、定位、关闭、动画、事件监视器）与 `PanelChrome` 协议的实现。面板内容的根视图 `PanelRoot.swift` 归 WP-C |
+| 通知点击（R-14） | WP-B 在 `Notifier.swift` 中发通知并处理点击：打开面板，然后调用 `PanelPinning.pinSidebar(item)`。WP-C 在 `PanelModel` 中实现钉住 |
+| `DogArtSelector` | 位于 `Sources/Core/DogArtPose.swift`，归 WP-D。步态阈值与迟滞（4.5）由 WP-D 维护 |
+| `StatusIconController` 与 `MenuIconRenderer` | 分别位于 `Sources/App/StatusIcon.swift` 与 `Sources/App/DogShapes.swift`，两者都归 WP-E |
+| `DogShapes.swift` 中的矢量比熊路径 | 归 WP-E。WP-D 的 `DogView.swift`（降级第 3 级）只调用，不修改。需要修改时由协调者转给 WP-E |
 
 `Tests/CoreTests/main.swift` 只由 WP-A 修改。其他包需要登记新测试时，在报告中写明函数名，由 WP-A 或协调者在合并时登记。A1 已为 14.3 表中的全部新测试文件预先登记。
 
@@ -1989,8 +2004,8 @@ A1 契约骨架包含：
 | 包 | 第 1 层（本机，每次改动后） | 第 2 层（CI，每个里程碑） | 交付物 |
 |---|---|---|---|
 | WP-A | `python3 scripts/test_core.py` 与 `python3 scripts/test_cli.py` 全部通过。W13 以外的 Core 门禁：W19（存储部分）、W20、W21 | B、D、L、N1、N2、M13 | 新存储格式与容量上限有单测。全部黄金提示词 ≤3000 |
-| WP-B | `HoverIntentTests` 通过（W06 Core 部分） | B、C、H、I、W03、W05、W06（UI 部分）、W10、W16 | 窗口在 CI 截图中定位正确，侧栏两种朝向 |
-| WP-C | `LayoutTests`、`CapacityTests` 通过 | M4、M5、M6、M10、M11、M12、W01、W02、W07、W09、W19、W22 | 32 + 12 张预览图 |
+| WP-B | `HoverIntentTests` 通过（W06 Core 部分） | B、C、H、I、W03、W05、W10、W16 | 窗口在 CI 截图中定位正确，侧栏两种朝向 |
+| WP-C | `LayoutTests`、`CapacityTests` 通过 | D、M4、M5、M6、M10、M11、M12、W01、W02、W06（UI 部分）、W07、W09、W19、W22 | 32 + 12 张预览图 |
 | WP-D | `DogActionTests`、`BubbleCopyTests` 通过（W13），`scripts/check_sprites.py` 通过（W11） | M19、M19V、BE、BF、W04、W11、W12、W14、W15、W17、W18 | 9 张条带（首版 10 个动作）、manifest、联系表、PROVENANCE 更新 |
 | WP-E | `MenuIconTests` 通过 | A、M15、DD、W08 | `--dog-gallery` 菜单栏图册与 `badge-matrix.json` |
 | WP-F | 全部脚本本机语法检查 | 全部门禁一次全绿 | CI 文档、旧门禁映射、VERIFICATION 新条目 |
