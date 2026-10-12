@@ -341,7 +341,10 @@ final class PanelWindow: NSPanel, PanelChrome {
         }
         Task { @MainActor [weak self] in
             guard let self, !self.isClosing, !self.isFinished else { return }
-            self.runMotion(duration: WindowMotion.openDuration, curve: WindowMotion.openCurve, to: final, alpha: 1, done: nil)
+            // A sidebar motion that started in the same turn (a tap on a notification) already fades the window in. Keep it.
+            guard self.motionTask == nil else { return }
+            let target = PanelWindowGeometry.frame(self.placement, sidebarOpen: self.sidebarOpen).ns
+            self.runMotion(duration: WindowMotion.openDuration, curve: WindowMotion.openCurve, to: target, alpha: 1, done: nil)
         }
     }
 
@@ -379,7 +382,8 @@ final class PanelWindow: NSPanel, PanelChrome {
     }
 
     private func moveWindow(to target: PanelRect, duration: Double, curve: [Double]) {
-        runMotion(duration: duration, curve: curve, to: target.ns, alpha: alphaValue, done: nil)
+        // The window ends fully visible, also when the sidebar motion starts while the open fade still runs.
+        runMotion(duration: duration, curve: curve, to: target.ns, alpha: isClosing ? alphaValue : 1, done: nil)
     }
 
     /// Moves the window frame and the alpha to the targets in `duration` seconds, in steps of about 6 ms on the main actor.

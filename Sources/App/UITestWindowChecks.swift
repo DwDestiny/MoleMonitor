@@ -169,32 +169,35 @@ enum UITestWindowChecks {
             ? UITestContrast.darkSurface : UITestContrast.lightSurface
         var captureWorked = false
         var serverAlphaAtFirst = 0.0
+        var fullAlphaMs = 0.0
         while (r.now() - opened.before) * 1000 < 500 {
             let elapsed = (r.now() - opened.before) * 1000
             // The place of the dog is known (cheap check, no capture).
             if dogReadyMs == nil, let dog = r.panelRect("dog"), dog.width > 1 { dogReadyMs = elapsed }
-            // The first visible frame: the window server shows the window with an alpha above 0.02. The image of the window
-            // at that moment must be the finished content, not black and not white, and the dog must be in it.
+            // The first visible frame: the window server shows the window with an alpha above 0.02.
             if firstVisibleMs == nil, let server = serverAlpha(window), server.onscreen, server.alpha > 0.02 {
                 firstVisibleMs = elapsed
                 serverAlphaAtFirst = server.alpha
-                if !r.windowCaptureUnavailable, let frame = r.windowFrame(host) {
+                // The dog must be in the content of that frame (the content image has no window alpha).
+                if let shot = r.capture(host) {
+                    contentFirstLuma = luma(shot).mean
+                    if let dog = r.panelRect("dog"), let stats = UITestDogStats.measure(shot, region: dog, surface: surface), stats.area > 0 {
+                        dogShare = Double(stats.ink) / Double(stats.area)
+                    }
+                }
+            }
+            // The window image of the window server includes the window alpha (it is dark while the window fades in). So the
+            // brightness is judged on the first image with an alpha of at least 0.95 before and after the capture.
+            if firstVisibleMs != nil, firstLuma == nil, !r.windowCaptureUnavailable, let before = serverAlpha(window), before.alpha >= 0.95 {
+                if let frame = r.windowFrame(host), let after = serverAlpha(window), after.alpha >= 0.95 {
                     captureWorked = true
                     let l = luma(frame)
                     firstLuma = l.mean
                     firstOpaqueShare = l.opaqueShare
-                    if let dog = r.panelRect("dog"), let stats = UITestDogStats.measure(frame, region: dog, surface: surface), stats.area > 0 {
-                        dogShare = Double(stats.ink) / Double(stats.area)
-                    }
+                    fullAlphaMs = elapsed
                 }
-                if let shot = r.capture(host) {
-                    contentFirstLuma = luma(shot).mean
-                    if dogShare == nil, let dog = r.panelRect("dog"), let stats = UITestDogStats.measure(shot, region: dog, surface: surface), stats.area > 0 {
-                        dogShare = Double(stats.ink) / Double(stats.area)
-                    }
-                }
-                break
             }
+            if firstVisibleMs != nil && (firstLuma != nil || r.windowCaptureUnavailable) { break }
             await r.sleepMs(3)
         }
         // Steady state one second after the click.
@@ -210,7 +213,7 @@ enum UITestWindowChecks {
         let dogOk = (dogShare ?? 0) >= 0.01 && (dogReadyMs ?? .infinity) <= 150
         let ok = speedOk && flashOk && dogOk
         r.record("W03", "open speed and no white flash", ok, since: t0,
-                 "click to first visible frame \(fmt(firstVisibleMs)) ms at window alpha \(fmt(serverAlphaAtFirst, 2)) (limit 150; \(captureWorked ? "window server frame" : "window capture unavailable, call duration used")); call \(fmt(opened.callMs)) ms; first window brightness \(fmt(firstLuma, 1)) (opaque share \(fmt(firstOpaqueShare * 100)) %), steady \(fmt(steadyWindow, 1)), difference \(fmt(windowDiff, 1)) (limit 10); content brightness first \(fmt(contentFirstLuma, 1)), steady \(fmt(steadyContent, 1)), difference \(fmt(contentDiff, 1)); dog region ready \(fmt(dogReadyMs)) ms, non-background share \(fmt((dogShare ?? 0) * 100, 1)) % (limit 1 %)",
+                 "click to first visible frame \(fmt(firstVisibleMs)) ms at window alpha \(fmt(serverAlphaAtFirst, 2)) (limit 150; \(captureWorked ? "window server frame" : "window capture unavailable, call duration used")); call \(fmt(opened.callMs)) ms; window image at alpha 1 (\(fmt(fullAlphaMs)) ms) brightness \(fmt(firstLuma, 1)) (opaque share \(fmt(firstOpaqueShare * 100)) %), steady \(fmt(steadyWindow, 1)), difference \(fmt(windowDiff, 1)) (limit 10); content brightness first \(fmt(contentFirstLuma, 1)), steady \(fmt(steadyContent, 1)), difference \(fmt(contentDiff, 1)); dog region ready \(fmt(dogReadyMs)) ms, non-background share \(fmt((dogShare ?? 0) * 100, 1)) % (limit 1 %)",
                  ["firstVisibleMs": firstVisibleMs ?? -1, "callMs": opened.callMs, "windowLumaDiff": windowDiff ?? -1,
                   "contentLumaDiff": contentDiff ?? -1, "dogSharePercent": (dogShare ?? 0) * 100, "dogReadyMs": dogReadyMs ?? -1])
         await r.closePanelQuietly()
