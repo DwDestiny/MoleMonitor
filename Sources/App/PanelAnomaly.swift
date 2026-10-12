@@ -181,7 +181,7 @@ struct AnomalyBarView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            StatusDotView(dot: dot).frame(width: PanelMetrics.dotColumn)
+            StatusDotView(dot: dot).frame(width: PanelMetrics.dotColumn, height: PanelMetrics.dotColumn)
                 .uiTestFrame("dot.anomaly.\(index)")
             VStack(alignment: .leading, spacing: 1) {
                 Text(bar.title)

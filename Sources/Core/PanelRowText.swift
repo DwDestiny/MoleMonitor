@@ -125,7 +125,8 @@ enum PanelRows {
             if state.value == "采集中" { state.note = "正在采集" }
         case .stale(let since):
             state.status = .stale
-            state.valuePrefix = TextFormat.clock(since, timeZone: input.timeZone)
+            // Only memory and disk show the clock time before the value. The other rows say it in the note.
+            if item == .memory || item == .disk { state.valuePrefix = TextFormat.clock(since, timeZone: input.timeZone) }
             if item != .memory && item != .disk { state.note = "停在 " + TextFormat.clock(since, timeZone: input.timeZone) }
         case .fresh:
             if state.dot == .missing { state.status = .missing } else if state.dot == .collecting { state.status = .collecting }
@@ -422,7 +423,11 @@ struct SparkSeries: Equatable {
         var runs = [[SparkPoint]]()
         for segment in trend.segments {
             var run = [SparkPoint]()
+            var lastKept = Date.distantPast
             for p in segment where p.t >= start && p.t <= now {
+                // Keep one point per 20 s, so 2 s live points and 30 s points do not mix (DESIGN_V2.md 5.5).
+                if p.t.timeIntervalSince(lastKept) < 20 && p.t != segment.last?.t { continue }
+                lastKept = p.t
                 if let v = value(p), v.isFinite {
                     run.append(SparkPoint(t: p.t, v: v))
                 } else if !run.isEmpty {

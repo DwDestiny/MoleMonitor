@@ -99,7 +99,10 @@ func runLayoutTests() {
     expect(col.dot == .collecting && col.status == .collecting, "collecting row")
     let st = PanelRows.row(.cpu, PanelRowsInput(verdicts: verdicts([]), current: c, dataState: .stale(now.addingTimeInterval(-3600)),
                                                 now: now, timeZone: TimeZone(identifier: "UTC")!))
-    expect(st.dot == .stale && st.valuePrefix == "11:00", "stale row carries the clock time, got \(String(describing: st.valuePrefix))")
+    expect(st.dot == .stale && st.valuePrefix == nil && st.note == "停在 11:00", "stale cpu row has the clock time in the note, got \(String(describing: st.valuePrefix)) \(st.note)")
+    let stm = PanelRows.row(.memory, PanelRowsInput(verdicts: verdicts([]), current: c, dataState: .stale(now.addingTimeInterval(-3600)),
+                                                    now: now, timeZone: TimeZone(identifier: "UTC")!))
+    expect(stm.valuePrefix == "11:00", "stale memory row carries the clock time, got \(String(describing: stm.valuePrefix))")
 
     section("PanelAnomalies: bars, reasons, start times")
     let utc = TimeZone(identifier: "UTC")!

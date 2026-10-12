@@ -165,7 +165,7 @@ struct BreakdownRowView: View {
     var body: some View {
         HStack(spacing: 0) {
             StatusDotView(dot: row.dot)
-                .frame(width: PanelMetrics.dotColumn)
+                .frame(width: PanelMetrics.dotColumn, height: PanelMetrics.dotColumn)
                 .uiTestFrame("dot." + id)
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.name)
@@ -177,6 +177,7 @@ struct BreakdownRowView: View {
                     .font(PanelType.rowNote)
                     .foregroundStyle(tok.textSecondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .truncationMode(.tail)
                     .uiTestFrame("txt.row.note." + id)
             }
@@ -217,10 +218,10 @@ struct BreakdownRowView: View {
                     .lineLimit(1)
             }
             Text(row.value)
-                .font(PanelType.rowValue)
-                .foregroundStyle(valueColor)
+                .font(row.status == .collecting ? PanelType.rowName : PanelType.rowValue)
+                .foregroundStyle(row.status == .collecting ? tok.textTertiary : valueColor)
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                .minimumScaleFactor(0.75)
                 .numericChange(row.value)
         }
         .uiTestFrame("row." + id + ".value")

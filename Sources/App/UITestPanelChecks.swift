@@ -229,7 +229,7 @@ extension UITestRunner {
             if responder is NSControl { ringProblems.append("\(name): first responder is \(responderName)") }
             for id in ["btn.copy", "btn.more", "row.0"] {
                 if let rect = panelRect(id), let shot = capture(hv) {
-                    let ring = focusRingPixels(shot, around: rect, margin: 4)
+                    let ring = focusRingPixels(shot, around: rect, margin: 4, outsideOnly: id == "btn.copy")
                     ringNotes.append("\(name) \(id): responder \(responderName), ring pixels \(ring)")
                     if ring > 0 { ringProblems.append("\(name): \(ring) focus ring pixels near \(id)") }
                 } else {
@@ -262,7 +262,9 @@ extension UITestRunner {
                     dogProblems.append("\(dogKey): no dog region or no ink")
                 }
                 for target in contrastTargets(model) {
-                    guard let rect = panelRect(target.id), rect.width > 2, rect.height > 2 else { continue }
+                    guard var rect = panelRect(target.id), rect.width > 2, rect.height > 2 else { continue }
+                    // A dot fills its own frame, so the region needs a margin of row background around it.
+                    if target.id.hasPrefix("dot.") { rect = rect.insetBy(dx: -3, dy: -3) }
                     guard let m = UITestContrast.measure(shot, region: rect, surface: surface) else {
                         contrastProblems.append("\(name) \(dark ? "dark" : "light") \(target.id): no ink in the region")
                         continue
@@ -350,7 +352,7 @@ extension UITestRunner {
     }
 
     /// Pixels near the system focus ring color in the ring zone around a frame (`margin` points outside the frame, plus the frame).
-    func focusRingPixels(_ shot: UITestShot, around frame: CGRect, margin: CGFloat) -> Int {
+    func focusRingPixels(_ shot: UITestShot, around frame: CGRect, margin: CGFloat, outsideOnly: Bool = false) -> Int {
         let outer = frame.insetBy(dx: -margin, dy: -margin)
         let box = UITestPixels.pixelRegion(outer, of: shot)
         let color = NSColor.keyboardFocusIndicatorColor.usingColorSpace(.sRGB) ?? NSColor.systemBlue
@@ -359,8 +361,10 @@ extension UITestRunner {
         let fb: Double = Double(color.blueComponent) * 255
         var count = 0
         guard box.x1 > box.x0, box.y1 > box.y0 else { return 0 }
+        let inner = UITestPixels.pixelRegion(frame, of: shot)
         for y in box.y0..<box.y1 {
             for x in box.x0..<box.x1 {
+                if outsideOnly && x >= inner.x0 && x < inner.x1 && y >= inner.y0 && y < inner.y1 { continue }
                 let i = (y * shot.w + x) * 4
                 let a = Double(shot.rgba[i + 3])
                 guard a > 40 else { continue }
@@ -563,7 +567,11 @@ extension UITestRunner {
             let attributes: [NSAttributedString.Key: Any] = [.font: font]
             let string = NSAttributedString(string: slot.sample, attributes: attributes)
             if slot.lines <= 1 {
-                let width = Double(string.size().width)
+                var width = Double(string.size().width) * Double(slot.minScale)
+                if !slot.prefix.isEmpty {
+                    let prefixFont = NSFont.systemFont(ofSize: 11 * 1.25, weight: .regular)
+                    width += Double(NSAttributedString(string: slot.prefix, attributes: [.font: prefixFont]).size().width) + 3
+                }
                 widest.append("\(slot.name) \(Int(width.rounded(.up)))/\(Int(slot.width))")
                 if width > Double(slot.width) + 0.5 { problems.append("\(slot.name): \(Int(width.rounded(.up))) pt > \(Int(slot.width)) pt") }
             } else {
@@ -849,9 +857,10 @@ extension UITestRunner {
         model.copy(.primary)
         await sleepMs(80)
         let shownMs = (now() - tCopy) * 1000
-        let during = capture(hv)
         if model.copied.isEmpty { problems.append("no copied state 100 ms after the click") }
         if shownMs > 100 + 40 { problems.append("the copied state took \(Int(shownMs)) ms to check") }
+        await sleepMs(170)
+        let during = capture(hv)
         var changed = -1.0
         if let before, let during, let rect { changed = UITestPixels.compare(before, during, region: rect, threshold: 24).fraction }
         if changed < 0.02 { problems.append("button pixels changed only \(changed)") }
@@ -891,6 +900,10 @@ extension UITestRunner {
                 let model = PanelModel(data: data)
                 for item in [SidebarItem.disk, SidebarItem.memory] {
                     guard let row = model.rows.first(where: { $0.item == item }) else { problems.append("\(c.rawValue): no \(item.rawValue) row"); continue }
+                    if row.status == .collecting {
+                        if row.note != "正在采集" { problems.append("\(c.rawValue) \(item.rawValue): collecting note '\(row.note)'") }
+                        continue
+                    }
                     let cap = item == .disk ? CapacityFormat.disk(data.current) : CapacityFormat.memory(data.current)
                     if row.note != cap.usedOfTotal { problems.append("\(c.rawValue) \(item.rawValue): note '\(row.note)' differs from '\(cap.usedOfTotal)'") }
                     if cap.isMissing {
