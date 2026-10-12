@@ -16,13 +16,14 @@ import SwiftUI
 
 enum UITestSpriteChecks {
     @MainActor static func register(into registry: UITestRegistry) {
+        // W12 runs last: it has its own window and screenshots, and the runner may stop at its time limit (scripts/ci_acceptance.py).
         registry.add("W04", "action mapping") { runner in await w04(runner) }
         registry.add("W11", "dog strips at run time") { runner in w11(runner) }
-        registry.add("W12", "bubble and dog gap") { runner in await w12(runner) }
+        registry.add("W18", "sprite memory") { runner in await w18(runner) }
         registry.add("W14", "main thread work per frame") { runner in await w14(runner) }
         registry.add("W15", "Reduce Motion") { runner in await w15(runner) }
         registry.add("W17", "CPU while open") { runner in await w17(runner) }
-        registry.add("W18", "sprite memory") { runner in await w18(runner) }
+        registry.add("W12", "bubble and dog gap") { runner in await w12(runner) }
     }
 
     // MARK: Helpers
@@ -402,12 +403,12 @@ enum UITestSpriteChecks {
 
     /// Keeps the fixture model live: a new data point every 2 s, as the open panel samples (the CPU moves by a few percent).
     @MainActor @discardableResult
-    static func feed(_ r: UITestRunner, _ model: PanelModel, base: PanelData, cpu: Double, seconds: Double) async -> Int {
+    static func feed(_ r: UITestRunner, _ model: PanelModel, base: PanelData, cpu: Double, seconds: Double, start: Double = 0) async -> Int {
         let t0 = r.now()
         var i = 0
         while r.now() - t0 < seconds {
             i += 1
-            model.replace(point(base, cpu: cpu + Double(i % 3), seconds: Double(i) * 2))
+            model.replace(point(base, cpu: cpu + Double(i % 3), seconds: start + Double(i) * 2))
             await r.sleepMs(2000)
         }
         return i
@@ -427,12 +428,15 @@ enum UITestSpriteChecks {
             r.record("W14", "主线程每帧工作", false, since: t0, "the panel did not open")
             return
         }
-        let base = point(model.data, cpu: 95, seconds: 0)
-        model.replace(base)
+        let base = model.data
+        for k in 1...3 {
+            model.replace(point(base, cpu: 95, seconds: Double(k) * 45))
+            await r.sleepMs(300)
+        }
         await r.sleepMs(1500)
         DogSpriteProbe.reset()
         let cpu0 = r.cpuSeconds(), wall0 = r.now()
-        let samples = await feed(r, model, base: base, cpu: 95, seconds: 10)
+        let samples = await feed(r, model, base: base, cpu: 95, seconds: 10, start: 135)
         let share = (r.cpuSeconds() - cpu0) / max(0.001, r.now() - wall0) * 100
         let bodies = DogSpriteProbe.heroBodies
         let draws = DogSpriteProbe.updateLayers
@@ -471,11 +475,14 @@ enum UITestSpriteChecks {
         defer { restore() }
         let copyBox = UITestTextBox()
         guard let model = await r.openFixture(.allGreen, copyBox: copyBox) else { return }
-        let base = point(model.data, cpu: 95, seconds: 0)
-        model.replace(base)
+        let base = model.data
+        for k in 1...3 {
+            model.replace(point(base, cpu: 95, seconds: Double(k) * 45))
+            await r.sleepMs(300)
+        }
         await r.sleepMs(1500)
         let cpu0 = r.cpuSeconds(), wall0 = r.now()
-        await feed(r, model, base: base, cpu: 95, seconds: 10)
+        await feed(r, model, base: base, cpu: 95, seconds: 10, start: 135)
         lastCpu = ((r.cpuSeconds() - cpu0) / max(0.001, r.now() - wall0) * 100, DogSpriteProbe.currentAction?.rawValue ?? "nil")
         await r.closeFixture()
     }

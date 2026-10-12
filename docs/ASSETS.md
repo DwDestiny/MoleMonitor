@@ -28,8 +28,8 @@ last_updated: 2026-10-12
 | 清单 | `manifest.json` 记录每个动作的帧数、帧率、播放方式、静止帧、代表帧、着地帧、站立帧和面部区域 |
 | 用途 | 面板 v2 英雄区的序列帧动画，见 [DESIGN_V2.md 第 11 章](DESIGN_V2.md#11-动画引擎性能预算与降级) |
 | 打包 | `scripts/build.py` 复制 `Resources/DogArt/`。如果 `Resources/DogSprites/` 存在，则也复制到 `Contents/Resources/DogSprites` |
-| 道具 | `bed_some.png`、`bed_full.png`：磁盘黄与磁盘红时舞台左下的狗窝，每张 192 × 112 px（96 × 56 pt），底线 y = 108 px |
-| 体积 | 12 张 PNG（10 张条带与 2 个道具）共 2.49 MB（无损 PNG，不量化）。上限 4 MB（11.3）。全部 59 帧解码后约 18 MB，所以引擎只缓存当前动作与预取动作 |
+| 道具 | `bed_some.png`、`bed_full.png`：磁盘黄与磁盘红时舞台左下的狗窝（蓝灰色软垫狗窝，前沿有缺口，里面放带封箱胶带的纸箱），每张 192 × 112 px（96 × 56 pt），底线 y = 108 px |
+| 体积 | 12 张 PNG（10 张条带与 2 个道具）共 2,488,417 字节（约 2.49 MB，2.37 MiB，无损 PNG，不量化）。上限 4 MB（11.3）。全部 59 帧解码后约 18 MB，所以引擎只缓存当前动作与预取动作 |
 | 门禁 | `python3 scripts/check_sprites.py`（W11）。需要 Pillow 与 numpy。加 `--sheet-dir 目录` 输出白底、深色底、彩色底的联系表，供人工盲测 |
 
 生成方式、提示词、调用次数与后处理步骤见 [Resources/DogArt/PROVENANCE.md](../Resources/DogArt/PROVENANCE.md) 的“Action strips for panel v2”一节。
