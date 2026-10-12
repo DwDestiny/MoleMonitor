@@ -203,32 +203,159 @@ enum UITestWindowChecks {
 
     // MARK: W05 sidebar window motion
 
-    private struct Track {
-        var reachedMs: Double?
-        var xDrift = 0.0
-        var heightDrift = 0.0
-        var samples = 0
-        var maxWidth = 0.0
+    /// What the window server says about the window now (screen points, top-left origin). The model `frame` of an NSWindow
+    /// jumps to the target at once when the frame is animated, so the motion is read from the window server.
+    @MainActor
+    private static func serverBounds(_ w: NSWindow) -> CGRect? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(w.windowNumber)) as? [[String: Any]],
+              let dict = list.first?[kCGWindowBounds as String] as? NSDictionary else { return nil }
+        return CGRect(dictionaryRepresentation: dict as CFDictionary)
     }
 
-    /// Samples the window every 4 ms until the width is `target` (within 0.5 pt) or the time is over.
+    private struct Track {
+        var reachedMs: Double?
+        var heightDrift = 0.0
+        var samples = 0
+        var steps = 0
+        var fromServer = false
+    }
+
+    /// Polls the window server every 3 ms until the width is `target` (within 0.5 pt) or the time is over.
     @MainActor
     private static func track(_ r: UITestRunner, _ w: PanelWindow, since start: Double, target: Double, timeoutMs: Double,
-                              x0: Double, h0: Double) async -> Track {
+                              h0: Double) async -> Track {
         var t = Track()
+        var seen = Set<Int>()
         while true {
             let elapsed = (r.now() - start) * 1000
-            let width = Double(w.frame.width)
+            let server = serverBounds(w)
+            t.fromServer = server != nil
+            let width = Double(server?.width ?? w.frame.width)
+            let height = Double(server?.height ?? w.frame.height)
             t.samples += 1
-            t.maxWidth = Swift.max(t.maxWidth, width)
-            t.xDrift = Swift.max(t.xDrift, abs(screenX(w) - x0))
-            t.heightDrift = Swift.max(t.heightDrift, abs(Double(w.frame.height) - h0))
+            if width > 353 && width < 671 { seen.insert(Int(width.rounded())) }
+            t.heightDrift = Swift.max(t.heightDrift, abs(height - h0))
             if abs(width - target) <= 0.5 {
                 t.reachedMs = elapsed
+                t.steps = seen.count
                 return t
             }
-            if elapsed >= timeoutMs { return t }
-            await r.sleepMs(4)
+            if elapsed >= timeoutMs {
+                t.steps = seen.count
+                return t
+            }
+            await r.sleepMs(3)
+        }
+    }
+
+    /// The main column seen in window frames: a piece of the main column is cut from the frame before the motion. In each frame
+    /// during the motion the piece is searched along the width, and its place on the screen is computed from the fixed edge of the
+    /// window. The place must not change (docs/DESIGN_V2.md 13.3 W05: at most 0.5 pt).
+    private struct VisualProbe {
+        var template: [Double]
+        var rows: Range<Int>
+        var x0: Int
+        var scale: Double
+        var windowLeft0: Double
+        var windowRight0: Double
+        var edge: SidebarEdge
+        var contrast: Double
+    }
+
+    private static func columnSums(_ shot: UITestShot, rows: Range<Int>) -> [Double] {
+        var sums = [Double](repeating: 0, count: shot.w)
+        let lo = Swift.max(0, rows.lowerBound), hi = Swift.min(shot.h, rows.upperBound)
+        guard hi > lo else { return sums }
+        for y in lo..<hi {
+            var i = y * shot.w * 4
+            for x in 0..<shot.w {
+                sums[x] += 0.299 * Double(shot.rgba[i]) + 0.587 * Double(shot.rgba[i + 1]) + 0.114 * Double(shot.rgba[i + 2])
+                i += 4
+            }
+        }
+        return sums
+    }
+
+    /// `region` is in points of the main column, top-left origin. The window must be closed (352 pt wide) and settled.
+    @MainActor
+    private static func makeProbe(_ r: UITestRunner, _ w: PanelWindow, region: CGRect) -> VisualProbe? {
+        guard let ref = r.windowFrame(w.mainHost), ref.w > 0 else { return nil }
+        let scale = Double(ref.w) / PanelWindowMetrics.mainWidth
+        let x0 = Int(Double(region.minX) * scale)
+        let tw = Int(Double(region.width) * scale)
+        let rows = Int(Double(region.minY) * scale)..<Int(Double(region.maxY) * scale)
+        let sums = columnSums(ref, rows: rows)
+        guard tw > 8, x0 >= 0, x0 + tw <= sums.count, !rows.isEmpty else { return nil }
+        let template = Array(sums[x0..<(x0 + tw)])
+        let contrast = ((template.max() ?? 0) - (template.min() ?? 0)) / Double(rows.count)
+        return VisualProbe(template: template, rows: rows, x0: x0, scale: scale, windowLeft0: Double(w.frame.minX),
+                           windowRight0: Double(w.frame.maxX), edge: w.sidebarEdge, contrast: contrast)
+    }
+
+    /// Place of the piece on the screen in a frame, and the mean brightness error of the best match.
+    private static func visualX(_ probe: VisualProbe, _ frame: UITestShot) -> (x: Double, error: Double, widthPt: Double)? {
+        let cs = columnSums(frame, rows: probe.rows)
+        let tw = probe.template.count
+        guard cs.count >= tw else { return nil }
+        var best = Double.infinity
+        var bestAt = 0
+        for o in 0...(cs.count - tw) {
+            var sad = 0.0
+            for i in 0..<tw {
+                sad += abs(cs[o + i] - probe.template[i])
+                if sad >= best { break }
+            }
+            if sad < best { best = sad; bestAt = o }
+        }
+        let widthPt = Double(frame.w) / probe.scale
+        let left = probe.edge == .right ? probe.windowLeft0 : probe.windowRight0 - widthPt
+        return (left + Double(bestAt) / probe.scale, best / Double(tw * Swift.max(1, probe.rows.count)), widthPt)
+    }
+
+    private struct VisualRun {
+        var frames = 0
+        var intermediate = 0
+        var maxDrift = 0.0
+        var maxError = 0.0
+        var series = [String]()
+    }
+
+    /// Clicks the row (open if closed, close if open), captures window frames until the target width, and measures the drift.
+    @MainActor
+    private static func visualRun(_ r: UITestRunner, _ w: PanelWindow, _ probe: VisualProbe, opening: Bool) async -> VisualRun {
+        var run = VisualRun()
+        let x0 = probe.windowLeft0 + Double(probe.x0) / probe.scale
+        let start = r.now()
+        w.reportClick(.memory)
+        while (r.now() - start) * 1000 < 800 {
+            guard let shot = r.windowFrame(w.mainHost), let m = visualX(probe, shot) else { break }
+            let t = (r.now() - start) * 1000
+            run.frames += 1
+            if m.widthPt > 353 && m.widthPt < 671 { run.intermediate += 1 }
+            run.maxDrift = Swift.max(run.maxDrift, abs(m.x - x0))
+            run.maxError = Swift.max(run.maxError, m.error)
+            run.series.append("\(Int(t)):\(Int(m.widthPt.rounded()))/\(String(format: "%.1f", m.x - x0))")
+            if opening ? m.widthPt >= 671.5 : m.widthPt <= 352.5 { break }
+            await r.sleepMs(1)
+        }
+        return run
+    }
+
+    /// Main column for the synthetic windows: stripes of different widths on the left, so a piece of it can be found again.
+    private struct W05Stripes: View {
+        var body: some View {
+            VStack(spacing: 0) {
+                Color.clear.frame(height: 20)
+                HStack(spacing: 0) {
+                    ForEach(0..<12, id: \.self) { i in
+                        Rectangle().fill(i % 2 == 0 ? Color.red : Color.blue).frame(width: CGFloat(6 + (i * 7) % 13))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(height: 100)
+                Spacer(minLength: 0)
+            }
+            .frame(width: CGFloat(PanelWindowMetrics.mainWidth), height: 420)
         }
     }
 
@@ -240,7 +367,7 @@ enum UITestWindowChecks {
         let mid = desired == .right ? visible.minX + 220 : visible.maxX - 220
         let placement = PanelWindowGeometry.place(anchorMidX: mid, anchorMinY: visible.maxY, visible: visible, height: 420)
         guard placement.edge == desired else { return nil }
-        let window = PanelWindow(placement: placement, visibleMinY: visible.minY, main: AnyView(Color.clear), sidebar: nil)
+        let window = PanelWindow(placement: placement, visibleMinY: visible.minY, main: AnyView(W05Stripes()), sidebar: nil)
         window.present()
         return window
     }
@@ -251,61 +378,69 @@ enum UITestWindowChecks {
         var note: String
     }
 
-    /// Runs hover open, close button, click open and click close on one window.
+    /// Runs hover open, close button, click open and click close on one window (timing from the window server), then the
+    /// frame-by-frame drift of the main column.
     @MainActor
-    private static func sidebarCycle(_ r: UITestRunner, _ w: PanelWindow, label: String, reduceMotion: Bool) async -> W05Result {
-        let x0 = screenX(w)
-        let h0 = Double(w.frame.height)
+    private static func sidebarCycle(_ r: UITestRunner, _ w: PanelWindow, label: String, reduceMotion: Bool, probeRegion: CGRect?) async -> W05Result {
+        let h0 = Double(serverBounds(w)?.height ?? w.frame.height)
         let shifted = w.placement.mainShift != 0
         let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
         var problems = [String]()
         var parts = [String]()
-        func drift(_ name: String, _ t: Track) {
-            // A narrow screen moves the main column by design (10.4 rule 4); then only the height is judged.
-            if !shifted && t.xDrift > 0.5 { problems.append("\(name): main column moved \(fmt(t.xDrift, 2)) pt") }
-            if t.heightDrift > 0 { problems.append("\(name): height changed \(fmt(t.heightDrift, 2)) pt") }
+        var steps = 0
+        func judge(_ name: String, _ t: Track, limit: Double) {
+            if let ms = t.reachedMs, ms <= limit {} else { problems.append("\(name) reached \(fmt(t.reachedMs)) ms (limit \(Int(limit)))") }
+            if t.heightDrift > 0.5 { problems.append("\(name): height changed \(fmt(t.heightDrift, 2)) pt") }
+            steps += t.steps
+            parts.append("\(name) \(fmt(t.reachedMs)) ms (\(t.steps) steps, \(t.fromServer ? "window server" : "model frame"))")
         }
-        let openLimit = reduceMotion ? 150.0 : 250.0
-        // Hover: 350 ms of rest, then the window grows. Judged 400 ms after the start plus the 250 ms limit of the motion.
+        let motionLimit = reduceMotion ? 150.0 : 250.0
+        // Hover: 350 ms of rest, then the window grows. Judged 400 ms after the start plus the limit of the motion.
         let hoverStart = r.now()
         w.testPointer(.row(.cpu), at: NSPoint(x: 200, y: h0 / 2))
-        let hover = await track(r, w, since: hoverStart, target: 672, timeoutMs: 1300, x0: x0, h0: h0)
-        let hoverLimit = 400 + openLimit
-        if let ms = hover.reachedMs, ms <= hoverLimit {} else { problems.append("hover open reached \(fmt(hover.reachedMs)) ms (limit \(Int(hoverLimit)))") }
-        drift("hover open", hover)
-        parts.append("hover open \(fmt(hover.reachedMs)) ms")
+        judge("hover open", await track(r, w, since: hoverStart, target: 672, timeoutMs: 1300, h0: h0), limit: 400 + motionLimit)
         // Inside the visible frame and below the menu bar.
-        if let visible, visible.width >= 672 {
-            let f = w.frame
-            if f.minX < visible.minX - 0.5 || f.maxX > visible.maxX + 0.5 || f.maxY > visible.maxY + 0.5 {
+        if let visible, visible.width >= 672, let f = serverBounds(w) {
+            let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+            let top = screenHeight - f.minY   // AppKit y of the top edge
+            if f.minX < visible.minX - 0.5 || f.maxX > visible.maxX + 0.5 || top > visible.maxY + 0.5 {
                 problems.append("expanded frame \(NSStringFromRect(f)) leaves the visible frame \(NSStringFromRect(visible))")
             }
         }
-        // Close button.
         let closeStart = r.now()
         w.reportCloseButton()
-        let closeLimit = reduceMotion ? 150.0 : 250.0
-        let close = await track(r, w, since: closeStart, target: 352, timeoutMs: 700, x0: x0, h0: h0)
-        if let ms = close.reachedMs, ms <= closeLimit {} else { problems.append("close reached \(fmt(close.reachedMs)) ms (limit \(Int(closeLimit)))") }
-        drift("close", close)
-        parts.append("close \(fmt(close.reachedMs)) ms")
-        await r.sleepMs(80)
-        // Click: no waiting.
+        judge("close", await track(r, w, since: closeStart, target: 352, timeoutMs: 700, h0: h0), limit: motionLimit)
+        await r.sleepMs(120)
         let clickStart = r.now()
         w.reportClick(.memory)
-        let click = await track(r, w, since: clickStart, target: 672, timeoutMs: 700, x0: x0, h0: h0)
-        if let ms = click.reachedMs, ms <= openLimit {} else { problems.append("click open reached \(fmt(click.reachedMs)) ms (limit \(Int(openLimit)))") }
-        drift("click open", click)
-        parts.append("click open \(fmt(click.reachedMs)) ms")
         if w.pinnedSidebarItem != .memory { problems.append("click did not pin the memory sidebar") }
+        judge("click open", await track(r, w, since: clickStart, target: 672, timeoutMs: 700, h0: h0), limit: motionLimit)
         let click2Start = r.now()
         w.reportClick(.memory)
-        let click2 = await track(r, w, since: click2Start, target: 352, timeoutMs: 700, x0: x0, h0: h0)
-        if click2.reachedMs == nil { problems.append("second click did not close the sidebar") }
-        drift("click close", click2)
-        parts.append("click close \(fmt(click2.reachedMs)) ms")
+        judge("click close", await track(r, w, since: click2Start, target: 352, timeoutMs: 700, h0: h0), limit: motionLimit)
+        if !reduceMotion && steps < 4 { problems.append("the window server showed only \(steps) intermediate widths in four motions: the frame animation is not visible") }
+        // Frame-by-frame drift of the main column.
+        var visualNote = "visual drift not measured"
+        if !shifted, let region = probeRegion {
+            await r.sleepMs(150)
+            if let probe = makeProbe(r, w, region: region) {
+                if probe.contrast < 2 { problems.append("the piece for the drift measurement has no texture (contrast \(fmt(probe.contrast, 1)))") }
+                let open = await visualRun(r, w, probe, opening: true)
+                await r.sleepMs(150)
+                let close = await visualRun(r, w, probe, opening: false)
+                let drift = Swift.max(open.maxDrift, close.maxDrift)
+                let intermediate = open.intermediate + close.intermediate
+                if drift > 0.5 { problems.append("the main column moved \(fmt(drift, 2)) pt on the screen") }
+                if !reduceMotion && intermediate < 2 { problems.append("only \(intermediate) intermediate frames were captured") }
+                visualNote = "visual drift \(fmt(drift, 2)) pt over \(open.frames + close.frames) frames (\(intermediate) intermediate, match error \(fmt(Swift.max(open.maxError, close.maxError), 1)), contrast \(fmt(probe.contrast, 1))); open \(open.series.joined(separator: " ")); close \(close.series.joined(separator: " "))"
+            } else {
+                visualNote = "visual drift: window capture or template not available"
+            }
+        } else if shifted {
+            visualNote = "visual drift skipped: the main column moves by design on this screen (shift \(fmt(w.placement.mainShift, 1)) pt)"
+        }
         let edge = w.sidebarEdge == .right ? "right" : "left"
-        let note = "\(label) (edge \(edge), main shift \(fmt(w.placement.mainShift, 1)) pt, steady x \(fmt(x0, 1))): " + parts.joined(separator: ", ")
+        let note = "\(label) (edge \(edge), main shift \(fmt(w.placement.mainShift, 1)) pt): " + parts.joined(separator: ", ") + "; " + visualNote
             + (problems.isEmpty ? "" : " PROBLEMS: " + problems.joined(separator: " / "))
         return W05Result(label: label, ok: problems.isEmpty, note: note)
     }
@@ -323,7 +458,8 @@ enum UITestWindowChecks {
                 continue
             }
             await r.sleepMs(300)
-            results.append(await sidebarCycle(r, w, label: "synthetic \(desired.rawValue)", reduceMotion: false))
+            results.append(await sidebarCycle(r, w, label: "synthetic \(desired.rawValue)", reduceMotion: false,
+                                              probeRegion: CGRect(x: 6, y: 30, width: 120, height: 80)))
             w.closePanel()
             await r.sleepMs(200)
         }
@@ -331,24 +467,17 @@ enum UITestWindowChecks {
         if let w = syntheticWindow(.right) {
             PanelWindow.testReduceMotion = true
             await r.sleepMs(300)
-            results.append(await sidebarCycle(r, w, label: "synthetic right, Reduce Motion", reduceMotion: true))
+            results.append(await sidebarCycle(r, w, label: "synthetic right, Reduce Motion", reduceMotion: true, probeRegion: nil))
             PanelWindow.testReduceMotion = nil
             w.closePanel()
             await r.sleepMs(200)
         }
-        // The real panel with its real anchor, content and height.
+        // The real panel with its real anchor and content.
         let opened = openReal(r)
         if let real = opened.window {
-            await r.sleepMs(500)
-            let x0 = screenX(real)
-            let h0 = Double(real.frame.height)
-            let start = r.now()
-            real.reportClick(.cpu)
-            let t = await track(r, real, since: start, target: 672, timeoutMs: 700, x0: x0, h0: h0)
-            let shifted = real.placement.mainShift != 0
-            let ok = (t.reachedMs ?? .infinity) <= 250 && t.heightDrift == 0 && (shifted || t.xDrift <= 0.5)
-            results.append(W05Result(label: "real panel", ok: ok,
-                                     note: "real panel (edge \(real.sidebarEdge == .right ? "right" : "left"), height \(fmt(h0, 0)) pt): click open \(fmt(t.reachedMs)) ms, main column drift \(fmt(t.xDrift, 2)) pt, height drift \(fmt(t.heightDrift, 2)) pt, samples \(t.samples)"))
+            await r.sleepMs(600)
+            let dog = r.panelRect("dog")
+            results.append(await sidebarCycle(r, real, label: "real panel", reduceMotion: false, probeRegion: dog))
             await r.closePanelQuietly()
         } else {
             results.append(W05Result(label: "real panel", ok: false, note: "the real panel did not open"))
