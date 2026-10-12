@@ -50,8 +50,8 @@ struct PanelTokens {
     // The light tint is 6 % (it was 8 %): only the first problem card has it (DESIGN.md 2.6). Dark stays at 10 %.
     var tintDanger: Color { pick(Self.rgb(0xE5302A, 0.06), Self.rgb(0xFF453A, 0.10)) }
     var tintWarning: Color { pick(Self.rgb(0xC26400, 0.06), Self.rgb(0xFF9F0A, 0.10)) }
-    /// Neutral gray of a collapsed problem row in the light scheme (black 5 %). It has no hue; the level shows in `rowBar`.
-    var rowFill: Color { Color(.sRGB, white: 0, opacity: 0.05) }
+    /// Neutral gray of a collapsed problem row (black 5 % in light, white 5 % in dark). It has no hue; the level shows in `rowBar`.
+    var rowFill: Color { pick(Color(.sRGB, white: 0, opacity: 0.05), Color(.sRGB, white: 1, opacity: 0.05)) }
     var fillHover: Color { pick(Color(.sRGB, white: 0, opacity: 0.06), Color(.sRGB, white: 1, opacity: 0.08)) }
     var plotBackground: Color { pick(Color(.sRGB, white: 0, opacity: 0.04), Color(.sRGB, white: 1, opacity: 0.05)) }
     var separator: Color { pick(Color(.sRGB, white: 0, opacity: 0.10), Color(.sRGB, white: 1, opacity: 0.12)) }
@@ -94,15 +94,15 @@ struct PanelTokens {
         }
     }
 
-    /// Background of a collapsed problem row. Light: gray for a yellow or red row, no color. Dark: the level tint, as before.
+    /// Background of a collapsed problem row: gray for a yellow or red row, no color, in both schemes.
     func rowBackground(_ level: HealthLevel) -> Color {
         guard level == .yellow || level == .red else { return Color.clear }
-        return dark ? tint(level) : rowFill
+        return rowFill
     }
 
-    /// The 3 pt bar at the left edge of a collapsed problem row. Light scheme only (dark has no bar). Nil when the row has no level.
+    /// The 3 pt bar at the left edge of a collapsed problem row, in the lamp color of the level (both schemes). Nil when the row has no level.
     func rowBar(_ level: HealthLevel) -> Color? {
-        guard !dark, level == .yellow || level == .red else { return nil }
+        guard level == .yellow || level == .red else { return nil }
         return lamp(level)
     }
 

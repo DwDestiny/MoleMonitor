@@ -412,8 +412,8 @@ struct ProblemRow: View {
     }
 }
 
-/// The button style of a collapsed problem row. Light scheme: a gray fill and a 3 pt bar in the level color at the left edge (no tinted
-/// fill, so only the first card has color, DESIGN.md 2.6). Dark scheme: the level tint, as the shared row style (PanelFooter.swift).
+/// The button style of a collapsed problem row. Both schemes: a gray fill and a 3 pt bar in the level color at the left edge (no tinted
+/// fill, so only the first card has color, DESIGN.md 2.6). The shared row style in PanelFooter.swift is only used with level green.
 struct ProblemRowButtonStyle: ButtonStyle {
     var level: HealthLevel
 

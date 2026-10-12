@@ -15,7 +15,7 @@
 //     of the dog center, width 0.7 to 0.8 of the dog width (sprint narrower and lighter).
 // M21 problem mode hero in the real panel: dog box at least 64 pt wide, at least 6 pt below the panel top, the bubble box and the
 //     dog ink box do not intersect (diskRed and multi, light and dark).
-// M22 light multi: the collapsed problem rows have a gray fill (no hue) and a 3 pt bar in the level color. The first card keeps a tint.
+// M22 multi, light and dark: the collapsed problem rows have a gray fill (no hue) and a 3 pt bar in the level color. The first card keeps a tint.
 
 #if UITEST
 import AppKit
@@ -510,25 +510,17 @@ extension UITestRunner {
         record("M21", "问题模式比熊：框不小于 64 pt，气泡不压身体，顶部不裁切", problems.isEmpty && notes.count == 4, since: t0, note, values)
     }
 
-    /// M22: the light scheme multi card. The three collapsed rows have a gray fill (no hue, near the panel color) and a 3 pt bar in
-    /// the level color at the left edge. The first card keeps a light tint with a hue. The dark scheme is not asserted (it keeps the tint).
+    /// M22: the multi card in both schemes. The three collapsed rows have a gray fill (no hue, near the panel color) and a 3 pt bar in
+    /// the lamp color of the level at the left edge. The first card keeps a tint with a hue.
     func stepCollapsedRows() async {
         let t0 = now()
         var problems = [String]()
         var notes = [String]()
         var values = [String: Double]()
+        let name = "浅深色折叠问题卡无彩色底，左侧色条表示等级"
         let copyBox = UITestTextBox()
         guard let model = await openFixture(.multi, copyBox: copyBox), let hv = hostView else {
-            record("M22", "浅色折叠问题卡无彩色底，左侧色条表示等级", false, since: t0, "the panel did not open")
-            return
-        }
-        await setAppearance(dark: false)
-        let surface = UITestContrast.lightSurface
-        let light = PanelTokens(scheme: .light)
-        let barColors: [HealthLevel: UITestContrast.RGB] = [.red: srgb(light.lampDanger), .yellow: srgb(light.lampWarning)]
-        guard let shot = capture(hv) else {
-            record("M22", "浅色折叠问题卡无彩色底，左侧色条表示等级", false, since: t0, "no screenshot")
-            await closeFixture()
+            record("M22", name, false, since: t0, "the panel did not open")
             return
         }
         var rows = [HealthItem]()
@@ -538,57 +530,69 @@ extension UITestRunner {
             if case .problemCard(let item, _, _) = section { cardItem = item }
         }
         if rows.count != 3 { problems.append("expected 3 collapsed rows, found \(rows.count)") }
-        for item in rows {
-            guard let rect = panelRect("row." + item.rawValue), let verdict = model.data.verdict(item),
-                  let expectedBar = barColors[verdict.level] else {
-                problems.append("\(item.rawValue): no row frame or level")
+        for dark in [false, true] {
+            await setAppearance(dark: dark)
+            let scheme = dark ? "dark" : "light"
+            let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
+            let tokens = PanelTokens(scheme: dark ? .dark : .light)
+            let barColors: [HealthLevel: UITestContrast.RGB] = [.red: srgb(tokens.lampDanger), .yellow: srgb(tokens.lampWarning)]
+            guard let shot = capture(hv) else {
+                problems.append(scheme + ": no screenshot")
                 continue
             }
-            let fillRegion = CGRect(x: rect.minX + 5, y: rect.minY + 6, width: 4, height: rect.height - 12)
-            let barRegion = CGRect(x: rect.minX + 0.5, y: rect.minY + 8, width: 2, height: rect.height - 16)
-            guard let fill = meanColor(shot, region: fillRegion, surface: surface), let bar = meanColor(shot, region: barRegion, surface: surface) else {
-                problems.append("\(item.rawValue): no pixels")
-                continue
+            for item in rows {
+                guard let rect = panelRect("row." + item.rawValue), let verdict = model.data.verdict(item),
+                      let expectedBar = barColors[verdict.level] else {
+                    problems.append(scheme + " " + item.rawValue + ": no row frame or level")
+                    continue
+                }
+                let fillRegion = CGRect(x: rect.minX + 5, y: rect.minY + 6, width: 4, height: rect.height - 12)
+                let barRegion = CGRect(x: rect.minX + 0.5, y: rect.minY + 8, width: 2, height: rect.height - 16)
+                guard let fill = meanColor(shot, region: fillRegion, surface: surface), let bar = meanColor(shot, region: barRegion, surface: surface) else {
+                    problems.append(scheme + " " + item.rawValue + ": no pixels")
+                    continue
+                }
+                let fillShift = Swift.max(abs(fill.r - surface.r), abs(fill.g - surface.g), abs(fill.b - surface.b))
+                let fillChroma = Swift.max(fill.r, fill.g, fill.b) - Swift.min(fill.r, fill.g, fill.b)
+                let barShift = Swift.max(abs(bar.r - expectedBar.r), abs(bar.g - expectedBar.g), abs(bar.b - expectedBar.b))
+                let otherLevel: HealthLevel = verdict.level == .red ? .yellow : .red
+                var otherShift = 255.0
+                if let other = barColors[otherLevel] {
+                    otherShift = Swift.max(abs(bar.r - other.r), abs(bar.g - other.g), abs(bar.b - other.b))
+                }
+                let key = scheme + " " + item.rawValue + " " + verdict.level.rawValue
+                let shiftText = String(format: "%.1f", fillShift), chromaText = String(format: "%.1f", fillChroma)
+                let barText = String(format: "%.1f", barShift), otherText = String(format: "%.1f", otherShift)
+                notes.append(key + ": fill shift " + shiftText + ", chroma " + chromaText + "; bar shift to its level color " + barText + ", to the other level " + otherText)
+                values[key + ".fillShift"] = (fillShift * 10).rounded() / 10
+                values[key + ".fillChroma"] = (fillChroma * 10).rounded() / 10
+                values[key + ".barShift"] = (barShift * 10).rounded() / 10
+                // The panel color is a flat model (#ECECEC, #2A2A2C). Its own chroma (2 in dark) is part of the measured fill chroma.
+                if fillShift > 20 { problems.append(key + ": the fill differs from the panel color by " + shiftText + ", limit 20") }
+                if fillChroma > 4 { problems.append(key + ": the fill has a hue (chroma " + chromaText + ", limit 4)") }
+                if barShift > 30 { problems.append(key + ": the left bar is " + barText + " away from the level color, limit 30") }
+                if barShift >= otherShift { problems.append(key + ": the left bar is not closer to its own level color") }
             }
-            let fillShift = Swift.max(abs(fill.r - surface.r), abs(fill.g - surface.g), abs(fill.b - surface.b))
-            let fillChroma = Swift.max(fill.r, fill.g, fill.b) - Swift.min(fill.r, fill.g, fill.b)
-            let barShift = Swift.max(abs(bar.r - expectedBar.r), abs(bar.g - expectedBar.g), abs(bar.b - expectedBar.b))
-            let otherLevel: HealthLevel = verdict.level == .red ? .yellow : .red
-            var otherShift = 255.0
-            if let other = barColors[otherLevel] {
-                otherShift = Swift.max(abs(bar.r - other.r), abs(bar.g - other.g), abs(bar.b - other.b))
-            }
-            let key = item.rawValue + " " + verdict.level.rawValue
-            let shiftText = String(format: "%.1f", fillShift), chromaText = String(format: "%.1f", fillChroma)
-            let barText = String(format: "%.1f", barShift), otherText = String(format: "%.1f", otherShift)
-            notes.append(key + ": fill shift " + shiftText + ", chroma " + chromaText + "; bar shift to its level color " + barText + ", to the other level " + otherText)
-            values[key + ".fillShift"] = (fillShift * 10).rounded() / 10
-            values[key + ".fillChroma"] = (fillChroma * 10).rounded() / 10
-            values[key + ".barShift"] = (barShift * 10).rounded() / 10
-            if fillShift > 20 { problems.append(key + ": the fill differs from the panel color by " + shiftText + ", limit 20") }
-            if fillChroma > 4 { problems.append(key + ": the fill has a hue (chroma " + chromaText + ", limit 4)") }
-            if barShift > 30 { problems.append(key + ": the left bar is " + barText + " away from the level color, limit 30") }
-            if barShift >= otherShift { problems.append(key + ": the left bar is not closer to its own level color") }
-        }
-        if let item = cardItem, let rect = panelRect("card." + item.rawValue) {
-            let region = CGRect(x: rect.minX + 3, y: rect.minY + 30, width: 6, height: Swift.max(4, rect.height - 60))
-            if let fill = meanColor(shot, region: region, surface: surface) {
-                let chroma = Swift.max(fill.r, fill.g, fill.b) - Swift.min(fill.r, fill.g, fill.b)
-                notes.append("first card " + item.rawValue + ": chroma " + String(format: "%.1f", chroma) + " (needs at least 6)")
-                values["card.chroma"] = (chroma * 10).rounded() / 10
-                if chroma < 6 { problems.append("the first card has no tint (chroma " + String(format: "%.1f", chroma) + ", needs 6)") }
+            if let item = cardItem, let rect = panelRect("card." + item.rawValue) {
+                let region = CGRect(x: rect.minX + 3, y: rect.minY + 30, width: 6, height: Swift.max(4, rect.height - 60))
+                if let fill = meanColor(shot, region: region, surface: surface) {
+                    let chroma = Swift.max(fill.r, fill.g, fill.b) - Swift.min(fill.r, fill.g, fill.b)
+                    notes.append(scheme + " first card " + item.rawValue + ": chroma " + String(format: "%.1f", chroma) + " (needs at least 6)")
+                    values[scheme + ".card.chroma"] = (chroma * 10).rounded() / 10
+                    if chroma < 6 { problems.append(scheme + ": the first card has no tint (chroma " + String(format: "%.1f", chroma) + ", needs 6)") }
+                } else {
+                    problems.append(scheme + ": no pixels in the first card")
+                }
             } else {
-                problems.append("no pixels in the first card")
+                problems.append(scheme + ": no first card frame")
             }
-        } else {
-            problems.append("no first card frame")
         }
         resetAppearance()
         await sleepMs(200)
         await closeFixture()
         var note = notes.joined(separator: "; ")
         if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
-        record("M22", "浅色折叠问题卡无彩色底，左侧色条表示等级", problems.isEmpty && notes.count == 4, since: t0, note, values)
+        record("M22", name, problems.isEmpty && notes.count == 8, since: t0, note, values)
     }
 
     /// M20: the bitmap dog inside the real panel. No callback of the dog view while the data does not change, and the pose follows

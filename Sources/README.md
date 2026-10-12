@@ -78,7 +78,7 @@ last_updated: 2026-10-11
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
 | `PanelRoot.swift` | 状态卡根视图：固定的头部、滚动的中部、固定的底栏。按版面计划渲染，不排序。入场动画 |
 | `PanelHero.swift` | 头部：比熊、标题、灯列（安静模式与问题模式）。问题模式比熊框 72 × 54，框顶距头部顶 6 pt，向左拉出 12 pt |
-| `PanelProblem.swift` | 问题卡、问题行、其余正常行、证据区。`ProblemRowButtonStyle`：浅色下折叠行是灰底加 3 pt 等级色条，深色下沿用等级底色 |
+| `PanelProblem.swift` | 问题卡、问题行、其余正常行、证据区。`ProblemRowButtonStyle`：折叠行在浅色与深色下都是灰底加 3 pt 等级色条 |
 | `PanelCharts.swift` | 图表：问题曲线（2 小时粗段加 5 分钟细段）、迷你线、磁盘 30 天图 |
 | `PanelApps.swift` | 占用 App 行、证据列表、折叠行 |
 | `PanelMore.swift` | “更多”折叠行及展开内容 |
