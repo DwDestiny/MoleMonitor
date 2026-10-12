@@ -495,7 +495,10 @@ extension UITestRunner {
             let text = MenuIconModel.text(data.verdicts, dataState: data.dataState, now: Date())
             var line = "\(c.rawValue)=\(want.posture.rawValue)/\(want.badge?.rawValue ?? "-")"
             if let button, let image = button.image {
-                if !image.isTemplate { problems.append("\(c.rawValue): the icon is not a template image") }
+                // DESIGN_V2.md 9.2 rule 2: a yellow or red badge makes a colored image; the other states stay templates.
+                if image.isTemplate != (want.badge == nil) {
+                    problems.append("\(c.rawValue): isTemplate is \(image.isTemplate), expected \(want.badge == nil)")
+                }
                 if abs(Double(image.size.width) - 24) > 0.01 { problems.append("\(c.rawValue): the icon is \(image.size.width) pt wide") }
                 if button.toolTip != text { problems.append("\(c.rawValue): the tooltip differs from the icon text") }
                 if (button.accessibilityLabel() ?? "") != text { problems.append("\(c.rawValue): the accessibility label differs from the icon text") }
@@ -523,7 +526,7 @@ extension UITestRunner {
             notes.append(line)
         }
         // Different states need different images.
-        let states: [String: String] = ["allGreen": "allGreen", "collecting": "collecting", "stale": "collecting",
+        let states: [String: String] = ["allGreen": "allGreen", "collecting": "collecting", "stale": "stale",
                                         "cpuYellow": "cpuYellow", "diskRed": "diskRed", "powerYellow": "powerYellow", "multi": "diskRed"]
         var byState = [String: String]()
         for (name, state) in states {

@@ -4,10 +4,12 @@
 // Output: [ProcessSample] and ProcessCoverage per scan (docs/DESIGN.md 6.6, 8.2). Ranking is in Core (AppRanking).
 // Pos: Mac-only process reader. Scan period: 300 s (all green, card closed), 180 s (any yellow or red), 4 s (card open);
 //      the engine decides when to call. Reads only: no command line, no environment, no arguments, no user name.
-//      Per process it keeps only the name, the app bundle id and display name (cached), CPU time and memory. Not thread-safe.
+//      Per process it keeps only the name, the app bundle id and display name (cached), CPU time, memory and the
+//      cumulative bytes written (ri_diskio_byteswritten). Not thread-safe.
 
 import Foundation
 import Darwin
+import IOKit.pwr_mgt
 
 final class ProcessSampler {
     struct Scan {
@@ -94,10 +96,38 @@ final class ProcessSampler {
                                          bundleID: identity.bundleID, cpuTimeNs: nanoseconds,
                                          footprint: info.ri_phys_footprint > 0 ? info.ri_phys_footprint : nil,
                                          rss: info.ri_resident_size > 0 ? info.ri_resident_size : nil,
-                                         isSystem: identity.isSystem))
+                                         isSystem: identity.isSystem,
+                                         diskWritten: info.ri_diskio_byteswritten))
         }
         if identities.count > live.count { identities = identities.filter { live.contains($0.key) } }
         return Scan(samples: samples, coverage: ProcessCoverage(readable: readable, unreadable: unreadable))
+    }
+
+    // MARK: Sleep assertions
+
+    /// Processes that hold a power assertion against system sleep or display sleep (IOPMCopyAssertionsByProcess, read only).
+    /// One entry per app display name. Only the display name and the two kinds are kept, no assertion text.
+    /// This is not an energy ranking: macOS gives no reliable per-app energy figure (DESIGN_V2.md 6.5).
+    // UNVERIFIED-ON-MAC: the Swift import of IOPMCopyAssertionsByProcess (Unmanaged out parameter) and the AssertType values.
+    func sleepBlockers() -> [SleepBlocker] {
+        var raw: Unmanaged<CFDictionary>?
+        guard IOPMCopyAssertionsByProcess(&raw) == kIOReturnSuccess, let dictionary = raw?.takeRetainedValue() else { return [] }
+        let byPid = dictionary as NSDictionary
+        let systemTypes: Set<String> = ["PreventUserIdleSystemSleep", "PreventSystemSleep", "NoIdleSleepAssertion"]
+        let displayTypes: Set<String> = ["PreventUserIdleDisplaySleep", "NoDisplaySleepAssertion"]
+        var kinds = [String: (system: Bool, display: Bool)]()
+        for (key, value) in byPid {
+            guard let pid = (key as? NSNumber)?.int32Value, pid > 0, let list = value as? [[String: Any]] else { continue }
+            let types = Set(list.compactMap { $0["AssertType"] as? String })
+            let system = !types.isDisjoint(with: systemTypes)
+            let display = !types.isDisjoint(with: displayTypes)
+            guard system || display else { continue }
+            let name = makeIdentity(pid: pid_t(pid)).displayName
+            let old = kinds[name] ?? (false, false)
+            kinds[name] = (old.system || system, old.display || display)
+        }
+        return kinds.map { SleepBlocker(name: $0.key, preventsSystemSleep: $0.value.system, preventsDisplaySleep: $0.value.display) }
+            .sorted { $0.name < $1.name }
     }
 
     // MARK: Identity

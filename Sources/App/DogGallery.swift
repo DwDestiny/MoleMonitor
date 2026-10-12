@@ -7,7 +7,10 @@
 //         Stage 2: stride sequences (sheet-seq.png), the motor timeline of a switch (sheet-timeline.png), the menu bar
 //         switch frames (sheet-menu-switch.png) and menu-switch.json (every switch has 8 frames, the last one = the still).
 //         In the UITEST build, `--dog-checks` runs the dog animation gates instead (UITestDogChecks).
-// Pos: Review and CI tool; the app never calls it at run time. Offline, no network. Owner I2.
+//         v2 (WP-E, DESIGN_V2.md 9, gate W08): the five menu bar states in menu5/ (5 states x 6 bars x 1x and 2x),
+//         sheet-menu-five.png (real size, 2x vector, 1x pixels zoomed, a grayscale row), and in badge-matrix.json the
+//         five-state XOR matrix, the data mark glyph matrix and the badge contrast table.
+// Pos: Review and CI tool; the app never calls it at run time. Offline, no network. Owner WP-E (menu bar part).
 //
 // Self-check: returns an error when two different poses give the same pixels, or when a 1x metric fails its gate.
 
@@ -68,6 +71,9 @@ enum DogGallery {
 
     static var menuStates: [(name: String, state: MenuIconState, style: GlyphStyle)] {
         var out = [(name: String, state: MenuIconState, style: GlyphStyle)]()
+        for mark in MenuMark.allCases {
+            out.append(("hollow-" + mark.rawValue, MenuIconState(posture: .hollow, badge: nil, mark: mark), .glyph))
+        }
         for posture in MenuPosture.allCases {
             out.append((posture.rawValue + "-none", MenuIconState(posture: posture, badge: nil), .glyph))
             for style in GlyphStyle.allCases {
@@ -111,6 +117,8 @@ enum DogGallery {
         sheetMenu(.letter)
         sheetBadges()
         menubarMock(choice)
+        renderFiveStates(choice)
+        sheetFiveStates(choice)
         // Stage 2 (animation): stride sequences, the motor timeline of a switch, the menu bar switch frames.
         renderSequences()
         sheetSequences()
@@ -172,7 +180,7 @@ enum DogGallery {
                 for scale in [1, 2] {
                     let name = "menu/\(entry.name)-\(dark ? "dark" : "light")@\(scale)x.png"
                     let image = draw(size, scale: scale, background: barBackground[dark]) { ctx in
-                        MenuIconRenderer.draw(entry.state, style: entry.style, ink: barInk(dark), in: ctx)
+                        MenuIconRenderer.draw(entry.state, style: entry.style, ink: menuInk(entry.state, dark: dark), in: ctx)
                     }
                     save(image, name, group: "menu-\(dark)-\(scale)")
                 }
@@ -246,6 +254,15 @@ enum DogGallery {
         }
     }
 
+    /// The data mark (collecting or stale) alone in the 8 x 8 pt box at 1x.
+    static func markGrid(_ mark: MenuMark) -> [[Double]] {
+        alphaGrid(CGSize(width: DogArt.badgeSize, height: DogArt.badgeSize)) { ctx in
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            ctx.addPath(GlyphPaths.markYDown(mark))
+            ctx.fillPath()
+        }
+    }
+
     static func badgeGrid(_ item: HealthItem, style: GlyphStyle) -> [[Double]] {
         alphaGrid(CGSize(width: DogArt.badgeSize, height: DogArt.badgeSize)) { ctx in
             ctx.setFillColor(CGColor(gray: 0, alpha: 1))
@@ -301,6 +318,7 @@ enum DogGallery {
         badgeJSON["alarm"] = alarmJSON
         badgeJSON["choice"] = choice.rawValue
         badgeJSON["codeChoice"] = GlyphPaths.chosen.rawValue
+        for (key, value) in fiveStateMetrics(choice) { badgeJSON[key] = value }
         writeJSON(badgeJSON, "badge-matrix.json")
         if passing.isEmpty { failures.append("Badge gate: neither glyphs nor letters reach \(IconMetrics.badgePass) at 1x.") }
         if !passing.contains(GlyphPaths.chosen) {
@@ -365,6 +383,185 @@ enum DogGallery {
         menuJSON["pathCacheEntries"] = DogPathCache.count
         writeJSON(menuJSON, "menu-metrics.json")
         return choice
+    }
+
+
+    // MARK: v2 five states (WP-E, DESIGN_V2.md 9.2 and 9.3, gate W08)
+
+    /// The five states in the order of DESIGN_V2.md 9.2, with their Chinese names for the sheets.
+    static let fiveKinds: [(kind: MenuIconKind, name: String)] = [
+        (.normal, "正常"), (.caution, "留意（黄）"), (.alert, "异常（红）"), (.collecting, "采集中"), (.stale, "过期")]
+
+    /// Menu bars of the five-state sheet: name, color, dark appearance, selected highlight. The first two are the
+    /// reference bars of the contrast gate (MenuIconPalette.bar).
+    static let fiveBars: [(id: String, name: String, color: UInt32, dark: Bool, selected: Bool)] = [
+        ("light", "浅色菜单栏", MenuIconPalette.bar(dark: false), false, false),
+        ("dark", "深色菜单栏", MenuIconPalette.bar(dark: true), true, false),
+        ("light-selected", "浅色·选中高亮", MenuIconPalette.bar(dark: false), false, true),
+        ("dark-selected", "深色·选中高亮", MenuIconPalette.bar(dark: true), true, true),
+        ("wallpaper-warm", "暖色壁纸（深字）", 0xD9C7A6, false, false),
+        ("wallpaper-blue", "蓝色壁纸（浅字）", 0x5B7DB1, true, false)]
+
+    /// The inks the app gives a state on a light or dark bar: template states in one ink, caution and alert with the
+    /// head in the bar text color and the badge in its token color.
+    static func menuInk(_ state: MenuIconState, dark: Bool) -> MenuIconInk {
+        state.kind.isTemplate ? .mono(barInk(dark)) : .colored(dark: dark, head: barInk(dark))
+    }
+
+    /// The selected highlight behind a status item (approximate): a rounded rect, black 12 % or white 20 %.
+    static func drawHighlight(_ rect: CGRect, dark: Bool, in ctx: CGContext) {
+        ctx.saveGState()
+        ctx.setFillColor(dark ? CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.2) : CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.12))
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil))
+        ctx.fillPath()
+        ctx.restoreGState()
+    }
+
+    /// One five-state icon on one bar: 30 x 22 pt (the icon at (3, 2), the highlight around it when selected).
+    static func fiveCell(_ state: MenuIconState, bar: (id: String, name: String, color: UInt32, dark: Bool, selected: Bool),
+                         style: GlyphStyle, scale: Int) -> CGImage? {
+        draw(CGSize(width: 30, height: 22), scale: scale, background: bar.color) { ctx in
+            if bar.selected { drawHighlight(CGRect(x: 0, y: 0, width: 30, height: 22), dark: bar.dark, in: ctx) }
+            MenuIconRenderer.draw(state, style: style, ink: menuInk(state, dark: bar.dark), at: CGPoint(x: 3, y: 2), in: ctx)
+        }
+    }
+
+    private static func renderFiveStates(_ style: GlyphStyle) {
+        do {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent("menu5"), withIntermediateDirectories: true)
+        } catch {
+            failures.append("Cannot create menu5.")
+            return
+        }
+        for bar in fiveBars {
+            for scale in [1, 2] {
+                for entry in fiveKinds {
+                    let state = MenuIconModel.state(for: entry.kind, item: .disk)
+                    save(fiveCell(state, bar: bar, style: style, scale: scale),
+                         "menu5/\(entry.kind.rawValue)-\(bar.id)@\(scale)x.png", group: "menu5-\(bar.id)-\(scale)")
+                }
+            }
+        }
+    }
+
+    /// Five-state metrics for badge-matrix.json (W08). Adds a failure when a gate fails:
+    /// five states pairwise at 1x >= 0.20 (every badge item), data marks with the category glyphs >= 0.35,
+    /// yellow and red badge contrast >= 3:1 on the reference light and dark bars.
+    private static func fiveStateMetrics(_ style: GlyphStyle) -> [String: Any] {
+        var out = [String: Any]()
+        // (1) Five states pairwise, disk as the representative item.
+        let rep = fiveKinds.map { ($0.kind.rawValue, menuGrid(MenuIconModel.state(for: $0.kind, item: .disk), style: style)) }
+        let repMatrix = IconMetrics.matrix(rep)
+        // Every item: caution and alert of each item against every other state of another kind.
+        var all = [(kind: MenuIconKind, name: String, grid: [[Double]])]()
+        for entry in fiveKinds {
+            let items: [HealthItem] = (entry.kind == .caution || entry.kind == .alert) ? HealthItem.allCases : [.disk]
+            for item in items {
+                let name = entry.kind.rawValue + ((entry.kind == .caution || entry.kind == .alert) ? "-" + item.rawValue : "")
+                all.append((entry.kind, name, menuGrid(MenuIconModel.state(for: entry.kind, item: item), style: style)))
+            }
+        }
+        var worst = (value: Double.infinity, pair: "")
+        var byKinds = [String: Double]()
+        for i in 0..<all.count {
+            for j in (i + 1)..<all.count where all[i].kind != all[j].kind {
+                let r = IconMetrics.xorRatio(all[i].grid, all[j].grid)
+                let key = all[i].kind.rawValue + "/" + all[j].kind.rawValue
+                byKinds[key] = min(byKinds[key] ?? .infinity, r)
+                if r < worst.value { worst = (r, all[i].name + "/" + all[j].name) }
+            }
+        }
+        let fivePass = repMatrix.minimum >= IconMetrics.fiveStatePass && worst.value >= IconMetrics.fiveStatePass
+        if !fivePass {
+            failures.append("Five-state gate: minimum XOR \(rounded(worst.value)) (\(worst.pair)) < \(IconMetrics.fiveStatePass) at 1x.")
+        }
+        var solid = [String: Int]()
+        for (name, grid) in rep { solid[name] = solidCount(grid) }
+        out["fiveStates"] = ["pairs": repMatrix.pairs.mapValues(rounded), "minimum": rounded(repMatrix.minimum),
+                             "minimumAllItems": rounded(worst.value), "worstPair": worst.pair,
+                             "minimumByKinds": byKinds.mapValues(rounded), "solidPixels": solid,
+                             "threshold": IconMetrics.fiveStatePass, "pass": fivePass,
+                             "representativeItem": HealthItem.disk.rawValue] as [String: Any]
+        // (2) Data marks join the category glyph matrix (9.3: glyphs pairwise >= 0.35).
+        var glyphs = HealthItem.allCases.map { ($0.rawValue, badgeGrid($0, style: style)) }
+        for mark in MenuMark.allCases { glyphs.append((mark.rawValue, markGrid(mark))) }
+        let gm = IconMetrics.matrix(glyphs)
+        let marksPass = gm.minimum >= IconMetrics.badgePass
+        if !marksPass { failures.append("Mark glyph gate: minimum XOR \(rounded(gm.minimum)) < \(IconMetrics.badgePass) at 1x.") }
+        var markSolid = [String: Int]()
+        for mark in MenuMark.allCases { markSolid[mark.rawValue] = solidCount(markGrid(mark)) }
+        out["marks"] = ["pairs": gm.pairs.mapValues(rounded), "minimum": rounded(gm.minimum), "threshold": IconMetrics.badgePass,
+                        "pass": marksPass, "solidPixels": markSolid] as [String: Any]
+        // (3) Badge contrast against the reference bars (gated) and the extra bars (information).
+        var contrast = [String: Any]()
+        var contrastPass = true
+        for token in MenuIconPalette.Token.allCases {
+            for dark in [false, true] {
+                let color = MenuIconPalette.hex(token, dark: dark)
+                let ratio = IconMetrics.contrast(color, MenuIconPalette.bar(dark: dark))
+                if ratio < IconMetrics.badgeContrastPass {
+                    contrastPass = false
+                    failures.append("Badge contrast \(token.rawValue) \(dark ? "dark" : "light"): \(rounded(ratio)) < 3.")
+                }
+                var extras = [String: Double]()
+                for (name, bg) in dark ? MenuIconPalette.darkExtras : MenuIconPalette.lightExtras {
+                    extras[name] = rounded(IconMetrics.contrast(color, bg))
+                }
+                contrast[token.rawValue + (dark ? "-dark" : "-light")] = ["color": String(format: "%06X", color),
+                    "bar": String(format: "%06X", MenuIconPalette.bar(dark: dark)), "ratio": rounded(ratio),
+                    "extrasNotGated": extras] as [String: Any]
+            }
+        }
+        contrast["threshold"] = IconMetrics.badgeContrastPass
+        contrast["pass"] = contrastPass
+        out["contrast"] = contrast
+        return out
+    }
+
+    /// sheet-menu-five.png: rows are the six bars, columns the five states. Each cell: the icon at real size (1x and
+    /// 2x), the 2x pixels at 3x zoom, and the 1x pixels at 4x zoom. A last row shows the light bar in grayscale
+    /// (shape only, as a color-blind reader sees the level).
+    private static func sheetFiveStates(_ style: GlyphStyle) {
+        let cellW: CGFloat = 250, rowH: CGFloat = 132, top: CGFloat = 52, left: CGFloat = 110
+        let rows = fiveBars.count + 1
+        let size = CGSize(width: left + cellW * CGFloat(fiveKinds.count) + 8, height: top + rowH * CGFloat(rows) + 8)
+        let image = draw(size, scale: 2, background: 0xFFFFFF) { ctx in
+            label("菜单栏图标五态（磁盘为代表项）：每格左上为实际大小 1x 与 2x，左下为 2x 像素放大 3 倍，右为 1x 像素放大 4 倍",
+                  at: CGPoint(x: 8, y: 18), size: 12, in: ctx)
+            label("最后一行为浅色菜单栏的灰度版本：只看形状（色盲模拟）", at: CGPoint(x: 8, y: 34), size: 10, in: ctx)
+            for (c, entry) in fiveKinds.enumerated() {
+                label(entry.name, at: CGPoint(x: left + CGFloat(c) * cellW + 4, y: top - 4), size: 11, in: ctx)
+            }
+            for r in 0..<rows {
+                let gray = (r == fiveBars.count)
+                let bar = gray ? fiveBars[0] : fiveBars[r]
+                let y = top + CGFloat(r) * rowH
+                label(gray ? "灰度（浅色）" : bar.name, at: CGPoint(x: 6, y: y + 60), size: 10, in: ctx)
+                for (c, entry) in fiveKinds.enumerated() {
+                    let state = MenuIconModel.state(for: entry.kind, item: .disk)
+                    let x = left + CGFloat(c) * cellW
+                    fill(CGRect(x: x, y: y, width: cellW - 6, height: rowH - 6), bar.color, in: ctx)
+                    var one = fiveCell(state, bar: bar, style: style, scale: 1)
+                    var two = fiveCell(state, bar: bar, style: style, scale: 2)
+                    if gray { one = one.flatMap(grayscale); two = two.flatMap(grayscale) }
+                    // Real size: 1x pixels at 1 pt (the sheet is 2x, so each pixel is 2 sheet pixels), 2x at 1 pt.
+                    pixels(one, in: CGRect(x: x + 6, y: y + 6, width: 30, height: 22), ctx: ctx)
+                    if let two { ctx.draw(two, in: CGRect(x: x + 42, y: y + 6, width: 30, height: 22)) }
+                    pixels(two, in: CGRect(x: x + 6, y: y + 34, width: 90, height: 66), ctx: ctx)
+                    pixels(one, in: CGRect(x: x + 108, y: y + 6, width: 120, height: 88), ctx: ctx)
+                }
+            }
+        }
+        save(image, "sheet-menu-five.png", group: nil)
+    }
+
+    /// The image in gray (luma), opaque.
+    static func grayscale(_ image: CGImage) -> CGImage? {
+        guard let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                                  bytesPerRow: image.width, space: CGColorSpaceCreateDeviceGray(),
+                                  bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return ctx.makeImage()
     }
 
     // MARK: Card metrics (round 3)
@@ -830,13 +1027,13 @@ enum DogGallery {
 
     private static func menubarMock(_ style: GlyphStyle) {
         let states: [(String, MenuIconState)] = [
-            ("正常", MenuIconState(posture: .relaxed, badge: nil)),
-            ("关注 CPU", MenuIconState(posture: .raised, badge: MenuBadge(item: .cpu))),
-            ("警告 磁盘", MenuIconState(posture: .pant, badge: MenuBadge(item: .disk))),
-            ("警告 温度", MenuIconState(posture: .pant, badge: MenuBadge(item: .thermal))),
-            ("关注 内存", MenuIconState(posture: .raised, badge: MenuBadge(item: .memory))),
-            ("关注 耗电", MenuIconState(posture: .raised, badge: MenuBadge(item: .power))),
-            ("统计中", MenuIconState(posture: .hollow, badge: nil)),
+            ("正常", MenuIconModel.state(for: .normal, item: .disk)),
+            ("留意 CPU", MenuIconModel.state(for: .caution, item: .cpu)),
+            ("异常 磁盘", MenuIconModel.state(for: .alert, item: .disk)),
+            ("采集中", MenuIconModel.state(for: .collecting, item: .disk)),
+            ("过期", MenuIconModel.state(for: .stale, item: .disk)),
+            ("异常 温度", MenuIconModel.state(for: .alert, item: .thermal)),
+            ("留意 内存", MenuIconModel.state(for: .caution, item: .memory)),
         ]
         let bars: [(String, UInt32, Bool)] = [("浅色菜单栏", 0xF2F2F2, false), ("深色菜单栏", 0x252527, true),
                                                ("彩色壁纸（浅字）", 0x5B7DB1, true), ("彩色壁纸（深字）", 0xD9C7A6, false)]
@@ -854,7 +1051,7 @@ enum DogGallery {
                 fakeSystemIcon(at: CGPoint(x: x, y: rect.minY + 4), ink: ink, in: ctx)
                 x += 30
                 for (_, state) in states {
-                    MenuIconRenderer.draw(state, style: style, ink: ink, at: CGPoint(x: x, y: rect.minY + 3), in: ctx)
+                    MenuIconRenderer.draw(state, style: style, ink: menuInk(state, dark: bar.2), at: CGPoint(x: x, y: rect.minY + 3), in: ctx)
                     x += 24 + 14
                 }
                 fakeSystemIcon(at: CGPoint(x: x + 4, y: rect.minY + 4), ink: ink, in: ctx)
@@ -865,11 +1062,11 @@ enum DogGallery {
             for (r, dark) in [false, true].enumerated() {
                 let y = zoomTop + CGFloat(r) * zoomH
                 label(dark ? "1x 像素放大 8 倍（深色）" : "1x 像素放大 8 倍（浅色）", at: CGPoint(x: 8, y: y + 12), size: 9, in: ctx)
-                for (i, entry) in states.prefix(4).enumerated() {
+                for (i, entry) in states.prefix(5).enumerated() {
                     let one = draw(MenuIconRenderer.size, scale: 1, background: barBackground[dark]) { c1 in
-                        MenuIconRenderer.draw(entry.1, style: style, ink: barInk(dark), in: c1)
+                        MenuIconRenderer.draw(entry.1, style: style, ink: menuInk(entry.1, dark: dark), in: c1)
                     }
-                    let box = CGRect(x: 8 + CGFloat(i) * 160, y: y + 18, width: 24 * 6, height: 18 * 6)
+                    let box = CGRect(x: 8 + CGFloat(i) * 128, y: y + 18, width: 24 * 5, height: 18 * 5)
                     pixels(one, in: box, ctx: ctx)
                     label(entry.0, at: CGPoint(x: box.minX, y: box.maxY + 12), size: 9, in: ctx)
                 }
