@@ -21,7 +21,7 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 | 5. Acceptance and UI regression gate | `python3 scripts/ci_acceptance.py`，检查项见 [scripts/README.md](../scripts/README.md) |
 | 6. Upload | 上传 artifact `molemonitor-ci`，保留 3 天，即使前面步骤失败也上传 |
 
-触发条件：推送到任意分支（`branches: ["**"]`）且改动了 `Sources/`、`Tests/`、`scripts/`、`Vendor/` 或工作流文件，或手动触发（`workflow_dispatch`）。
+触发条件：推送到任意分支（`branches: ["**"]`）且改动了 `Sources/`、`Tests/`、`scripts/`、`Vendor/`、`Resources/`（含 `Resources/DogSprites/`）或工作流文件，或手动触发（`workflow_dispatch`）。
 
 ## 成本与免费额度
 
@@ -114,6 +114,56 @@ artifact 的内容：
 另外，`ci_acceptance.py` 检查 `Contents/Resources/DogArt` 内 8 个文件与源文件逐字节相同，并审计 `DogBitmapView.swift` 的非注释代码不含 `Timer`、`TimelineView`、`Canvas`、`CADisplayLink`、`DispatchSource`、`asyncAfter`。
 
 最新全绿运行（run 38115054435）的实测数字见 [VERIFICATION.md](VERIFICATION.md) 条目 3。位图阶段的运行见条目 4。G2 第 1 轮修订（M21、M22、BF）的运行见条目 5。
+
+## v2 门禁登记表
+
+面板 v2 新增门禁 W01 至 W22（见 [DESIGN_V2.md](DESIGN_V2.md) 13.3）。登记表在 `scripts/ci_acceptance.py` 的 `GATES` 列表中。每条登记有 4 个字段：编号、名称、状态、来源。
+
+| 状态 | 含义 | 对 CI 的影响 |
+|---|---|---|
+| `active` | 门禁运行，必须通过。报告里缺这一项算失败 | 失败则 CI 失败 |
+| `pending` | 已登记，未激活 | 不使 CI 失败。汇总列为“未激活”，不算通过 |
+
+| 来源 | 结果读取位置 |
+|---|---|
+| `ui` | `ui-report.json` 中编号相同的项 |
+| `dog` | `dog-report.json` 中编号相同的项 |
+| `core` | 工作流步骤 “Core and CLI tests”。`ci_acceptance.py` 没有读取器，因此不能设为 `active` |
+| `script` | 后续步骤的脚本。同样不能设为 `active` |
+
+旧门禁（A 至 L、M2 至 M22、N1、N2、DA 至 DE、BA 至 BF）全部登记为 `active`，行为不变。
+
+输出末尾的汇总行格式如下：
+
+```
+GATE REGISTRY: <通过> passed / <失败> failed / <未激活> inactive (未激活)
+INACTIVE gates (未激活, not passed, not failed): W01 ...; W02 ...
+```
+
+`ACCEPTANCE PASSED` 前出现一次 `ui` 来源的汇总。`DOG ANIMATION CHECKS PASSED` 前出现一次全部来源的汇总。
+
+### 接入新门禁
+
+工作包 B、C、D、E 只新增自己的检查文件，不改 F 拥有的文件。步骤如下：
+
+1. 在自己的 `Sources/App/UITest*Checks.swift` 中写一个枚举，提供 `@MainActor static func register(into registry: UITestRegistry)`。
+2. 在该文件中加一行注释：`// UITEST-REGISTER: <枚举名>`。
+3. 在 `register` 中调用 `registry.add("W03", "open speed") { runner in ... }`。检查结束时用 `runner.record("W03", 名称, 是否通过, since: 起始时间, 说明)` 报告。编号用 W 门禁编号。
+4. 检查结束时关闭面板。
+5. 本机运行 `swiftc -parse` 检查文件语法。
+
+`scripts/build.py --ui-test` 找到注释行，生成 `dist-uitest/generated/UITestRegistrants.generated.swift`，其中的 `uiTestRegisterAll` 调用每个 `register`。没有该文件或 `register` 为空时，构建不失败，也没有登记项。
+
+检查的运行位置：`UITestHarness.swift` 的 `stepRegistered()` 在步骤 M 之后、步骤 K 之前按登记顺序运行。结果写入 `ui-report.json` 的 `items`。`info.registeredChecks` 列出已登记的编号。
+
+### 激活门禁
+
+1. 工作包的检查已合并，并在 CI 的 `ui-report.json` 或 `dog-report.json` 中报告该编号。
+2. WP-F 把 `GATES` 中该条的 `status` 改为 `active`。
+3. 运行 `python3 scripts/ci_acceptance.py --self-test`。该命令在任何系统上都能运行，检查登记表本身。
+4. 推送并确认 CI 全绿。
+
+> **注意**：不要用降低阈值的方式让门禁通过。`pending` 门禁报告的结果只显示为 `INFO`，不计入通过，也不使 CI 失败。
 
 ## 局限
 
