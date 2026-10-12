@@ -254,7 +254,8 @@ enum PanelRows {
 
 // MARK: - Anomaly area
 
-/// One anomaly row (DESIGN_V2.md 7.2). It holds no measured value: the reason word, a duration and a start time only (7.3).
+/// The reason, the duration and the start of one anomaly. The sidebar header shows them (DESIGN_V2.md 7.2 as changed on
+/// 2026-10-12). It holds no measured value: the reason word, a duration and a start time only (7.3).
 struct AnomalyBar: Equatable, Identifiable {
     var item: HealthItem
     var sidebar: SidebarItem
@@ -309,7 +310,24 @@ enum PanelAnomalies {
     /// Level word of the title: red 异常, yellow 留意.
     static func levelWord(_ level: HealthLevel) -> String { level == .red ? "异常" : "留意" }
 
-    /// The bars for the shown anomalies, in plan order. `shown` comes from `PanelLayoutPlan.shownAnomalies`.
+    /// The single line of the anomaly area: "异常 4 项 · 最久已持续 3 小时". The duration part is left out when no start is known.
+    static func summary(items: [HealthItem], verdicts: [ItemVerdict], now: Date) -> String {
+        var text = "异常 \(items.count) 项"
+        let starts = items.compactMap { item in verdicts.first(where: { $0.item == item })?.since }
+        if let first = starts.min() {
+            let long = TextFormat.duration(since: first, now: now)
+            text += " \u{00B7} 最久已持续 " + long
+        }
+        return text
+    }
+
+    /// The line under the sidebar title of a problem item: "已持续 3 小时 12 分 · 开始 06:20". Nil for a normal item.
+    static func episode(_ verdict: ItemVerdict?, now: Date, timeZone: TimeZone = TimeZone.current) -> String? {
+        guard let v = verdict, v.level == .red || v.level == .yellow, let since = v.since else { return nil }
+        return "已持续 " + TextFormat.duration(since: since, now: now) + " \u{00B7} " + startText(since, now: now, timeZone: timeZone)
+    }
+
+    /// The bars for the anomalies, in plan order. `shown` comes from `PanelLayoutPlan.shownAnomalies`.
     static func bars(shown: [HealthItem], verdicts: [ItemVerdict], now: Date, timeZone: TimeZone = TimeZone.current) -> [AnomalyBar] {
         shown.compactMap { item in
             guard let v = verdicts.first(where: { $0.item == item }) else { return nil }

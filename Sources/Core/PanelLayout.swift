@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Health verdicts and the battery flag (docs/DESIGN_V2.md 2.2, 2.3, 5.2, 7.2).
-// Output: A PanelLayoutPlan: the row order, the anomaly rows, the exact panel height (524, 560, 604, 648 pt; desktop 40 pt less).
+// Output: A PanelLayoutPlan: the row order, the anomaly items, the exact panel height (524 pt; desktop 484 pt).
 // Pos: Pure layout planning of the v2 panel; the SwiftUI views only render the plan. Foundation only. Owner WP-C.
-//      The height depends on the number of anomalies and the battery flag only. Numbers never change it.
+//      The height depends on the battery flag only. The anomaly area is one 36 pt line, so the number of anomalies never changes it.
 
 import Foundation
 
@@ -16,7 +16,7 @@ enum PanelMetrics {
     // Heights (DESIGN_V2.md 2.3)
     static let topPadding = 12.0, hero = 152.0, heroGap = 8.0
     static let row = 40.0, rowsToAnomalyGap = 12.0
-    static let anomalyQuiet = 36.0, anomalyTitle = 28.0, anomalyItem = 44.0, anomalyMaxItems = 3
+    static let anomalyQuiet = 36.0, anomalyLine = 36.0
     static let anomalyToFooterGap = 12.0, footer = 40.0, bottomPadding = 12.0
     // Row columns (DESIGN_V2.md 5.1): 8 + 8 + 120 + 92 + 12 + 80 = 320
     static let dotColumn = 8.0, dotGap = 8.0, textColumn = 120.0, valueColumn = 92.0, sparkGap = 12.0
@@ -107,27 +107,18 @@ struct PanelLayoutPlan: Equatable {
     var height: Double
 
     var quiet: Bool { anomalies.isEmpty }
-    /// Anomaly rows drawn: at most 3 (DESIGN_V2.md 7.2 rule 2).
-    var anomalyRowCount: Int { min(anomalies.count, PanelMetrics.anomalyMaxItems) }
-    /// More than 3 anomalies: the third row becomes "另有 N 项 ›", N = count - 2. Zero otherwise.
-    var overflowCount: Int { anomalies.count > PanelMetrics.anomalyMaxItems ? anomalies.count - 2 : 0 }
-    /// Anomaly rows that show an anomaly (the overflow row replaces the third).
-    var shownAnomalies: [HealthItem] { overflowCount > 0 ? Array(anomalies.prefix(2)) : anomalies }
     var sections: [PanelSection] { [.hero, .rows, .anomaly, .footer] }
 }
 
 enum PanelLayout {
-    /// Height of the anomaly area (DESIGN_V2.md 2.3).
-    static func anomalyHeight(count: Int) -> Double {
-        if count <= 0 { return PanelMetrics.anomalyQuiet }
-        return PanelMetrics.anomalyTitle + PanelMetrics.anomalyItem * Double(min(count, PanelMetrics.anomalyMaxItems))
-    }
+    /// Height of the anomaly area: one line, with or without anomalies (DESIGN_V2.md 2.3, 7.2 as changed on 2026-10-12).
+    static let anomalyHeight = PanelMetrics.anomalyLine
 
-    /// Total height of the panel in pt. The formula of DESIGN_V2.md 2.3.
-    static func height(anomalyCount: Int, hasBattery: Bool) -> Double {
+    /// Total height of the panel in pt: 524 with the battery row, 484 without.
+    static func height(hasBattery: Bool) -> Double {
         let rows = Double(hasBattery ? 6 : 5) * PanelMetrics.row
         let parts: [Double] = [PanelMetrics.topPadding, PanelMetrics.hero, PanelMetrics.heroGap, rows,
-                               PanelMetrics.rowsToAnomalyGap, anomalyHeight(count: anomalyCount),
+                               PanelMetrics.rowsToAnomalyGap, anomalyHeight,
                                PanelMetrics.anomalyToFooterGap, PanelMetrics.footer, PanelMetrics.bottomPadding]
         return parts.reduce(0, +)
     }
@@ -155,6 +146,6 @@ enum PanelLayout {
         }
         let rows = rowOrder(verdicts: input.verdicts, hasBattery: input.hasBattery)
         return PanelLayoutPlan(rows: rows, anomalies: anomalies,
-                               height: height(anomalyCount: anomalies.count, hasBattery: input.hasBattery))
+                               height: height(hasBattery: input.hasBattery))
     }
 }

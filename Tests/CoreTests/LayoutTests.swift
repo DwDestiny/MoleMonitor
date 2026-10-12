@@ -26,13 +26,13 @@ private func plan(_ problems: [(HealthItem, HealthLevel)], battery: Bool = true)
 func runLayoutTests() {
     section("PanelLayout v2: height formula")
     let all: [(HealthItem, HealthLevel)] = [(.disk, .red), (.memory, .red), (.power, .yellow), (.cpu, .yellow), (.thermal, .yellow)]
-    for (count, laptop) in [(0, 524.0), (1, 560.0), (2, 604.0), (3, 648.0), (4, 648.0), (5, 648.0)] {
+    for (count, laptop) in [(0, 524.0), (1, 524.0), (2, 524.0), (3, 524.0), (4, 524.0), (5, 524.0)] {
         let p = plan(Array(all.prefix(count)))
         expect(p.height == laptop, "laptop \(count) anomalies: \(laptop), got \(p.height)")
         expect(p.rows.count == 6, "laptop has 6 rows")
     }
     let desktopAll: [(HealthItem, HealthLevel)] = [(.disk, .red), (.memory, .red), (.cpu, .yellow), (.thermal, .yellow)]
-    for (count, desktop) in [(0, 484.0), (1, 520.0), (2, 564.0), (3, 608.0), (4, 608.0)] {
+    for (count, desktop) in [(0, 484.0), (1, 484.0), (2, 484.0), (3, 484.0), (4, 484.0)] {
         let p = plan(Array(desktopAll.prefix(count)), battery: false)
         expect(p.height == desktop, "desktop \(count) anomalies: \(desktop), got \(p.height)")
         expect(p.rows.count == 5 && !p.rows.contains(.battery), "desktop has 5 rows, no battery")
@@ -41,7 +41,7 @@ func runLayoutTests() {
     expect(PanelMetrics.dotColumn + PanelMetrics.dotGap + PanelMetrics.textColumn + PanelMetrics.valueColumn
            + PanelMetrics.sparkGap + PanelMetrics.sparkWidth == PanelMetrics.contentWidth, "row columns add up to 320")
 
-    section("PanelLayout v2: row order and overflow")
+    section("PanelLayout v2: row order")
     let quiet = plan([])
     expect(quiet.quiet && quiet.rows == SidebarItem.fixedRows, "quiet: fixed order")
     expect(quiet.sections == [.hero, .rows, .anomaly, .footer], "four sections in order")
@@ -49,10 +49,7 @@ func runLayoutTests() {
     expect(mixed.rows.prefix(2) == [.disk, .thermal], "red problem before yellow problem, got \(mixed.rows)")
     expect(Array(mixed.rows.dropFirst(2)) == [.cpu, .memory, .network, .battery], "normal rows keep the fixed order, got \(mixed.rows)")
     let four = plan(Array(all.prefix(4)))
-    expect(four.anomalyRowCount == 3 && four.overflowCount == 2 && four.shownAnomalies.count == 2, "4 anomalies: overflow 2")
-    let five = plan(all)
-    expect(five.overflowCount == 3 && five.anomalies.count == 5, "5 anomalies: overflow 3")
-    expect(plan(Array(all.prefix(3))).overflowCount == 0, "3 anomalies: no overflow")
+    expect(four.anomalies.count == 4 && four.height == quiet.height, "4 anomalies: all listed, height unchanged")
     expect(plan([(.power, .yellow)], battery: false).anomalies.isEmpty, "no battery anomaly on a desktop")
 
     section("PanelRows: values and notes")
@@ -114,6 +111,10 @@ func runLayoutTests() {
         (.thermal, "thermal_fair", "热状态偏高"), (.thermal, "thermal_serious", "热状态严重"), (.thermal, "thermal_critical", "热状态临界"),
         (.power, "sleep_drain", "睡眠掉电偏快"), (.power, "awake_drain", "掉电偏快")]
     for (item, code, word) in reasons { expect(PanelAnomalies.reasonWord(item: item, code: code) == word, "reason \(code)") }
+    let sv = [lv(.disk, .red, code: "growth_5d", since: 192), lv(.memory, .yellow, code: "pressure_warning", since: 20)]
+    expect(PanelAnomalies.summary(items: [.disk, .memory], verdicts: sv, now: now) == "异常 2 项 \u{00B7} 最久已持续 3 小时 12 分", "summary: \(PanelAnomalies.summary(items: [.disk, .memory], verdicts: sv, now: now))")
+    expect(PanelAnomalies.episode(sv[0], now: now, timeZone: utc) == "已持续 3 小时 12 分 \u{00B7} 开始 08:48", "episode: \(String(describing: PanelAnomalies.episode(sv[0], now: now, timeZone: utc)))")
+    expect(PanelAnomalies.episode(lv(.cpu, .green), now: now, timeZone: utc) == nil, "no episode for a normal item")
     let bars = PanelAnomalies.bars(shown: [.disk, .memory],
                                    verdicts: [lv(.disk, .red, code: "growth_5d", since: 192), lv(.memory, .yellow, code: "pressure_warning", since: 20)],
                                    now: now, timeZone: utc)
@@ -218,8 +219,8 @@ func runSidebarTests() {
     expect(noWrites?.rows.isEmpty == true && noWrites?.emptyText?.hasPrefix("\u{2014}") == true, "missing disk writes are not zero")
     let blockerTable = SidebarRanking.make(.battery, apps: [], interfaces: nil, blockers: [SleepBlocker(name: "Zoom", preventsSystemSleep: true, preventsDisplaySleep: true)])
     expect(blockerTable?.rows.first?.value == "防止系统睡眠、防止显示器睡眠", "sleep blocker kinds")
-    let nets = SidebarRanking.make(.network, apps: [], interfaces: [InterfaceRate(name: "en0", displayName: "Wi-Fi", rxPerSecond: 1_100_000, txPerSecond: 96_000, rxTotal: 5, txTotal: 6),
-                                                             InterfaceRate(name: "utun3", displayName: nil, rxPerSecond: 9_000_000, txPerSecond: 0, rxTotal: nil, txTotal: nil)], blockers: nil)
+    let nets = SidebarRanking.make(.network, apps: [], interfaces: [InterfaceRate(name: "en0", displayName: "Wi-Fi", downBytesPerSec: 1_100_000, upBytesPerSec: 96_000, totalDown: 5, totalUp: 6),
+                                                             InterfaceRate(name: "utun3", displayName: "utun3", downBytesPerSec: 9_000_000, upBytesPerSec: 0, totalDown: 0, totalUp: 0)], blockers: nil)
     expect(nets?.rows.count == 1 && nets?.rows[0].name == "Wi-Fi" && nets?.rows[0].value == "\u{2193}1.1 MB/s \u{2191}96 KB/s", "network ranking skips VPN, got \(String(describing: nets?.rows.first?.value))")
     expect(SidebarRanking.make(.network, apps: [], interfaces: nil, blockers: nil)?.emptyText?.hasPrefix("\u{2014}") == true, "no interface data is a dash")
     expect(SidebarRanking.make(.battery, apps: [], interfaces: nil, blockers: [])?.emptyText == "没有 App 阻止睡眠", "no blockers")

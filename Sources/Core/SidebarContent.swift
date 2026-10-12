@@ -304,17 +304,6 @@ enum ChartSampling {
 
 // MARK: - Inputs
 
-/// One network interface with its rates and totals since boot. Names follow DESIGN_V2.md 6.5.
-struct InterfaceRate: Equatable {
-    /// BSD name, for example "en0".
-    var name: String
-    /// Display name (Wi-Fi, 以太网). Nil when unreadable: the row then shows the BSD name.
-    var displayName: String?
-    var rxPerSecond: Double?
-    var txPerSecond: Double?
-    var rxTotal: Int64?
-    var txTotal: Int64?
-}
 
 /// One app with the bytes it wrote to disk in the last 5 minutes (DESIGN_V2.md 6.5). The engine feeds it from `AppDiskWriteTracker`.
 struct DiskWriterRow: Equatable {
@@ -721,17 +710,16 @@ enum SidebarRanking {
         guard let interfaces else { return RankTable(title: title, rows: [], emptyText: "\u{2014} 没有读到网卡数据", plain: true) }
         let physical = interfaces.filter { NetworkFilter.isPhysical($0.name) }
         let sorted = physical.sorted { a, b in
-            let x = (a.rxPerSecond ?? 0) + (a.txPerSecond ?? 0), y = (b.rxPerSecond ?? 0) + (b.txPerSecond ?? 0)
+            let x = (a.downBytesPerSec ?? 0) + (a.upBytesPerSec ?? 0), y = (b.downBytesPerSec ?? 0) + (b.upBytesPerSec ?? 0)
             return x != y ? x > y : a.name < b.name
         }
-        let most = max(1, (sorted.first.map { ($0.rxPerSecond ?? 0) + ($0.txPerSecond ?? 0) }) ?? 1)
+        let most = max(1, (sorted.first.map { ($0.downBytesPerSec ?? 0) + ($0.upBytesPerSec ?? 0) }) ?? 1)
         let rows = sorted.prefix(5).map { i -> RankRow in
-            let total = (i.rxPerSecond ?? 0) + (i.txPerSecond ?? 0)
+            let total = (i.downBytesPerSec ?? 0) + (i.upBytesPerSec ?? 0)
             var value = "\u{2014}"
-            if let rx = i.rxPerSecond, let tx = i.txPerSecond { value = "\u{2193}" + SidebarText.rate(rx) + " \u{2191}" + SidebarText.rate(tx) }
-            var detail: String?
-            if let rx = i.rxTotal, let tx = i.txTotal { detail = "开机以来 下行 " + TextFormat.bytes(rx) + "，上行 " + TextFormat.bytes(tx) }
-            return RankRow(id: i.name, name: i.displayName ?? i.name, bundleID: nil, isSystem: false, value: value,
+            if let rx = i.downBytesPerSec, let tx = i.upBytesPerSec { value = "\u{2193}" + SidebarText.rate(rx) + " \u{2191}" + SidebarText.rate(tx) }
+            let detail: String? = "开机以来 下行 " + TextFormat.bytes(i.totalDown) + "，上行 " + TextFormat.bytes(i.totalUp)
+            return RankRow(id: i.name, name: i.displayName, bundleID: nil, isSystem: false, value: value,
                            fraction: min(1, total / most), detail: detail)
         }
         return RankTable(title: title, rows: Array(rows), emptyText: rows.isEmpty ? "\u{2014} 没有读到物理网卡" : nil, plain: true)

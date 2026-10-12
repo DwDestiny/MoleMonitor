@@ -91,7 +91,6 @@ enum CopyTarget: Hashable {
 /// The element that has the keyboard focus ring (DESIGN_V2.md 10.10). Nil focus shows no ring.
 enum PanelFocus: Hashable {
     case row(SidebarItem)
-    case anomaly(Int)
     case records
     case primary
     case more
@@ -111,6 +110,8 @@ struct SidebarContentState: Equatable {
     var ranking: RankTable?
     var footnotes: [String]
     var groups: [RecordGroup]
+    /// "已持续 3 小时 12 分 · 开始 06:20" for a problem item, nil otherwise.
+    var episode: String? = nil
 }
 
 /// Keys that the window forwards to the model.
@@ -248,8 +249,9 @@ final class PanelModel: ObservableObject, PanelPinning {
     /// The breakdown rows in plan order.
     var rows: [PanelRowState] { PanelRows.make(order: layoutPlan.rows, input: rowsInput) }
 
-    var anomalyBars: [AnomalyBar] {
-        PanelAnomalies.bars(shown: layoutPlan.shownAnomalies, verdicts: data.verdicts, now: data.now)
+    /// The one line of the anomaly area when there are anomalies: "异常 4 项 · 最久已持续 3 小时".
+    var anomalySummary: String {
+        PanelAnomalies.summary(items: layoutPlan.anomalies, verdicts: data.verdicts, now: data.now)
     }
 
     var areaState: PanelAreaState {
@@ -385,9 +387,7 @@ final class PanelModel: ObservableObject, PanelPinning {
 
     private var focusOrder: [PanelFocus] {
         var out: [PanelFocus] = layoutPlan.rows.map { .row($0) }
-        let count = layoutPlan.anomalyRowCount
-        for i in 0..<count { out.append(.anomaly(i)) }
-        if layoutPlan.anomalies.isEmpty { out.append(.records) }
+        out.append(.records)
         out.append(.primary)
         out.append(.more)
         if let item = sidebarItem {
@@ -449,9 +449,6 @@ final class PanelModel: ObservableObject, PanelPinning {
         guard let focus = keyFocus else { return false }
         switch focus {
         case .row(let item): pinSidebar(item)
-        case .anomaly(let i):
-            let shown = layoutPlan.shownAnomalies
-            if i < shown.count { pinSidebar(SidebarItem(shown[i])) } else { pinSidebar(.anomalyLog) }
         case .records: pinSidebar(.anomalyLog)
         case .primary: copy(.primary)
         case .more: onShowMoreMenu?()
@@ -525,7 +522,8 @@ final class PanelModel: ObservableObject, PanelPinning {
                                    stats: SidebarStats.make(input, events: data.events, recordDays: days), capacity: capacity,
                                    ranking: SidebarRanking.make(item, apps: data.apps, interfaces: data.interfaces,
                                                                 blockers: data.sleepBlockers, diskWriters: data.diskWriters),
-                                   footnotes: SidebarFootnote.lines(item, current: data.current), groups: groups)
+                                   footnotes: SidebarFootnote.lines(item, current: data.current), groups: groups,
+                                   episode: item.healthItem.flatMap { PanelAnomalies.episode(data.verdict($0), now: data.now, timeZone: zone) })
     }
 
     // MARK: Sidebar data
@@ -717,6 +715,7 @@ enum PanelEngineAdapter {
             DiskWriterRow(key: row.key, name: row.name, bundleID: nil, bytes: row.bytes, isSystem: row.isSystem)
         }
         data.sleepBlockers = engine.latestSleepBlockers
+        data.interfaces = engine.interfaces.isEmpty ? nil : engine.interfaces
         return data
     }
 

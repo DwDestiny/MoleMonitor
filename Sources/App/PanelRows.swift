@@ -140,6 +140,8 @@ struct BreakdownRowView: View {
     let index: Int
     let spark: SparkSeries
     let selected: Bool
+    /// Only the most severe row carries the tint. The other problem rows show their level in the symbol and the value.
+    var tinted = false
     let hovered: Bool
     let focused: Bool
     @Environment(\.tok) private var tok
@@ -152,7 +154,7 @@ struct BreakdownRowView: View {
         case .collecting: return tok.textTertiary
         case .stale: return tok.textSecondary
         case .missing: return tok.textSecondary
-        case .measured: return tok.valueColor(row.level, problem: row.isProblem)
+        case .measured: return row.isProblem ? tok.valueColor(row.level, problem: true) : tok.textSecondary
         }
     }
 
@@ -191,11 +193,11 @@ struct BreakdownRowView: View {
         }
         .frame(width: PanelMetrics.contentWidth, height: PanelMetrics.row)
         .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(tok.rowTint(row.dot)))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(tinted ? tok.rowTint(row.dot) : Color.clear))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(selected ? tok.fillSelected : (hovered ? tok.fillHover : Color.clear)))
         .overlay(alignment: .leading) {
-            Capsule().fill(tok.accent).frame(width: 2, height: 24).opacity(selected ? 1 : 0)
+            Capsule().fill(tok.selectedBar).frame(width: 3, height: 24).opacity(selected ? 1 : 0)
         }
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
             .strokeBorder(tok.accent, lineWidth: 1.5).opacity(focused ? 1 : 0))
@@ -218,7 +220,7 @@ struct BreakdownRowView: View {
                     .lineLimit(1)
             }
             Text(row.value)
-                .font(row.status == .collecting ? PanelType.rowName : PanelType.rowValue)
+                .font(row.status == .collecting ? PanelType.rowName : (row.isProblem ? PanelType.rowValue : PanelType.rowValueQuiet))
                 .foregroundStyle(row.status == .collecting ? tok.textTertiary : valueColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
@@ -239,6 +241,7 @@ struct PanelRowsSection: View {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 BreakdownRowView(row: row, index: index, spark: model.spark(for: row.item),
                                  selected: model.sidebarItem == row.item,
+                                 tinted: index == 0 && row.isProblem,
                                  hovered: model.hoverRow == row.item,
                                  focused: model.keyFocus == .row(row.item))
                     .hoverRegion(.row(row.item), model: model)

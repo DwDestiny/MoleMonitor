@@ -179,10 +179,6 @@ extension UITestRunner {
             if row.status == .measured && !model.spark(for: row.item).isEmpty { out.append(("row." + id + ".spark", 3.0)) }
             if row.isProblem { out.append(("dot." + id, 3.0)) }
         }
-        for i in 0..<model.anomalyBars.count {
-            for part in ["title", "reason", "duration", "start"] { out.append(("txt.anomaly.\(part).\(i)", 4.5)) }
-            out.append(("dot.anomaly.\(i)", 3.0))
-        }
         return out
     }
 
@@ -766,7 +762,8 @@ extension UITestRunner {
             // Height equals the formula of 2.3 (written out here, not read from PanelLayout.height).
             let anomalyCount = data.problems.filter { $0.item != .power || data.hasBattery }.count
             let rowCount = data.hasBattery ? 6 : 5
-            let anomalyArea = anomalyCount == 0 ? 36.0 : 28.0 + 44.0 * Double(Swift.min(anomalyCount, 3))
+            // The anomaly area is one 36 pt line, so the height changes with the battery row only (design change 2026-10-12).
+            let anomalyArea = 36.0
             let formula = 12.0 + 152.0 + 8.0 + Double(rowCount) * 40.0 + 12.0 + anomalyArea + 12.0 + 40.0 + 12.0
             let height = Double(hv.bounds.height)
             if abs(height - formula) > 1 { problems.append("\(name): height \(height) pt, formula \(formula) pt") }
@@ -790,16 +787,16 @@ extension UITestRunner {
             onScreen.sort { $0.y < $1.y }
             if onScreen.map({ $0.id }) != wanted { problems.append("\(name): rows on screen \(onScreen.map { $0.id }) differ from \(wanted)") }
             if model.rows.map({ $0.item.rawValue }) != wanted { problems.append("\(name): model rows differ from \(wanted)") }
-            // Colors: problem rows carry their level tint, normal rows have none.
+            // Colors: only the first (most severe) problem row carries its level tint. Other problem rows and normal rows have none.
             for dark in [false, true] {
                 await setAppearance(dark: dark)
                 guard let shot = capture(hv) else { problems.append("\(name): cannot capture"); continue }
                 let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
-                for row in model.rows {
+                for (rowIndex, row) in model.rows.enumerated() {
                     guard let r = panelRect("row." + row.item.rawValue) else { continue }
                     let strip = CGRect(x: r.minX + 1, y: r.minY + 12, width: 4, height: 16)
                     guard let color = regionColor(shot, region: strip, surface: surface) else { continue }
-                    if row.isProblem {
+                    if row.isProblem && rowIndex == 0 {
                         let alpha = dark ? 0.10 : 0.06
                         var level: UITestContrast.RGB = (229.0, 48.0, 42.0)
                         if row.dot == .red {
@@ -814,7 +811,7 @@ extension UITestRunner {
                     } else {
                         let spread = Swift.max(color.r, color.g, color.b) - Swift.min(color.r, color.g, color.b)
                         let surfaceSpread = Swift.max(surface.r, surface.g, surface.b) - Swift.min(surface.r, surface.g, surface.b)
-                        if spread - surfaceSpread > 4 { problems.append("\(name) \(dark ? "dark" : "light") \(row.item.rawValue): normal row has color (spread \(Int(spread)))") }
+                        if spread - surfaceSpread > 4 { problems.append("\(name) \(dark ? "dark" : "light") \(row.item.rawValue): row without tint has color (spread \(Int(spread)))") }
                     }
                 }
             }
@@ -822,10 +819,13 @@ extension UITestRunner {
             // A measured value does not appear in a row and in an anomaly bar (7.3).
             var rowTokens = Set<String>()
             for row in model.rows { rowTokens.formUnion(measureTokens(row.measurement)); rowTokens.formUnion(measureTokens(row.note)) }
-            var barTokens = Set<String>()
-            for bar in model.anomalyBars { barTokens.formUnion(measureTokens(bar.title + " " + bar.reason + " " + bar.duration + " " + bar.start)) }
+            let barTokens = measureTokens(model.anomalySummary)
             let both = rowTokens.intersection(barTokens)
-            if !both.isEmpty { problems.append("\(name): measured values in a row and a bar: \(both.sorted())") }
+            if !both.isEmpty { problems.append("\(name): measured values in a row and the anomaly line: \(both.sorted())") }
+            // The anomaly area lists no item: no row name appears in the anomaly line.
+            if !model.layoutPlan.anomalies.isEmpty {
+                for row in model.rows where model.anomalySummary.contains(row.name) { problems.append("\(name): the anomaly line names \(row.name)") }
+            }
             notes.append("\(name)=\(Int(height)) pt, \(wanted.count) rows, \(anomalyCount) anomalies")
             model.panelDidClose()
             await closeFixture()

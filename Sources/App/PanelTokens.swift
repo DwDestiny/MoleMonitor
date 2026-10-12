@@ -63,7 +63,10 @@ struct PanelTokens {
     var chartFill: Color { pick(Color(.sRGB, white: 0, opacity: 0.06), Color(.sRGB, white: 1, opacity: 0.08)) }
     var chartGrid: Color { pick(Color(.sRGB, white: 0, opacity: 0.08), Color(.sRGB, white: 1, opacity: 0.10)) }
     var chartThreshold: Color { pick(Color(.sRGB, white: 0, opacity: 0.25), Color(.sRGB, white: 1, opacity: 0.25)) }
-    var fillSelected: Color { pick(Self.rgb(0x0A5FCC, 0.10), Self.rgb(0x4DA3FF, 0.16)) }
+    /// Neutral gray, so a selected row adds no hue on a tinted row (design check 2026-10-12).
+    var fillSelected: Color { pick(Color(.sRGB, white: 0, opacity: 0.09), Color(.sRGB, white: 1, opacity: 0.14)) }
+    /// The 3 pt bar at the left edge of the selected row. Neutral too.
+    var selectedBar: Color { pick(Color(.sRGB, white: 0, opacity: 0.55), Color(.sRGB, white: 1, opacity: 0.65)) }
 
     /// Value color of a row: level color for a problem, primary gray otherwise (DESIGN_V2.md 5.1).
     func valueColor(_ level: HealthLevel, problem: Bool) -> Color {
@@ -196,6 +199,8 @@ enum PanelType {
     static let rowName = Font.system(size: 13, weight: .medium)
     static let rowNote = Font.system(size: 11)
     static let rowValue = Font.system(size: 17, weight: .semibold).monospacedDigit()
+    /// Value of a normal row: same size, lighter weight (design check 2026-10-12).
+    static let rowValueQuiet = Font.system(size: 17, weight: .regular).monospacedDigit()
     static let rowPrefix = Font.system(size: 11)
     static let section = Font.system(size: 11, weight: .semibold)
     static let anomalyTitle = Font.system(size: 13, weight: .medium)
