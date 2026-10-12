@@ -1,39 +1,44 @@
-# MoleMonitor 排查请求
-请作为我的 Mac 维护助手，根据以下只读监测数据排查问题，并给出优化建议。
+# 请帮我排查这台 Mac：磁盘 5 天多占用 314 GB
+以下是 MoleMonitor 的只读监测数据。采样于 10月11日 12:00，数据新鲜。
 
-## 环境
-- Mac14,15 · Apple M2 · 内存 64 GB · macOS 15.1
-- MoleMonitor 0.2.0 · 采样于 10月11日 12:00 · 数据新鲜
-- CLI：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli`
+## 1. 现在的问题
+| 顺序 | 项目 | 级别 | 证据 | 已持续 |
+|---|---|---|---|---|
+| 1 | 磁盘 | 红 | 5 天 +314 GB，可用 120 GB | 3 小时 0 分 |
 
-## 状态摘要
-| 项 | 等级 | 当前 | 已持续 |
-|---|---|---|---|
-| 磁盘 | 红 | 5 天 +314 GB，可用 120 GB | 3 小时 0 分 |
+其余正常：温度。
 
-## 证据
+## 2. 你的任务
+1. 按第 3 节的步骤只读诊断，找出原因。
+2. 列出可以处理的对象：名称、大小或占用、理由、能否恢复。
+3. 等我确认后，才做任何改动。
+4. 回复格式：一句结论 → 证据 → 建议。每条建议标明“只读”或“会改动系统”。
+
+## 3. 排查步骤
+### 3.1 磁盘（红，最优先）
+口径：真实已用不含可清除空间（快照、系统缓存）。增长量 = 当前值 − 窗口内最低值。
+1. 运行 `~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`，找出增长集中的日期。
+2. 运行 `mo analyze --json ~`，找出最大的目录。再对其中最大的子目录运行 `mo analyze --json <目录>`。不要省略 `--json`：交互模式可能把文件移到废纸篓。
+3. 对照第 5 节的写入排行与增长日期，判断来源：下载、虚拟机镜像、Xcode 数据、容器镜像、照片库、本地备份。
+4. 运行 `mo clean --dry-run` 与 `mo purge --dry-run`，只看预览结果。
+5. 列出可回收项：路径（家目录写 ~）、大小、能否再生成。
+
+## 4. 安全规则（必须遵守）
+1. 先只读诊断，再给建议。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 5. 参考数据
+- 机器：Mac14,15 · Apple M2 · 内存 64 GB · macOS 15.1 · MoleMonitor 0.2.0
+
 | 指标 | 值 |
 |---|---|
 | 磁盘增长 | 1 天 +34 GB · 5 天 +314 GB · 30 天 +322 GB |
+| 磁盘容量 | 共 995 GB · 已用 875 GB · 可用 120 GB（含可清除 21 GB） |
+| 写入最多的 App（近 5 分钟） | 未读到 |
 
-## 当前提醒
-1. [红] 磁盘 5 天多占用了 314 GB。已排除可清除空间（快照、缓存）。
-
-## 我注意到的现象
-[在此描述你注意到的现象]
-
-## 排查规则
-1. 先只读诊断，再给建议。
-2. 删除、卸载、清理、结束进程、退出 App 前，都先列清单（对象、大小、理由），等我确认。
-3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
-4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
-5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。如果找不到 `mo`，说明我没有安装 Mole，不要自行安装。
-6. 命令报错时先运行 `<命令> --help` 或 `man <命令>`，不猜命令名或参数。
-7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。
-
-## 专项：磁盘增长
-口径：真实已用已排除可清除空间。增长量 = 当前值 − 窗口内最低值。
-1. 运行 `~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`，找出增长集中的日期。
-2. 运行 `mo analyze --json ~` 找最大目录，再对其中最大的子目录运行 `mo analyze --json <目录>`。不要不带 --json 运行 `mo analyze`，交互模式可能把文件移到废纸篓。
-3. 对照日期判断来源：下载、虚拟机镜像、Xcode 数据、容器镜像、照片库、本地备份。
-4. 列出可回收项：路径（家目录写 ~）、大小、能否再生成。只用 dry-run 预览。
+## 6. 我补充的现象
+[可选：写下你注意到的现象，例如“导入视频后空间少了很多”]

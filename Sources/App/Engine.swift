@@ -40,6 +40,8 @@ final class MonitorEngine: ObservableObject {
     /// "实时", "近 N 分钟" (N at most 5) or "采样于 HH:mm".
     @Published private(set) var appsBasis: String = "\u{2014}"
     @Published private(set) var coverage = ProcessCoverage(readable: 0, unreadable: 0)
+    /// Top 5 disk writers of the last 5 minutes (DESIGN_V2.md 6.5). Empty until two scans exist. Writes are not disk growth.
+    @Published private(set) var diskWriters: [AppDiskWriteTracker.Row] = []
     @Published private(set) var dataState: DataState = .collecting
     /// Latest sleep records, for the power item.
     @Published private(set) var sleeps: [SleepRecord] = []
@@ -127,6 +129,7 @@ final class MonitorEngine: ObservableObject {
     private var sleepStart: (at: Date, power: PowerSnapshot)?
     private var lastWakeAt: Date?
     private var tracker = AppCPUTracker()
+    private var diskTracker = AppDiskWriteTracker()
 
     // Samplers.
     private var coarseSampler = SystemSampler()
@@ -137,6 +140,9 @@ final class MonitorEngine: ObservableObject {
     private var latestRate: NetworkRate?
     /// Newest memory pressure percent and memory split. Nil after a failed read, so a failure is never shown as a value.
     private var latestPressurePercent: Int?
+    /// Anomaly records (events.json) and the end of the last 5 minute window written to rollup-YYYY-MM.ndjson.
+    private var eventTracker = EventTracker(records: [], previousStatusAt: nil)
+    private var lastRollupEnd: Date?
     private var latestMemory: MemoryBreakdown?
     private var cachedPower: PowerSnapshot?
     private var powerReadAt: Date?
@@ -384,8 +390,10 @@ final class MonitorEngine: ObservableObject {
         let apps: [AppUsage] = StatusExtras.unionApps(latestApps)
         let basis = basisText(now: now)
         let cover = latestCoverage
+        let writers = diskTracker.top(now: now)
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isCurrent(session: session) else { return }
+            if self.diskWriters != writers { self.diskWriters = writers }
             if self.live != liveSnapshot { self.live = liveSnapshot }
             if self.trend != series { self.trend = series }
             if self.current != snapshot { self.current = snapshot }
@@ -416,6 +424,11 @@ final class MonitorEngine: ObservableObject {
 #endif
         trendBuffer = TrendBuffer(restoring: restored)
         sleepRecords = SleepStore.load(dir: dataDir, now: now)
+        // Records of the last run: an open record whose item is green now ends at the last status time (estimated).
+        let previousStatusAt: Date? = (try? StatusStore.read(from: MoleMonitorPaths.statusURL(dir: dataDir)))?.writtenAt
+        eventTracker = EventTracker(records: EventLog.readAll(dir: dataDir).records, previousStatusAt: previousStatusAt)
+        RollupStore.prune(dir: dataDir, now: now)
+        lastRollupEnd = RollupStore.read(dir: dataDir, from: now.addingTimeInterval(-3600), to: now).windows.last?.end
         coarseSampler = SystemSampler()
         _ = coarseSampler.read(at: now, slow: false)  // baseline for the first CPU and network values
         refreshPower(now: now, force: true)
@@ -496,6 +509,7 @@ final class MonitorEngine: ObservableObject {
         baselineAt = nil
         lastScanAt = nil
         tracker.reset()
+        diskTracker.reset()
         scheduleTimer()
         scheduleWarmUp()
         wakeSample?.cancel()
@@ -546,6 +560,7 @@ final class MonitorEngine: ObservableObject {
         } else {
             runPipeline(now: now)
         }
+        if regular { flushRollup(now: now) }
         if regular && tickCount % MonitorEngine.ticksPerSave == 0 { persistTrend() }
     }
 
@@ -628,7 +643,10 @@ final class MonitorEngine: ObservableObject {
         let seconds: TimeInterval = baselineAt.map { now.timeIntervalSince($0) } ?? 0
         let usage = AppRanking.usage(previous: baseline, current: scan.samples, seconds: seconds,
                                      ignore: AppRanking.defaultIgnore)
-        if !baseline.isEmpty && seconds > 0 { tracker.add(at: now, seconds: seconds, usage: usage) }
+        if !baseline.isEmpty && seconds > 0 {
+            tracker.add(at: now, seconds: seconds, usage: usage)
+            diskTracker.add(at: now, seconds: seconds, usage: usage)
+        }
         baseline = scan.samples
         baselineAt = now
         lastScanAt = now
@@ -727,6 +745,8 @@ final class MonitorEngine: ObservableObject {
             for n in NotificationPlanner.schedule(candidates, budget: &budget, now: now) { notifier.post(n) }
         }
 
+        recordEvents(output: output, now: now)
+
         var key = ""
         for v in output.verdicts { key += v.item.rawValue + ":" + v.level.rawValue + ":" + (v.alert?.type ?? "-") + "," }
         let changed = key != lastLevelKey
@@ -737,6 +757,38 @@ final class MonitorEngine: ObservableObject {
             writeStatus(now: now, publish: true)
         } else {
             publishAll(status: buildStatus(now: now), now: now)
+        }
+    }
+
+    /// Level changes become anomaly records. Only a change rewrites events.json. A failed write is retried at the next change.
+    private func recordEvents(output: PipelineOutput, now: Date) {
+        var growth = [String: Int64]()
+        if let g = lastResult?.items.disk.growth { for (key, value) in g { if let bytes = value.bytes { growth[key] = bytes } } }
+        var names = [HealthItem: String]()
+        if includeAppNamesInPrompt, let key = pipeline.rules.cpuAppKey, let app = latestApps.first(where: { $0.key == key }) {
+            names[.cpu] = app.name
+        }
+        if eventTracker.observe(verdicts: output.verdicts, current: output.current, diskGrowth: growth, appNames: names, now: now) {
+            try? EventLog.write(eventTracker.records, dir: dataDir, now: now)
+        }
+    }
+
+    /// Appends the newest finished 5 minute window once (DESIGN_V2.md 12.2 D1). A window without points writes nothing.
+    private func flushRollup(now: Date) {
+        let end = RollupAggregator.lastFinishedEnd(now: now)
+        if let last = lastRollupEnd, end <= last { return }
+        lastRollupEnd = end
+        guard let window = RollupAggregator.window(points: trendBuffer.coarse, end: end) else { return }
+        _ = try? RollupStore.append(window, dir: dataDir)
+    }
+
+    /// Apps that keep the Mac awake (DESIGN_V2.md 6.5, D4). Read on demand, not on a timer: the battery sidebar calls it
+    /// when it opens and then every 10 s with a one-shot delay. The completion runs on the main thread.
+    func readSleepBlockers(completion: @escaping ([SleepBlocker]) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let list = self.processSampler.sleepBlockers()
+            DispatchQueue.main.async { completion(list) }
         }
     }
 
@@ -814,10 +866,12 @@ final class MonitorEngine: ObservableObject {
         let basis = basisText(now: now)
         let cover = latestCoverage
         let records = sleepRecords
+        let writers = diskTracker.top(now: now)
         let summary = trendBuffer.cpuSummary(now: now)
         let state: DataState = trendBuffer.latest == nil ? .collecting : .fresh
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            if self.diskWriters != writers { self.diskWriters = writers }
             self.status = file
             self.publishedCPUSummary = summary
             if self.diskLevel != level { self.diskLevel = level }

@@ -1,35 +1,20 @@
-# MoleMonitor 排查请求
-请作为我的 Mac 维护助手，根据以下只读监测数据排查问题，并给出优化建议。
+# 请先确认 MoleMonitor 的数据是否可用
+以下是 MoleMonitor 的只读监测数据。采样于 10月11日 11:35，数据已过期 25 分钟。数字可能不是现在的状态，请先运行 `~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status` 确认。
 
-## 环境
-- Mac14,15 · Apple M2 · 内存 64 GB · macOS 15.1
-- MoleMonitor 0.2.0 · 采样于 10月11日 11:35 · 数据已过期（25 分钟前）
-- CLI：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli`
-
-## 状态摘要
-| 项 | 等级 | 当前 | 已持续 |
-|---|---|---|---|
-| 温度 | 过期 | — | — |
-| 内存 | 过期 | — | — |
-| 磁盘 | 过期 | — | — |
-| 耗电 | 过期 | — | — |
-| CPU | 过期 | — | — |
-
-## 数据不可用
+## 1. 现在的情况
 监测数据已过期（25 分钟前），当前读数不可信。
 不要根据这些数据判断问题，也不要推测问题。
 1. 运行 `~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`，确认 App 在运行且数据是新的。
 2. 如果 App 未运行，告诉我，等我启动后再排查。不要自行启动或安装。
 3. 如果数据已是新的，按新数据重新判断。
 
-## 我注意到的现象
-[在此描述你注意到的现象]
-
-## 排查规则
+## 4. 安全规则（必须遵守）
 1. 先只读诊断，再给建议。
-2. 删除、卸载、清理、结束进程、退出 App 前，都先列清单（对象、大小、理由），等我确认。
-3. 不用 sudo，不改 SIP、登录项、风扇、SMC 或电源设置。
-4. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`、`mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
-5. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。如果找不到 `mo`，说明我没有安装 Mole，不要自行安装。
-6. 命令报错时先运行 `<命令> --help` 或 `man <命令>`，不猜命令名或参数。
-7. 回复：结论一句 → 证据 → 下一步（标明是否改动系统）。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`~/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 6. 我补充的现象
+[可选]
