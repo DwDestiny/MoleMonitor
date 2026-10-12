@@ -35,7 +35,7 @@ last_updated: 2026-10-11
 
 ## ci_acceptance.py
 
-在 arm64 macOS 上，先运行 `python3 scripts/build.py` 和 `python3 scripts/build.py --ui-test`，再运行 `python3 scripts/ci_acceptance.py`。其他平台上脚本直接退出。环境变量 `MOLEMONITOR_CI_OUT` 指定输出目录，默认是系统临时目录。
+在 arm64 macOS 上，先运行 `python3 scripts/build.py` 和 `python3 scripts/build.py --ui-test`，再运行 `python3 scripts/ci_acceptance.py`。其他平台上脚本直接退出。例外：`python3 scripts/ci_acceptance.py --self-test` 在任何系统上检查门禁登记表（见 [CI.md](../docs/CI.md) 的“v2 门禁登记表”）。`build.py --ui-test` 还会生成 UI 检查登记文件，`build.py` 在 `Resources/DogSprites` 存在时把它复制进应用包。环境变量 `MOLEMONITOR_CI_OUT` 指定输出目录，默认是系统临时目录。
 
 脚本按以下顺序检查：
 

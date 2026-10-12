@@ -344,10 +344,37 @@ enum UITestHarness {
     }
 }
 
+// MARK: - Check registry (docs/DESIGN_V2.md 13.3, docs/CI.md "v2 门禁登记表")
+
+/// Every extra UI check file (UITestWindowChecks.swift, UITestPanelChecks.swift, UITestSpriteChecks.swift, UITestIconChecks.swift, ...)
+/// adds its checks here. The harness runs the entries in registration order after step M and before step K.
+/// A check file joins the build without a change to this file:
+///   1. The file declares `enum UITestXxxChecks { @MainActor static func register(into registry: UITestRegistry) { ... } }`.
+///   2. The file carries the marker line `// UITEST-REGISTER: UITestXxxChecks` (outside any `#if` block is not needed, a comment is enough).
+///   3. scripts/build.py --ui-test finds the marker and generates the call into `uiTestRegisterAll` (dist-uitest/generated/).
+/// A missing file or an empty `register` gives no entry and no build error. An entry reports through `runner.record(id, name, ok, ...)`
+/// with the gate id of docs/DESIGN_V2.md 13.3 (for example "W03"). It leaves the panel closed when it returns.
+@MainActor
+final class UITestRegistry {
+    struct Entry {
+        let id: String
+        let name: String
+        let run: @MainActor (UITestRunner) async -> Void
+    }
+
+    private(set) var entries = [Entry]()
+
+    /// Registers one check. `id` is the gate id (for example "W03") or a group name; `name` is the short English name for logs.
+    func add(_ id: String, _ name: String, run: @escaping @MainActor (UITestRunner) async -> Void) {
+        entries.append(Entry(id: id, name: name, run: run))
+    }
+}
+
 // MARK: - Runner
 
 @MainActor
 final class UITestRunner {
+    let registry = UITestRegistry()
     let delegate: AppDelegate
     let outDir: URL
     let dataDir: URL
@@ -918,10 +945,21 @@ final class UITestRunner {
         stepE()
         await stepN()
         await stepM()
+        await stepRegistered()
         // K clicks the quit button of the real panel, so open it again with the engine model.
         _ = await openPanel(offsets: [], via: .sendAction, holdMs: 900, prefix: "pre-k")
         info["totalSeconds"] = String(format: "%.1f", now() - tStart)
         await stepK()
+    }
+
+    // Registered checks of the other UITest*Checks files (UITestRegistry). With no entry this step does nothing.
+    func stepRegistered() async {
+        uiTestRegisterAll(registry)
+        info["registeredChecks"] = registry.entries.map(\.id).joined(separator: ",")
+        for entry in registry.entries {
+            log("registered check \(entry.id) \(entry.name)")
+            await entry.run(self)
+        }
     }
 
     // A: status item and icon

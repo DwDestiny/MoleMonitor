@@ -4,6 +4,8 @@
 # Input: dist/MoleMonitor.app built by scripts/build.py on arm64 macOS.
 # Output: Headless acceptance checks (self-test, signature, real sampling, CLI read-back, static preview) and the UI regression gate
 #         (dist-uitest/MoleMonitor.app --ui-test: status item, popover, motion, hover, close, quit); exit code 0 means all passed.
+#      `--self-test` checks the gate registry logic on any OS and exits. The registry GATES lists W01 to W22 and the old gates:
+#      pending gates are shown as inactive (未激活), never counted as passed (docs/CI.md, "v2 门禁登记表").
 # Pos: Runs in GitHub Actions and on a Mac. It installs nothing and changes no login item. The UI gate shows a popover on the
 #      runner for about 30 seconds, with temporary data; the gate needs `python3 scripts/build.py --ui-test` first.
 from pathlib import Path
@@ -23,6 +25,119 @@ app = root / "dist/MoleMonitor.app"
 main_bin = app / "Contents/MacOS/MoleMonitor"
 cli_bin = app / "Contents/Helpers/molemonitor-cli"
 failures = []
+
+# --- Gate registry (docs/DESIGN_V2.md 13.2.1 and 13.3; method in docs/CI.md, section "v2 门禁登记表")
+# Each gate has an id, a name, a status and a source that says where its result is read:
+#   status "active"  : the gate runs and must pass. A missing result is a failure.
+#   status "pending" : the gate is registered but not enforced. It never fails CI and it never counts as passed.
+#                      The summary lists it as inactive (未激活). A result that a pending gate reports is printed as INFO only.
+#   source "ui"      : an item with the same id in ui-report.json (written by `--ui-test`, harness UITestHarness.swift).
+#   source "dog"     : an item with the same id in dog-report.json (written by `--dog-gallery <dir> --dog-checks`).
+#   source "core"    : Core unit test (the "Core and CLI tests" workflow step). No evaluator here, so it cannot be active.
+#   source "script"  : a script run by a later step. No evaluator here, so it cannot be active.
+# To activate a gate, WP-F changes its status to "active" in GATES. The owner of a gate only adds a Swift check file.
+GATES = [
+    # Gates that exist today (13.2: kept, updated, or tightened; 13.2.1 lists the selector changes)
+    *[{"id": i, "name": n, "status": "active", "source": "ui"} for i, n in [
+        ("A", "status item and icon"), ("B", "open"), ("C", "entrance animation advances"), ("D", "live data flows in"),
+        ("E", "main thread smoothness"), ("F", "hover interaction"), ("G", "button interaction and fallback text"),
+        ("H", "close"), ("I", "open again"), ("J", "light and dark"), ("K", "quit"), ("L", "closed panel costs nothing"),
+        ("M2", "problem-first order"), ("M3", "height tiers"), ("M4", "refresh and expand keep height"), ("M5", "contrast"),
+        ("M6", "large type"), ("M11", "focus ring"), ("M12", "cold start first frame"), ("M13", "copy"),
+        ("N1", "copy with real engine input"), ("N2", "history exists on open"), ("M14", "menu bar icon state"),
+        ("M19", "panel dog real render"), ("M19V", "vector dog real render"), ("M20", "bitmap dog follows data points"),
+        ("M21", "problem mode dog and bubble gap"), ("M22", "folded problem card colors")]],
+    *[{"id": i, "name": n, "status": "active", "source": "dog"} for i, n in [
+        ("DA", "dog frames with card open"), ("DB", "no dog callbacks after close"), ("DC", "leg speed across gaits"),
+        ("DD", "menu bar switch"), ("DE", "Reduce Motion no frames"), ("BA", "bitmap dog no body evaluation"),
+        ("BB", "Reduce Motion no crossfade"), ("BC", "bitmap files load"), ("BD", "pose pairwise XOR"),
+        ("BE", "non-background share"), ("BF", "ground shadow")]],
+    # New gates of v2 (13.3). All pending until the owning work package has delivered its check and WP-F activates it.
+    *[{"id": i, "name": n, "status": "pending", "source": src} for i, n, src in [
+        ("W01", "preview matrix", "ui"), ("W02", "layout and problem-first", "ui"), ("W03", "open speed and no white flash", "ui"),
+        ("W04", "action mapping and speed continuity", "ui"), ("W05", "sidebar", "ui"), ("W06", "hover intent", "ui"),
+        ("W07", "drag readout", "ui"), ("W08", "menu bar five states", "dog"), ("W09", "copy", "ui"),
+        ("W10", "Esc layers and close", "ui"), ("W11", "dog strips", "script"), ("W12", "bubble and dog gap", "ui"),
+        ("W13", "bubble templates", "core"), ("W14", "main thread work per frame", "ui"), ("W15", "Reduce Motion", "ui"),
+        ("W16", "closed panel costs nothing", "ui"), ("W17", "CPU while open", "ui"), ("W18", "sprite memory", "ui"),
+        ("W19", "capacity triple", "ui"), ("W20", "prompt", "core"), ("W21", "memory pressure percent", "core"),
+        ("W22", "value alignment", "ui")]],
+]
+GATE_EVALUATED_SOURCES = ("ui", "dog")
+gate_by_id = {g["id"]: g for g in GATES}
+gate_results = {}  # gate id -> "pass" | "fail" | "skip"; only gates that ran have an entry
+
+
+def gate_ids(source, status=None):
+    return [g["id"] for g in GATES if g["source"] == source and (status is None or g["status"] == status)]
+
+
+def gate_record(gate_id, result):
+    if gate_by_id.get(gate_id, {}).get("status") == "active":
+        gate_results[gate_id] = result
+
+
+def gate_summary(results=None, sources=None):
+    """Return (lines, counts). Active gates without a result count as failed; pending gates are inactive, never passed."""
+    results = gate_results if results is None else results
+    counts = {"pass": 0, "fail": 0, "skip": 0, "inactive": 0}
+    inactive = []
+    for g in GATES:
+        if sources is not None and g["source"] not in sources:
+            continue
+        if g["status"] == "pending":
+            counts["inactive"] += 1
+            inactive.append(f"{g['id']} {g['name']}")
+        else:
+            counts[results.get(g["id"], "fail")] += 1
+    lines = [f"GATE REGISTRY: {counts['pass']} passed / {counts['fail']} failed / {counts['inactive']} inactive (未激活)"
+             f"{' / ' + str(counts['skip']) + ' skipped' if counts['skip'] else ''}"]
+    if inactive:
+        lines.append("INACTIVE gates (未激活, not passed, not failed): " + "; ".join(inactive))
+    return lines, counts
+
+
+def gate_self_test():
+    """Local self-test of the registry logic (runs on any OS): python3 scripts/ci_acceptance.py --self-test"""
+    problems = []
+    ids = [g["id"] for g in GATES]
+    if len(ids) != len(set(ids)):
+        problems.append("duplicate gate id")
+    for n in range(1, 23):
+        if f"W{n:02d}" not in gate_by_id:
+            problems.append(f"W{n:02d} is not registered")
+    for g in GATES:
+        if g["status"] not in ("active", "pending"):
+            problems.append(f"{g['id']}: bad status {g['status']}")
+        if g["source"] not in ("ui", "dog", "core", "script"):
+            problems.append(f"{g['id']}: bad source {g['source']}")
+        if g["status"] == "active" and g["source"] not in GATE_EVALUATED_SOURCES:
+            problems.append(f"{g['id']}: active gate has no evaluator for source {g['source']}")
+    # A pending gate is never counted as passed and does not fail the summary.
+    _, c = gate_summary({g["id"]: "pass" for g in GATES if g["status"] == "active"})
+    if c["fail"] != 0 or c["inactive"] != sum(1 for g in GATES if g["status"] == "pending"):
+        problems.append(f"all-pass summary is wrong: {c}")
+    if c["pass"] != sum(1 for g in GATES if g["status"] == "active"):
+        problems.append("a pending gate was counted as passed")
+    # An active gate with no result counts as failed.
+    _, c = gate_summary({})
+    if c["fail"] != sum(1 for g in GATES if g["status"] == "active"):
+        problems.append("an active gate without result is not counted as failed")
+    # The legacy lists must keep the exact set the gate has always required.
+    expected_ui = list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M19V", "M20", "M21", "M22"]
+    if gate_ids("ui", "active") != expected_ui:
+        problems.append("active ui gate list changed")
+    if gate_ids("dog", "active") != ["DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE", "BF"]:
+        problems.append("active dog gate list changed")
+    for line in problems:
+        print("FAIL  gate self-test: " + line)
+    if not problems:
+        print(f"PASS  gate self-test: {len(GATES)} gates, {sum(1 for g in GATES if g['status'] == 'pending')} pending")
+    return not problems
+
+
+if "--self-test" in sys.argv[1:]:
+    sys.exit(0 if gate_self_test() else 1)
 
 
 def check(ok, name, detail=""):
@@ -311,28 +426,35 @@ else:
     check(ui_report is not None, "UI test wrote ui-report.json")
     if ui_report:
         by_id = {item["id"]: item for item in ui_report["items"]}
-        for letter in list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M19V", "M20", "M21", "M22"]:
+        for letter in gate_ids("ui", "active"):
             check(letter in by_id, f"UI item {letter} reported")
         for item in ui_report["items"]:
             label = f"UI {item['id']} {item['name']}"
+            pending_gate = gate_by_id.get(item["id"], {}).get("status") == "pending"
             if item["status"] == "skipped":
                 skipped_ui.append(item)
+                gate_record(item["id"], "skip")
                 print(f"SKIP  {label}  [{item['note']}]", flush=True)
             elif item["status"] == "pending":
                 pass
+            elif pending_gate:
+                # A registered but inactive gate: shown, never counted as passed, never a failure.
+                print(f"INFO  {label} (未激活, not enforced) reported {item['status']}  {item['note']}", flush=True)
             else:
                 ok = item["status"] == "pass"
+                gate_record(item["id"], "pass" if ok else "fail")
                 print(f"{'PASS' if ok else 'FAIL'}  {label}  {item['note']}", flush=True)
                 if not ok:
                     failures.append(label)
         # K: the process must have quit through the button with exit code 0 and written status.json at exit
         quit_item = by_id.get("K")
         if quit_item and quit_item["status"] == "pending":
-            check(ui_code == 0, "UI K quit button ends the process with exit code 0", str(ui_code))
+            quit_ok = check(ui_code == 0, "UI K quit button ends the process with exit code 0", str(ui_code))
             status_file = ui_data / "status.json"
             before = ui_report.get("statusMtimeBeforeQuit")
             written = status_file.exists() and before is not None and status_file.stat().st_mtime > before
-            check(written, "UI K status.json is written at exit", f"mtime before quit {before}")
+            written_ok = check(written, "UI K status.json is written at exit", f"mtime before quit {before}")
+            gate_record("K", "pass" if quit_ok and written_ok else "fail")
         elif quit_item is None or quit_item["status"] != "pass":
             check(False, "UI K quit button", str((quit_item or {}).get("note")))
         print("ui frames:", ", ".join(ui_report.get("frames", [])), flush=True)
@@ -345,6 +467,9 @@ else:
             print(f"  {item['id']} {item['name']}: {item['note']}", flush=True)
 
 print()
+print("(summary of the gates read from ui-report.json; the dog gates follow below)", flush=True)
+for line in gate_summary(sources=("ui", "core", "script"))[0]:
+    print(line, flush=True)
 if failures:
     print(f"ACCEPTANCE FAILED: {len(failures)} check(s): " + "; ".join(failures))
     sys.exit(1)
@@ -398,12 +523,16 @@ def _dog_animation_checks():
     dog_check(dog_report is not None, "dog checks wrote dog-report.json")
     if dog_report:
         by_id = {item["id"]: item for item in dog_report.get("items", [])}
-        for item_id in ("DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE", "BF"):
+        for item_id in gate_ids("dog", "active"):
             item = by_id.get(item_id)
             if item is None:
                 dog_check(False, f"dog {item_id} reported")
                 continue
             dog_check(item["status"] == "pass", f"dog {item_id} {item['name']}", item["note"])
+            gate_record(item_id, "pass" if item["status"] == "pass" else "fail")
+        for item_id, item in sorted(by_id.items()):
+            if gate_by_id.get(item_id, {}).get("status") == "pending":
+                print(f"INFO  dog {item_id} {item['name']} (未激活, not enforced) reported {item['status']}  {item['note']}", flush=True)
             print(f"      values {json.dumps(item.get('values', {}), sort_keys=True)}", flush=True)
         print("dog info:", json.dumps(dog_report.get("info", {}), sort_keys=True), flush=True)
         for sheet in ("bitmap-sheet-light.png", "bitmap-sheet-dark.png", "bitmap-sheet-light-shadow.png", "bitmap-sheet-dark-shadow.png"):
@@ -415,6 +544,9 @@ def _dog_animation_checks():
 
 _dog_failures = _dog_animation_checks()
 print()
+_final_lines, _final_counts = gate_summary()
+for line in _final_lines:
+    print(line, flush=True)
 if _dog_failures:
     print(f"DOG ANIMATION CHECKS FAILED: {len(_dog_failures)} check(s): " + "; ".join(_dog_failures))
     sys.exit(1)
