@@ -54,6 +54,14 @@ enum PreviewOverlay {
         d.trend = TrendSeries(segments: segments)
         d.rollups = rollups(now: d.now)
         d.events = events(verdicts: d.verdicts, now: d.now)
+        d.interfaces = [InterfaceRate(name: "en0", displayName: "Wi-Fi", rxPerSecond: 1_100_000, txPerSecond: 96_000,
+                                      rxTotal: 48_000_000_000, txTotal: 6_000_000_000),
+                        InterfaceRate(name: "en5", displayName: "以太网", rxPerSecond: 2_000, txPerSecond: 800,
+                                      rxTotal: 1_200_000_000, txTotal: 300_000_000)]
+        d.diskWriters = [DiskWriterRow(key: "build", name: "Xcode", bundleID: "com.apple.dt.Xcode", bytes: 4_200_000_000, isSystem: false),
+                         DiskWriterRow(key: "photos", name: "照片", bundleID: "com.apple.Photos", bytes: 1_100_000_000, isSystem: false),
+                         DiskWriterRow(key: "spotlight", name: "mds_stores", bundleID: nil, bytes: 340_000_000, isSystem: true)]
+        d.sleepBlockers = [SleepBlocker(name: "Zoom", preventsSystemSleep: true, preventsDisplaySleep: true)]
         return d
     }
 

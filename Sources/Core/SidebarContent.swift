@@ -316,11 +316,13 @@ struct InterfaceRate: Equatable {
     var txTotal: Int64?
 }
 
-/// An app that holds a sleep assertion (DESIGN_V2.md 6.5). Only the display name is kept.
-struct SleepBlocker: Equatable {
+/// One app with the bytes it wrote to disk in the last 5 minutes (DESIGN_V2.md 6.5). The engine feeds it from `AppDiskWriteTracker`.
+struct DiskWriterRow: Equatable {
+    var key: String
     var name: String
     var bundleID: String?
-    var preventsDisplaySleep: Bool
+    var bytes: Int64
+    var isSystem: Bool
 }
 
 struct SidebarInput {
@@ -668,12 +670,13 @@ struct RankTable: Equatable {
 }
 
 enum SidebarRanking {
-    static func make(_ item: SidebarItem, apps: [AppUsage], interfaces: [InterfaceRate]?, blockers: [SleepBlocker]?) -> RankTable? {
+    static func make(_ item: SidebarItem, apps: [AppUsage], interfaces: [InterfaceRate]?, blockers: [SleepBlocker]?,
+                     diskWriters: [DiskWriterRow]? = nil) -> RankTable? {
         switch item {
         case .cpu: return cpuTable(apps, title: "CPU 占用前 5")
         case .thermal: return cpuTable(apps, title: "CPU 占用前 5（可能的热源）")
         case .memory: return memoryTable(apps)
-        case .disk: return diskTable(apps)
+        case .disk: return diskTable(diskWriters)
         case .network: return networkTable(interfaces)
         case .battery: return batteryTable(blockers)
         case .anomalyLog: return nil
@@ -698,19 +701,18 @@ enum SidebarRanking {
         return RankTable(title: "内存占用前 5", rows: rows, emptyText: rows.isEmpty ? "没有读到 App 内存" : nil)
     }
 
-    private static func diskTable(_ apps: [AppUsage]) -> RankTable {
+    private static func diskTable(_ writers: [DiskWriterRow]?) -> RankTable {
         let title = "磁盘写入前 5（近 5 分钟）"
-        guard apps.contains(where: { $0.diskWrittenBytes != nil }) else {
-            return RankTable(title: title, rows: [], emptyText: "\u{2014} 还没有写入数据")
-        }
-        let measured = apps.filter { ($0.diskWrittenBytes ?? 0) > 0 }
-        let sorted = measured.sorted { a, b in
-            let x = a.diskWrittenBytes ?? 0, y = b.diskWrittenBytes ?? 0
-            return x != y ? x > y : (a.name != b.name ? a.name < b.name : a.key < b.key)
+        guard let writers else { return RankTable(title: title, rows: [], emptyText: "\u{2014} 还没有写入数据") }
+        let sorted = writers.filter { $0.bytes > 0 }.sorted { a, b in
+            a.bytes != b.bytes ? a.bytes > b.bytes : (a.name != b.name ? a.name < b.name : a.key < b.key)
         }
         let top = Array(sorted.prefix(5))
-        let most = Double(top.first?.diskWrittenBytes ?? 1)
-        let rows = top.map { row($0, value: TextFormat.bytes($0.diskWrittenBytes), fraction: Double($0.diskWrittenBytes ?? 0) / most) }
+        let most = Double(top.first?.bytes ?? 1)
+        let rows = top.map { w in
+            RankRow(id: w.key, name: w.name, bundleID: w.bundleID, isSystem: w.isSystem, value: TextFormat.bytes(w.bytes),
+                    fraction: Double(w.bytes) / most, detail: nil)
+        }
         return RankTable(title: title, rows: rows, emptyText: rows.isEmpty ? "近 5 分钟没有明显写入" : nil)
     }
 
@@ -739,8 +741,7 @@ enum SidebarRanking {
         let title = "阻止睡眠的 App"
         guard let blockers else { return RankTable(title: title, rows: [], emptyText: "\u{2014} 没有读到睡眠断言", plain: true) }
         let rows = blockers.prefix(5).map { b in
-            RankRow(id: b.name, name: b.name, bundleID: b.bundleID, isSystem: false,
-                    value: b.preventsDisplaySleep ? "防止显示器睡眠" : "防止系统睡眠", fraction: 0, detail: nil)
+            RankRow(id: b.name, name: b.name, bundleID: nil, isSystem: false, value: b.kindText, fraction: 0, detail: nil)
         }
         return RankTable(title: title, rows: Array(rows), emptyText: rows.isEmpty ? "没有 App 阻止睡眠" : nil)
     }

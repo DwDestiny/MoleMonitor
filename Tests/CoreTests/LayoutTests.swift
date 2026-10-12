@@ -210,10 +210,14 @@ func runSidebarTests() {
                          isSystem: false, diskWrittenBytes: nil)]
     let cpuTable = SidebarRanking.make(.cpu, apps: apps, interfaces: nil, blockers: nil)
     expect(cpuTable?.rows.count == 2 && cpuTable?.rows[0].value == "94%", "cpu ranking")
-    let disk = SidebarRanking.make(.disk, apps: apps, interfaces: nil, blockers: nil)
+    let writers = [DiskWriterRow(key: "a", name: "A", bundleID: "x.a", bytes: 500_000_000, isSystem: false),
+                   DiskWriterRow(key: "z", name: "Z", bundleID: nil, bytes: 0, isSystem: false)]
+    let disk = SidebarRanking.make(.disk, apps: apps, interfaces: nil, blockers: nil, diskWriters: writers)
     expect(disk?.rows.count == 1 && disk?.rows[0].value == "500 MB", "disk write ranking, got \(String(describing: disk?.rows.first?.value))")
-    let noWrites = SidebarRanking.make(.disk, apps: apps.map { var a = $0; a.diskWrittenBytes = nil; return a }, interfaces: nil, blockers: nil)
+    let noWrites = SidebarRanking.make(.disk, apps: apps, interfaces: nil, blockers: nil, diskWriters: nil)
     expect(noWrites?.rows.isEmpty == true && noWrites?.emptyText?.hasPrefix("\u{2014}") == true, "missing disk writes are not zero")
+    let blockerTable = SidebarRanking.make(.battery, apps: [], interfaces: nil, blockers: [SleepBlocker(name: "Zoom", preventsSystemSleep: true, preventsDisplaySleep: true)])
+    expect(blockerTable?.rows.first?.value == "防止系统睡眠、防止显示器睡眠", "sleep blocker kinds")
     let nets = SidebarRanking.make(.network, apps: [], interfaces: [InterfaceRate(name: "en0", displayName: "Wi-Fi", rxPerSecond: 1_100_000, txPerSecond: 96_000, rxTotal: 5, txTotal: 6),
                                                              InterfaceRate(name: "utun3", displayName: nil, rxPerSecond: 9_000_000, txPerSecond: 0, rxTotal: nil, txTotal: nil)], blockers: nil)
     expect(nets?.rows.count == 1 && nets?.rows[0].name == "Wi-Fi" && nets?.rows[0].value == "\u{2193}1.1 MB/s \u{2191}96 KB/s", "network ranking skips VPN, got \(String(describing: nets?.rows.first?.value))")

@@ -643,8 +643,11 @@ enum UITestPanelChecks {
     static func register(into registry: UITestRegistry) {
         registry.add("W01", "preview matrix") { runner in await runner.stepW01() }
         registry.add("W02", "layout and problem-first") { runner in await runner.stepW02() }
+        registry.add("W06", "hover intent (UI part)") { runner in await runner.stepW06() }
+        registry.add("W07", "drag readout") { runner in await runner.stepW07() }
+        registry.add("M10b", "sidebar controls and chart descriptor") { runner in await runner.stepSidebarControls() }
         registry.add("W09", "copy") { runner in await runner.stepW09() }
-        registry.add("W19", "capacity text (main column)") { runner in await runner.stepW19() }
+        registry.add("W19", "capacity text") { runner in await runner.stepW19() }
         registry.add("W22", "value column alignment") { runner in await runner.stepW22() }
     }
 }
@@ -919,11 +922,12 @@ extension UITestRunner {
                 }
             }
         }
+        let sidebarNotes = await sidebarCapacityChecks(&problems)
         var note = "\(notes.count) capacity notes checked (used + available = total, one unit); missing sources give three dashes and '已用 —'. "
-        note += "The sidebar capacity area and its right alignment are judged in C2."
+        note += sidebarNotes.joined(separator: "; ") + ". "
         if !problems.isEmpty { note += " failures: " + problems.prefix(12).joined(separator: "; ") }
         let values: [String: Double] = ["checked": Double(notes.count), "problems": Double(problems.count)]
-        record("W19", "容量三元组（主列）", problems.isEmpty && !notes.isEmpty, since: t0, note, values)
+        record("W19", "容量三元组", problems.isEmpty && !notes.isEmpty, since: t0, note, values)
     }
 
     // MARK: W22
@@ -984,6 +988,235 @@ enum UITestIconRaster {
             }
         }
         return (String(hash, radix: 16), opaque)
+    }
+}
+
+// MARK: - Sidebar gates (WP-C C2)
+
+extension UITestRunner {
+    /// The sidebar frame of an id, or nil. The sidebar may lie outside the clipped hosting view, so the registry is the source.
+    func sideRect(_ id: String) -> CGRect? {
+        UITestFrameStore.shared.get(id)
+    }
+
+    /// Opens the sidebar of `item` on the fixture model and waits for its frame. Returns false on timeout.
+    func openSidebar(_ model: PanelModel, _ item: SidebarItem) async -> Bool {
+        model.pinSidebar(item)
+        let found = await waitFor(timeoutMs: 1500) { self.sideRect("sidebar") != nil && self.sideRect("side.title") != nil }
+        await sleepMs(150)
+        axCache = nil
+        return found != nil
+    }
+
+    // MARK: W19, sidebar part
+
+    func sidebarCapacityChecks(_ problems: inout [String]) async -> [String] {
+        var notes = [String]()
+        let box = UITestTextBox()
+        for c in [PreviewCase.allGreen, PreviewCase.diskRed] {
+            guard let model = await openFixture(c, copyBox: box) else {
+                problems.append("\(c.rawValue): the panel did not open for the sidebar check")
+                continue
+            }
+            for item in [SidebarItem.disk, SidebarItem.memory] {
+                guard await openSidebar(model, item) else {
+                    problems.append("\(c.rawValue) \(item.rawValue): the sidebar did not open")
+                    continue
+                }
+                let state = model.sidebarContent(for: item)
+                guard let cap = state.capacity else { problems.append("\(c.rawValue) \(item.rawValue): no capacity area"); continue }
+                let totalRect = sideRect("cap.total"), usedRect = sideRect("cap.used"), availableRect = sideRect("cap.available")
+                guard let totalRect, let usedRect, let availableRect else {
+                    problems.append("\(c.rawValue) \(item.rawValue): capacity frames missing")
+                    continue
+                }
+                // The three columns are 95 pt wide and right aligned: the text boxes end at the column edge (tolerance 0.5 pt).
+                let edges = [totalRect.maxX, usedRect.maxX, availableRect.maxX]
+                let gap1 = abs((edges[1] - edges[0]) - 96), gap2 = abs((edges[2] - edges[1]) - 96)
+                if gap1 > 0.5 || gap2 > 0.5 { problems.append("\(c.rawValue) \(item.rawValue): column edges \(edges) are not 96 pt apart") }
+                let units = [cap.total, cap.used, cap.available].map { $0.split(separator: " ").last.map(String.init) ?? "" }
+                if Set(units).count != 1 { problems.append("\(c.rawValue) \(item.rawValue): units differ \(units)") }
+                let n = [cap.total, cap.used, cap.available].map { Double($0.split(separator: " ").first ?? "") ?? -1 }
+                if abs(n[1] + n[2] - n[0]) > 0.0001 { problems.append("\(c.rawValue) \(item.rawValue): used + available differs from total") }
+                // The main column note shows the same used and total strings.
+                if let row = model.rows.first(where: { $0.item == item }), row.note != cap.usedOfTotal {
+                    problems.append("\(c.rawValue) \(item.rawValue): main note '\(row.note)' differs from '\(cap.usedOfTotal)'")
+                }
+                // The accessibility tree carries the same strings.
+                if let node = axNodes().first(where: { $0.id == "cap.area" }) {
+                    if !node.label.contains(cap.total) || !node.label.contains(cap.used) || !node.label.contains(cap.available) {
+                        problems.append("\(c.rawValue) \(item.rawValue): cap.area label '\(node.label)'")
+                    }
+                } else {
+                    problems.append("\(c.rawValue) \(item.rawValue): no cap.area node in the accessibility tree")
+                }
+                notes.append("\(c.rawValue) \(item.rawValue) sidebar \(cap.total) / \(cap.used) / \(cap.available)")
+            }
+            // A missing source gives three dashes.
+            var data = model.data
+            data.current.diskTotal = nil
+            data.current.memory = nil
+            data.current.physicalMemory = nil
+            model.replace(data)
+            for item in [SidebarItem.disk, SidebarItem.memory] {
+                if !(await openSidebar(model, item)) { continue }
+                let cap = model.sidebarContent(for: item).capacity
+                if cap?.total != "\u{2014}" || cap?.used != "\u{2014}" || cap?.available != "\u{2014}" {
+                    problems.append("\(c.rawValue) \(item.rawValue): missing source gives no three dashes in the sidebar")
+                }
+            }
+            model.panelDidClose()
+            await closeFixture()
+        }
+        return ["sidebar capacity checked: " + (notes.isEmpty ? "none" : notes.joined(separator: ", ")) + " (column edges 96 pt apart, +-0.5 pt)"]
+    }
+
+    // MARK: W07, drag readout
+
+    func stepW07() async {
+        let t0 = now()
+        let box = UITestTextBox()
+        var problems = [String]()
+        guard let model = await openFixture(.multi, copyBox: box) else {
+            record("W07", "拖动读数", false, since: t0, "the panel did not open")
+            return
+        }
+        defer { model.panelDidClose() }
+        guard await openSidebar(model, .cpu), let readout = ChartProbe.shared.readout, let chart = model.sidebarContent(for: .cpu).chart else {
+            await closeFixture()
+            record("W07", "拖动读数", false, since: t0, "the sidebar chart did not appear")
+            return
+        }
+        await sleepMs(200)
+        ChartProbe.shared.reset()
+        let drawsBefore = ChartProbe.shared.mainDraws
+        let updatesBefore = readout.updates
+        var worstMs = 0.0
+        var updated = 0
+        for i in 0..<120 {
+            let fraction = (Double(i) + 0.5) / 120
+            let before = readout.updates
+            let start = now()
+            readout.move(to: fraction, in: chart, timeZone: TimeZone.current)
+            let spent = (now() - start) * 1000
+            worstMs = Swift.max(worstMs, spent)
+            if readout.updates > before { updated += 1 }
+            await sleepMs(16)
+        }
+        await sleepMs(150)
+        let draws = ChartProbe.shared.mainDraws - drawsBefore
+        let share = Double(updated) / 120
+        if share < 0.95 { problems.append("only \(updated) of 120 moves updated the readout") }
+        if worstMs > 8 { problems.append("the slowest move took \(String(format: "%.2f", worstMs)) ms") }
+        if draws != 0 { problems.append("the main chart was evaluated \(draws) times during the drag") }
+        if readout.text == nil || readout.text?.contains("·") != true { problems.append("readout text '\(readout.text ?? "nil")'") }
+        readout.clear()
+        await closeFixture()
+        var note = "120 synthetic moves at 60 Hz: \(updated) updated the readout (\(Int(share * 100)) %), slowest \(String(format: "%.2f", worstMs)) ms, "
+        note += "main chart evaluations \(draws), updates counted \(readout.updates - updatesBefore). The pointer and the drag call the same move function."
+        if !problems.isEmpty { note += " failures: " + problems.joined(separator: "; ") }
+        let values: [String: Double] = ["updatedShare": share, "worstMs": worstMs, "mainDraws": Double(draws)]
+        record("W07", "拖动读数", problems.isEmpty, since: t0, note, values)
+    }
+
+    // MARK: Sidebar controls and chart descriptor
+
+    func stepSidebarControls() async {
+        let t0 = now()
+        let box = UITestTextBox()
+        var problems = [String]()
+        var notes = [String]()
+        guard let model = await openFixture(.multi, copyBox: box) else {
+            record("M10b", "侧栏控件与图表无障碍", false, since: t0, "the panel did not open")
+            return
+        }
+        for item in SidebarItem.allCases {
+            guard await openSidebar(model, item) else { problems.append("\(item.rawValue): the sidebar did not open"); continue }
+            let ids = UITestFrameStore.shared.ids
+            if !ids.contains("btn.sideClose") { problems.append("\(item.rawValue): no btn.sideClose") }
+            for option in SidebarRange.options(for: item) where !ids.contains("btn.range." + option.rawValue) {
+                problems.append("\(item.rawValue): no range button \(option.rawValue)")
+            }
+            let nodes = axNodes()
+            if let close = nodes.first(where: { $0.id == "btn.sideClose" }) {
+                if close.label.isEmpty { problems.append("\(item.rawValue): the close button has no label") }
+            } else {
+                problems.append("\(item.rawValue): no btn.sideClose in the accessibility tree")
+            }
+            if item != .anomalyLog {
+                if let chart = nodes.first(where: { $0.id == "chart.main" }) {
+                    if chart.label.isEmpty || !chart.label.contains(item.label) { problems.append("\(item.rawValue): chart label '\(chart.label)'") }
+                } else {
+                    problems.append("\(item.rawValue): no chart.main in the accessibility tree")
+                }
+            }
+            notes.append(item.rawValue)
+        }
+        // A click on a range button changes the range, and the chart follows.
+        if await openSidebar(model, .cpu) {
+            let before = model.range(for: .cpu)
+            model.setRange(.d7, for: .cpu)
+            await sleepMs(150)
+            let after = model.sidebarContent(for: .cpu)
+            if before == .d7 || after.range != .d7 || after.chart?.range != .d7 { problems.append("the range did not change to 7 d") }
+            // Keys: Tab moves the focus to the range control, an arrow key changes the range.
+            model.setKeyFocus(.sidebarRange)
+            _ = model.handleKey(.left)
+            if model.range(for: .cpu) != .h24 { problems.append("left on the range control did not step back to 24 h, got \(model.range(for: .cpu).rawValue)") }
+        }
+        model.panelDidClose()
+        await closeFixture()
+        var note = "sidebar of \(notes.count) of \(SidebarItem.allCases.count) items opened; close button, range buttons and chart label found in the accessibility tree"
+        if !problems.isEmpty { note += ". failures: " + problems.joined(separator: "; ") }
+        record("M10b", "侧栏控件与图表无障碍", problems.isEmpty, since: t0, note, ["items": Double(notes.count)])
+    }
+
+    // MARK: W06, UI part
+
+    func stepW06() async {
+        let t0 = now()
+        let box = UITestTextBox()
+        // The state machine is filled in by WP-B. Until then the gate cannot judge and says so.
+        var probe = HoverIntent()
+        _ = probe.handle(.moved(.row(.cpu), speed: 0), at: 0)
+        if probe.nextDeadline == nil {
+            record("W06", "悬停意图（UI 部分）", nil, since: t0, "skipped: HoverIntent is still the A1 skeleton (WP-B fills it in). The 3 synthetic mouse cases run after the merge.")
+            return
+        }
+        var problems = [String]()
+        guard let model = await openFixture(.multi, copyBox: box) else {
+            record("W06", "悬停意图（UI 部分）", false, since: t0, "the panel did not open")
+            return
+        }
+        // Case 1: a stay of 200 ms does not open, a stay of 450 ms does.
+        model.pointerMoved(.row(.cpu), at: CGPoint(x: 100, y: 300))
+        await sleepMs(200)
+        if model.sidebarItem != nil { problems.append("the sidebar opened after 200 ms") }
+        await sleepMs(250)
+        if model.sidebarItem != .cpu { problems.append("the sidebar did not open after 450 ms") }
+        // Case 2: with the sidebar open, a move to another row switches within 200 ms.
+        model.pointerMoved(.row(.memory), at: CGPoint(x: 100, y: 340))
+        let switched = await waitFor(timeoutMs: 400) { model.sidebarItem == .memory }
+        if switched == nil || (switched ?? 999) > 200 + 20 { problems.append("the switch took \(Int(switched ?? -1)) ms") }
+        // Leaving the panel closes the sidebar after 1.0 +- 0.1 s.
+        let tLeave = now()
+        model.pointerLeft()
+        let closed = await waitFor(timeoutMs: 1500) { model.sidebarItem == nil }
+        let closeSeconds = now() - tLeave
+        if closed == nil || abs(closeSeconds - 1.0) > 0.1 + 0.03 { problems.append("the sidebar closed after \(String(format: "%.2f", closeSeconds)) s") }
+        // Case 3: a fast pass over 3 rows does not open the sidebar.
+        for (i, y) in [300.0, 340.0, 380.0].enumerated() {
+            model.pointerMoved(.row(SidebarItem.fixedRows[i]), at: CGPoint(x: 100, y: y))
+            await sleepMs(20)
+        }
+        model.pointerLeft()
+        await sleepMs(500)
+        if model.sidebarItem != nil { problems.append("a fast pass over 3 rows opened the sidebar") }
+        model.panelDidClose()
+        await closeFixture()
+        var note = "3 synthetic mouse cases on the fixture model: stay 200/450 ms, switch within 200 ms, close after leave \(String(format: "%.2f", closeSeconds)) s, fast pass"
+        if !problems.isEmpty { note += ". failures: " + problems.joined(separator: "; ") }
+        record("W06", "悬停意图（UI 部分）", problems.isEmpty, since: t0, note, ["closeSeconds": closeSeconds])
     }
 }
 #endif

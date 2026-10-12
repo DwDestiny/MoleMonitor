@@ -32,8 +32,14 @@ struct PanelData {
     var appsBasis: String = "实时"
     /// 5 minute windows of the last 7 days for the 24 h and 7 d sidebar ranges. Loaded when the sidebar opens.
     var rollups: [RollupWindow] = []
-    /// Anomaly records of the last 7 days, newest first.
+    /// Anomaly records of the last 30 days, newest first.
     var events: [EventRecord] = []
+    /// Physical interfaces with their rates (network sidebar). Nil means not read: the sidebar shows a dash, not an empty list.
+    var interfaces: [InterfaceRate]?
+    /// Apps with the bytes written in the last 5 minutes (disk sidebar). Nil means not read.
+    var diskWriters: [DiskWriterRow]?
+    /// Apps that keep the Mac awake (battery sidebar). Nil means not read.
+    var sleepBlockers: [SleepBlocker]?
 
     func verdict(_ item: HealthItem) -> ItemVerdict? {
         verdicts.first { $0.item == item }
@@ -89,6 +95,22 @@ enum PanelFocus: Hashable {
     case records
     case primary
     case more
+    /// Sidebar controls, reached with Tab while the sidebar is open (DESIGN_V2.md 10.10).
+    case sidebarRange
+    case sidebarClose
+}
+
+/// Everything the sidebar draws for one item and range. Built by the model, cached until the data or the range changes.
+struct SidebarContentState: Equatable {
+    var item: SidebarItem
+    var range: SidebarRange
+    var level: HealthLevel
+    var chart: ChartData?
+    var stats: [SidebarStat]
+    var capacity: CapacityText?
+    var ranking: RankTable?
+    var footnotes: [String]
+    var groups: [RecordGroup]
 }
 
 /// Keys that the window forwards to the model.
@@ -114,6 +136,10 @@ final class PanelModel: ObservableObject, PanelPinning {
     @Published private(set) var keyFocus: PanelFocus?
     /// Row under the pointer. Gives the hover fill.
     @Published private(set) var hoverRow: SidebarItem?
+    /// Range chosen per item. An item without an entry uses its default range.
+    @Published private(set) var sidebarRanges = [SidebarItem: SidebarRange]()
+    /// Stretch of an anomaly record that the chart marks after a click on the record.
+    @Published private(set) var recordHighlight: ClosedRange<Date>?
 
     /// Copies the text of a scope. Returns true when the text is on the pasteboard. The harness replaces it.
     var onCopyText: (String) -> Bool = { Clipboard.copy($0) }
@@ -137,6 +163,19 @@ final class PanelModel: ObservableObject, PanelPinning {
     private weak var engine: MonitorEngine?
     private var syncPending = false
     private var loadToken = 0
+    private var contentCache: (key: ContentKey, state: SidebarContentState)?
+
+    private struct ContentKey: Equatable {
+        var item: SidebarItem
+        var range: SidebarRange
+        var now: Date
+        var rollups: Int
+        var events: Int
+        var interfaces: Int
+        var writers: Int
+        var blockers: Int
+        var highlight: ClosedRange<Date>?
+    }
 
     init(data: PanelData) {
         self.data = data
@@ -172,6 +211,9 @@ final class PanelModel: ObservableObject, PanelPinning {
         // Rollups and events belong to the model, not to the engine snapshot. Keep them when the new data has none.
         if next.rollups.isEmpty { next.rollups = data.rollups }
         if next.events.isEmpty { next.events = data.events }
+        if next.interfaces == nil { next.interfaces = data.interfaces }
+        if next.diskWriters == nil { next.diskWriters = data.diskWriters }
+        if next.sleepBlockers == nil { next.sleepBlockers = data.sleepBlockers }
         data = next
         recompute()
     }
@@ -212,7 +254,7 @@ final class PanelModel: ObservableObject, PanelPinning {
 
     var areaState: PanelAreaState {
         PanelAreaState.make(dataState: data.dataState, anomalyCount: layoutPlan.anomalies.count,
-                            records: data.events.count,
+                            records: data.events.filter { ($0.end ?? data.now) >= data.now.addingTimeInterval(-7 * 86400) }.count,
                             now: data.now)
     }
 
@@ -324,6 +366,9 @@ final class PanelModel: ObservableObject, PanelPinning {
         keyFocus = nil
         pinnedItem = nil
         if sidebarItem != nil { sidebarItem = nil }
+        if !sidebarRanges.isEmpty { sidebarRanges = [:] }
+        recordHighlight = nil
+        contentCache = nil
         loadToken += 1
         cancelPending()
     }
@@ -342,6 +387,10 @@ final class PanelModel: ObservableObject, PanelPinning {
         if layoutPlan.anomalies.isEmpty { out.append(.records) }
         out.append(.primary)
         out.append(.more)
+        if let item = sidebarItem {
+            if SidebarRange.options(for: item).count > 1 { out.append(.sidebarRange) }
+            out.append(.sidebarClose)
+        }
         return out
     }
 
@@ -374,11 +423,13 @@ final class PanelModel: ObservableObject, PanelPinning {
             }
             return true
         case .right:
+            if keyFocus == .sidebarRange { stepRange(by: 1); return true }
             if case .row(let item)? = keyFocus { pinSidebar(item); return true }
             return false
         case .returnKey, .space:
             return activateFocus()
         case .left:
+            if keyFocus == .sidebarRange { stepRange(by: -1); return true }
             if sidebarItem != nil { unpinSidebar(); return true }
             return false
         case .escape:
@@ -401,8 +452,77 @@ final class PanelModel: ObservableObject, PanelPinning {
         case .records: pinSidebar(.anomalyLog)
         case .primary: copy(.primary)
         case .more: onShowMoreMenu?()
+        case .sidebarRange: stepRange(by: 1)
+        case .sidebarClose:
+            keyFocus = nil
+            unpinSidebar()
         }
         return true
+    }
+
+    // MARK: Sidebar range and content
+
+    /// The range of the open item.
+    func range(for item: SidebarItem) -> SidebarRange {
+        sidebarRanges[item] ?? SidebarRange.defaultRange(for: item)
+    }
+
+    func setRange(_ range: SidebarRange, for item: SidebarItem) {
+        guard SidebarRange.options(for: item).contains(range), self.range(for: item) != range else { return }
+        sidebarRanges[item] = range
+        recordHighlight = nil
+    }
+
+    private func stepRange(by delta: Int) {
+        guard let item = sidebarItem else { return }
+        let options = SidebarRange.options(for: item)
+        guard let i = options.firstIndex(of: range(for: item)) else { return }
+        setRange(options[(i + delta + options.count) % options.count], for: item)
+    }
+
+    /// A click on a record of the anomaly log: open that item, choose the range that holds the stretch and mark it.
+    func openRecord(_ row: RecordRow) {
+        let item = SidebarItem(row.item)
+        sidebarRanges[item] = SidebarRange.covering(start: row.start, now: data.now, item: item)
+        recordHighlight = row.start...(row.end ?? data.now)
+        pinSidebar(item)
+    }
+
+    /// The content of the sidebar for `item`. Cached: a hover change does not rebuild the chart.
+    func sidebarContent(for item: SidebarItem) -> SidebarContentState {
+        let range = self.range(for: item)
+        let key = ContentKey(item: item, range: range, now: data.now, rollups: data.rollups.count, events: data.events.count,
+                             interfaces: data.interfaces?.count ?? -1, writers: data.diskWriters?.count ?? -1,
+                             blockers: data.sleepBlockers?.count ?? -1, highlight: recordHighlight)
+        if let cache = contentCache, cache.key == key { return cache.state }
+        let state = buildContent(item, range: range)
+        contentCache = (key, state)
+        return state
+    }
+
+    private func buildContent(_ item: SidebarItem, range: SidebarRange) -> SidebarContentState {
+        let zone = TimeZone.current
+        let input = SidebarInput(item: item, range: range, trend: data.trend, rollups: data.rollups, diskSeries: data.diskSeries,
+                                 diskTrigger: data.diskTrigger, sleeps: data.sleeps, current: data.current, verdicts: data.verdicts,
+                                 status: data.status, now: data.now, timeZone: zone)
+        var chart: ChartData?
+        if item != .anomalyLog {
+            var built = SidebarChart.make(input)
+            if let mark = recordHighlight { built.bands.append(ChartTimeBand(from: mark.lowerBound, to: mark.upperBound, kind: .highlight)) }
+            chart = built
+        }
+        var capacity: CapacityText?
+        if item == .disk { capacity = CapacityFormat.disk(data.current) }
+        if item == .memory { capacity = CapacityFormat.memory(data.current) }
+        let days = range == .d30 ? 30 : 7
+        let groups = item == .anomalyLog ? SidebarRecords.groups(data.events, days: days, now: data.now, timeZone: zone) : []
+        var level: HealthLevel = .green
+        if let health = item.healthItem, let v = data.verdict(health) { level = v.level }
+        return SidebarContentState(item: item, range: range, level: level, chart: chart,
+                                   stats: SidebarStats.make(input, events: data.events, recordDays: days), capacity: capacity,
+                                   ranking: SidebarRanking.make(item, apps: data.apps, interfaces: data.interfaces,
+                                                                blockers: data.sleepBlockers, diskWriters: data.diskWriters),
+                                   footnotes: SidebarFootnote.lines(item, current: data.current), groups: groups)
     }
 
     // MARK: Sidebar data
@@ -415,8 +535,8 @@ final class PanelModel: ObservableObject, PanelPinning {
         let dir = PanelPaths.dataDirURL
         let now = Date()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let windows = RollupStore.read(dir: dir, from: now.addingTimeInterval(-7 * 86400), to: now).windows
-            let events = EventLog.read(dir: dir, days: 7, now: now)
+            let windows = RollupStore.read(dir: dir, from: now.addingTimeInterval(-30 * 86400), to: now).windows
+            let events = EventLog.read(dir: dir, days: 30, now: now)
             DispatchQueue.main.async {
                 guard let self, self.loadToken == token else { return }
                 self.data.rollups = windows
@@ -430,7 +550,7 @@ final class PanelModel: ObservableObject, PanelPinning {
         let dir = PanelPaths.dataDirURL
         let now = Date()
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let events = EventLog.read(dir: dir, days: 7, now: now)
+            let events = EventLog.read(dir: dir, days: 30, now: now)
             DispatchQueue.main.async { self?.data.events = events }
         }
     }
