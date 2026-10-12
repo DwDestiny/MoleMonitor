@@ -8,8 +8,7 @@
 //      SwiftUI; everything that moves is Core Animation inside DogSpriteView, so the body runs once per data point (W14).
 //      The signature `PanelHero(data:quiet:)` stays; the new parameters have defaults. `quiet` no longer changes the look: the stage
 //      is the same in both modes, the bubble carries the problem.
-//      COMPAT (v1 layout on main before WP-C merges): the stage scales down to the slot that PanelMetrics gives. In the v2 layout
-//      the slot is 320 x 152 pt and the scale is 1. TODO(WP-D): drop the scale after WP-C is on main.
+//      The slot is PanelMetrics.contentWidth x PanelMetrics.hero (320 x 152 pt), so the stage scale is 1 in the panel.
 //      Fallback chain (11.6): no usable bitmap at all, or `DogView.useBitmapArt == false`, shows the vector DogView (level 3).
 //      Stage colors: HeroTokens below (cooler than 3.3 `stage.day` #F3F1ED, see the WP-D report; F2 decides the token text).
 
@@ -174,9 +173,9 @@ struct PanelHero: View {
         !DogView.useBitmapArt || (!DogSpriteLibrary.shared.hasManifest && !DogArtLibrary.shared.isComplete)
     }
 
-    /// The slot of the layout. v2: 320 x 152 pt. COMPAT v1: the content width and the hero height of the mode.
+    /// The slot of the layout: 320 x 152 pt (DESIGN_V2.md 2.2, 2.3).
     private var slot: CGSize {
-        CGSize(width: PanelMetrics.width - 2 * PanelMetrics.padding, height: quiet ? PanelMetrics.heroQuiet : PanelMetrics.heroProblem)
+        CGSize(width: PanelMetrics.contentWidth, height: PanelMetrics.hero)
     }
 
     private var scale: CGFloat {

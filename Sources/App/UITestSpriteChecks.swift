@@ -91,8 +91,24 @@ enum UITestSpriteChecks {
     static func dump(_ r: UITestRunner) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(r.items) else { return }
-        try? data.write(to: r.outDir.appendingPathComponent("ui-wpd-items.json"))
+        if let data = try? encoder.encode(r.items) { try? data.write(to: r.outDir.appendingPathComponent("ui-wpd-items.json")) }
+        // One short line on stdout as well: the runner keeps only the tail of stdout when it stops at its time limit.
+        let watched: Set<String> = ["M2", "M19", "M19V", "M20", "M21", "W02", "W04", "W11", "W12", "W14", "W15", "W17", "W18"]
+        var parts = [String]()
+        for item in r.items where watched.contains(item.id) || item.status == "fail" {
+            var part = item.id + "=" + item.status
+            if item.status == "fail", let range = item.note.range(of: "ailures: ") {
+                part += " [" + String(item.note[range.upperBound...].prefix(220)) + "]"
+            } else if item.status == "fail" {
+                part += " [" + String(item.note.prefix(160)) + "]"
+            }
+            if watched.contains(item.id) {
+                let keys = item.values.keys.sorted().prefix(6)
+                if !keys.isEmpty { part += " {" + keys.map { "\($0) \(item.values[$0] ?? 0)" }.joined(separator: ", ") + "}" }
+            }
+            parts.append(part)
+        }
+        r.log("WPD-SUMMARY " + parts.joined(separator: " | "))
     }
 
     /// "layer:key" of every animation in the layer tree of the window of a view (W15 names them).
@@ -318,6 +334,8 @@ enum UITestSpriteChecks {
                 let lines = Int(((text.height / s) + 2.5) / DogStageGeometry.bubbleLine + 0.5)
                 values[key + ".gap"] = (g * 10).rounded() / 10
                 values[key + ".width"] = Double((local.width * 10).rounded() / 10)
+                values[key + ".height"] = Double((local.height * 10).rounded() / 10)
+                values[key + ".lines"] = Double(lines)
                 notes.append("\(key) bubble \(Int(local.width)) x \(Int(local.height)) pt, gap \(String(format: "%.1f", g)) pt, \(lines) lines")
                 if g < 4 { problems.append("\(key): gap \(String(format: "%.1f", g)) pt < 4") }
                 if local.width > 192 { problems.append("\(key): bubble \(Int(local.width)) pt wide > 192") }
@@ -370,8 +388,8 @@ enum UITestSpriteChecks {
         window.orderOut(nil)
         window.contentView = nil
         problems += templateProblems
-        var note = "8 scenes x light and dark, gap from the bubble box (with its tail) to the ink (alpha >= 8) of all frames of the 10 actions; "
-        note += notes.joined(separator: "; ")
+        var note = "8 scenes x light and dark, gap from the bubble box (with its tail) to the ink (alpha >= 8) of all frames of the 10 actions"
+        note += " (sizes and gaps per scene in the values); \(notes.count) of 16 measured, smallest gap " + String(format: "%.1f", minGap) + " pt"
         note += ". Templates: \(BubbleCopy.allTemplates.count) at their worst values, unclamped, most lines \(worstLines) (limit 2),"
         note += " line height \(String(format: "%.1f", lineHeight)) pt, pitch \(String(format: "%.1f", pitch)) pt."
         if !problems.isEmpty { note += " Failures: " + problems.joined(separator: "; ") }

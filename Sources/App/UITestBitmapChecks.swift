@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: `--dog-gallery <directory> --dog-checks` in the UITEST build (scripts/ci_acceptance.py, the dog block), and the panel
-//        gates of UITestPanelChecks.swift (M19V to M22). BE, BF, M20 and M21 read the sprite strips (DogSpriteView.swift) and the
+//        gates of UITestPanelChecks.swift (M19V to M21). BE, BF, M20 and M21 read the sprite strips (DogSpriteView.swift) and the
 //        helpers of UITestSpriteChecks.swift. BA to BD stay on the eight DogArt stills, which are the fallback of 11.6.
 // Output: BA to BE in <directory>/dog-report.json, and four contact sheets of the eight bitmap poses
 //         (bitmap-sheet-light.png, bitmap-sheet-dark.png, and the same two with the ground shadow).
@@ -19,7 +19,7 @@
 //     (UITestSpriteChecks.runMapping) with Reduce Motion forced off.
 // M21 problem mode hero in the real panel (diskRed and multi, light and dark): dog box at least 64 pt wide and 6 pt below the panel top,
 //     the bubble box at least 4 pt from the ink of every frame of the 10 actions, the highest ink at least 6 pt below the panel top.
-// M22 multi, light and dark: the collapsed problem rows have a gray fill (no hue) and a 3 pt bar in the level color. The first card keeps a tint.
+// M22 is replaced by W02 (13.2.1); stepCollapsedRows records nothing.
 
 #if UITEST
 import AppKit
@@ -434,30 +434,6 @@ extension UITestRunner {
                ["problems": Double(problems.count), "measured": Double(notes.count)])
     }
 
-    /// Mean color of a region of a screenshot over the surface color (the hosting view has no background of its own).
-    private func meanColor(_ shot: UITestShot, region: CGRect, surface: UITestContrast.RGB) -> UITestContrast.RGB? {
-        let box = UITestPixels.pixelRegion(region, of: shot)
-        guard box.x1 > box.x0, box.y1 > box.y0 else { return nil }
-        var sr = 0.0, sg = 0.0, sb = 0.0
-        var count = 0.0
-        for y in box.y0..<box.y1 {
-            for x in box.x0..<box.x1 {
-                let i = (y * shot.w + x) * 4
-                let behind = 1 - Double(shot.rgba[i + 3]) / 255
-                sr += Swift.min(255.0, Double(shot.rgba[i]) + surface.r * behind)
-                sg += Swift.min(255.0, Double(shot.rgba[i + 1]) + surface.g * behind)
-                sb += Swift.min(255.0, Double(shot.rgba[i + 2]) + surface.b * behind)
-                count += 1
-            }
-        }
-        return (sr / count, sg / count, sb / count)
-    }
-
-    private func srgb(_ color: Color) -> UITestContrast.RGB {
-        let c = NSColor(color).usingColorSpace(.sRGB) ?? NSColor.black
-        return (Double(c.redComponent) * 255, Double(c.greenComponent) * 255, Double(c.blueComponent) * 255)
-    }
-
     /// M21: the hero of the problem mode in the real panel (now W12 in the panel, DESIGN_V2.md 13.2.1). The dog box is at least
     /// 64 pt wide and at least 6 pt below the panel top. The bubble box (with its tail) keeps at least 4 pt from the ink (alpha >= 8)
     /// of every frame of the 10 actions (old limit 2 pt), and the highest ink (bubble or dog) is at least 6 pt below the panel top.
@@ -512,90 +488,9 @@ extension UITestRunner {
         UITestSpriteChecks.dump(self)
     }
 
-    /// M22: the multi card in both schemes. The three collapsed rows have a gray fill (no hue, near the panel color) and a 3 pt bar in
-    /// the lamp color of the level at the left edge. The first card keeps a tint with a hue.
-    func stepCollapsedRows() async {
-        let t0 = now()
-        var problems = [String]()
-        var notes = [String]()
-        var values = [String: Double]()
-        let name = "浅深色折叠问题卡无彩色底，左侧色条表示等级"
-        let copyBox = UITestTextBox()
-        guard let model = await openFixture(.multi, copyBox: copyBox), let hv = hostView else {
-            record("M22", name, false, since: t0, "the panel did not open")
-            return
-        }
-        var rows = [HealthItem]()
-        var cardItem: HealthItem?
-        for section in model.layoutPlan.sections {
-            if case .problemRow(let item, _) = section { rows.append(item) }
-            if case .problemCard(let item, _, _) = section { cardItem = item }
-        }
-        if rows.count != 3 { problems.append("expected 3 collapsed rows, found \(rows.count)") }
-        for dark in [false, true] {
-            await setAppearance(dark: dark)
-            let scheme = dark ? "dark" : "light"
-            let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
-            let tokens = PanelTokens(scheme: dark ? .dark : .light)
-            let barColors: [HealthLevel: UITestContrast.RGB] = [.red: srgb(tokens.lampDanger), .yellow: srgb(tokens.lampWarning)]
-            guard let shot = capture(hv) else {
-                problems.append(scheme + ": no screenshot")
-                continue
-            }
-            for item in rows {
-                guard let rect = panelRect("row." + item.rawValue), let verdict = model.data.verdict(item),
-                      let expectedBar = barColors[verdict.level] else {
-                    problems.append(scheme + " " + item.rawValue + ": no row frame or level")
-                    continue
-                }
-                let fillRegion = CGRect(x: rect.minX + 5, y: rect.minY + 6, width: 4, height: rect.height - 12)
-                let barRegion = CGRect(x: rect.minX + 0.5, y: rect.minY + 8, width: 2, height: rect.height - 16)
-                guard let fill = meanColor(shot, region: fillRegion, surface: surface), let bar = meanColor(shot, region: barRegion, surface: surface) else {
-                    problems.append(scheme + " " + item.rawValue + ": no pixels")
-                    continue
-                }
-                let fillShift = Swift.max(abs(fill.r - surface.r), abs(fill.g - surface.g), abs(fill.b - surface.b))
-                let fillChroma = Swift.max(fill.r, fill.g, fill.b) - Swift.min(fill.r, fill.g, fill.b)
-                let barShift = Swift.max(abs(bar.r - expectedBar.r), abs(bar.g - expectedBar.g), abs(bar.b - expectedBar.b))
-                let otherLevel: HealthLevel = verdict.level == .red ? .yellow : .red
-                var otherShift = 255.0
-                if let other = barColors[otherLevel] {
-                    otherShift = Swift.max(abs(bar.r - other.r), abs(bar.g - other.g), abs(bar.b - other.b))
-                }
-                let key = scheme + " " + item.rawValue + " " + verdict.level.rawValue
-                let shiftText = String(format: "%.1f", fillShift), chromaText = String(format: "%.1f", fillChroma)
-                let barText = String(format: "%.1f", barShift), otherText = String(format: "%.1f", otherShift)
-                notes.append(key + ": fill shift " + shiftText + ", chroma " + chromaText + "; bar shift to its level color " + barText + ", to the other level " + otherText)
-                values[key + ".fillShift"] = (fillShift * 10).rounded() / 10
-                values[key + ".fillChroma"] = (fillChroma * 10).rounded() / 10
-                values[key + ".barShift"] = (barShift * 10).rounded() / 10
-                // The panel color is a flat model (#ECECEC, #2A2A2C). Its own chroma (2 in dark) is part of the measured fill chroma.
-                if fillShift > 20 { problems.append(key + ": the fill differs from the panel color by " + shiftText + ", limit 20") }
-                if fillChroma > 4 { problems.append(key + ": the fill has a hue (chroma " + chromaText + ", limit 4)") }
-                if barShift > 30 { problems.append(key + ": the left bar is " + barText + " away from the level color, limit 30") }
-                if barShift >= otherShift { problems.append(key + ": the left bar is not closer to its own level color") }
-            }
-            if let item = cardItem, let rect = panelRect("card." + item.rawValue) {
-                let region = CGRect(x: rect.minX + 3, y: rect.minY + 30, width: 6, height: Swift.max(4, rect.height - 60))
-                if let fill = meanColor(shot, region: region, surface: surface) {
-                    let chroma = Swift.max(fill.r, fill.g, fill.b) - Swift.min(fill.r, fill.g, fill.b)
-                    notes.append(scheme + " first card " + item.rawValue + ": chroma " + String(format: "%.1f", chroma) + " (needs at least 6)")
-                    values[scheme + ".card.chroma"] = (chroma * 10).rounded() / 10
-                    if chroma < 6 { problems.append(scheme + ": the first card has no tint (chroma " + String(format: "%.1f", chroma) + ", needs 6)") }
-                } else {
-                    problems.append(scheme + ": no pixels in the first card")
-                }
-            } else {
-                problems.append(scheme + ": no first card frame")
-            }
-        }
-        resetAppearance()
-        await sleepMs(200)
-        await closeFixture()
-        var note = notes.joined(separator: "; ")
-        if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
-        record("M22", name, problems.isEmpty && notes.count == 8, since: t0, note, values)
-    }
+    /// M22 is gone: W02 replaces it (DESIGN_V2.md 13.2.1, scripts/ci_acceptance.py aliases M22 to W02). The v2 panel has no
+    /// collapsed problem rows. The call in UITestPanelChecks.swift does nothing now and can go.
+    func stepCollapsedRows() async {}
 
     /// M20: the sprite dog inside the real panel (now W04 in the panel, DESIGN_V2.md 13.2.1). No body evaluation of the hero and no
     /// draw call of the dog view while the data does not change, and the base action and variant follow the 10 data points of W04

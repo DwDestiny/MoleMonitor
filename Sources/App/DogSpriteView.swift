@@ -399,7 +399,7 @@ struct DogSpriteState: Equatable {
     var hearts: HeartBurst?
     var reduceMotion: Bool
     var dark: Bool
-    /// Stage scale: 1 in the v2 layout (320 x 152 pt). COMPAT: smaller while the v1 layout gives the hero less room.
+    /// Stage scale: 1 in the panel (320 x 152 pt). Smaller only for a smaller slot.
     var scale: CGFloat
 }
 
