@@ -45,12 +45,15 @@ struct HeroTokens {
 // MARK: - Model
 
 /// HeroBrain plus the two 2.5 s timers of the event texts (one-shot asyncAfter, cancelled by the next event).
+/// A data point reaches the brain inside the body of PanelHero (`sync`), so one data point costs one body evaluation (W14).
+/// The properties are not @Published for that reason. Taps, the copy text, the open and the timers change the brain outside a body,
+/// so they send `objectWillChange` themselves.
 @MainActor
 final class HeroModel: ObservableObject {
-    @Published private(set) var brain: HeroBrain
-    @Published private(set) var popToken = 0
-    @Published private(set) var oneShot: HeroOneShot?
-    @Published private(set) var hearts: HeartBurst?
+    private(set) var brain: HeroBrain
+    private(set) var popToken = 0
+    private(set) var oneShot: HeroOneShot?
+    private(set) var hearts: HeartBurst?
     private var serial = 0
     private var eventWork: DispatchWorkItem?
     private var copyWork: DispatchWorkItem?
@@ -62,26 +65,31 @@ final class HeroModel: ObservableObject {
         brain = HeroBrain(facts: facts)
     }
 
-    func update(_ facts: HeroFacts, reduceMotion: Bool) {
+    /// Called from the body with the facts of the data on screen. It does not publish: the body that calls it already shows the result.
+    func sync(_ facts: HeroFacts, reduceMotion: Bool) {
         guard facts != brain.facts else { return }
         apply(brain.update(facts, reduceMotion: reduceMotion))
     }
 
     func appeared(lastNightClean: Bool) {
+        objectWillChange.send()
         apply(brain.appeared(clock: Date(), calendar: .current, lastNightClean: lastNightClean, eggs: PanelHero.eggsEnabled,
                              memory: &HeroModel.memory))
     }
 
     func tapped(reduceMotion: Bool) {
+        objectWillChange.send()
         apply(brain.tap(at: ProcessInfo.processInfo.systemUptime, day: Calendar.current.startOfDay(for: Date()),
                         reduceMotion: reduceMotion, memory: &HeroModel.memory))
     }
 
     func longPressed(reduceMotion: Bool) {
+        objectWillChange.send()
         apply(brain.longPress(day: Calendar.current.startOfDay(for: Date()), reduceMotion: reduceMotion, memory: &HeroModel.memory))
     }
 
     func copied(_ text: String?, reduceMotion: Bool) {
+        objectWillChange.send()
         apply(brain.copied(text, reduceMotion: reduceMotion))
     }
 
@@ -97,13 +105,23 @@ final class HeroModel: ObservableObject {
         if e.pop { popToken += 1 }
         if e.eventStarted {
             eventWork?.cancel()
-            let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.brain.endEvent() } }
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.objectWillChange.send()
+                    self?.brain.endEvent()
+                }
+            }
             eventWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + HeroBrain.eventSeconds, execute: work)
         }
         if e.copyStarted {
             copyWork?.cancel()
-            let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.brain.endCopy() } }
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.objectWillChange.send()
+                    self?.brain.endCopy()
+                }
+            }
             copyWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + HeroBrain.eventSeconds, execute: work)
         }
@@ -182,8 +200,9 @@ struct PanelHero: View {
         let facts = PanelHero.facts(data, includeAppNames: includeAppNames)
         let dark = scheme == .dark
         let tokens = HeroTokens(dark: dark, night: facts.action.isNight)
-        let plan = model.brain.plan
         let rm = reduceMotion
+        let _ = model.sync(facts, reduceMotion: rm)
+        let plan = model.brain.plan
         let text = model.brain.display
         ZStack(alignment: .topLeading) {
             HeroStageBackground(tokens: tokens, scale: s)
@@ -236,7 +255,6 @@ struct PanelHero: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("section.hero")
         .onAppear { model.appeared(lastNightClean: lastNightClean) }
-        .onChange(of: facts) { _, next in model.update(next, reduceMotion: rm) }
         .onChange(of: copyBubble) { _, next in model.copied(next, reduceMotion: rm) }
     }
 
@@ -370,7 +388,16 @@ struct HeroBubble: View {
     let text: BubbleText
     let scale: CGFloat
     let tokens: HeroTokens
+    /// 2 on the stage. W12 passes nil to measure a template without the clamp, so a third line shows as height.
+    let maxLines: Int?
     @Environment(\.tok) private var tok
+
+    init(text: BubbleText, scale: CGFloat, tokens: HeroTokens, maxLines: Int? = 2) {
+        self.text = text
+        self.scale = scale
+        self.tokens = tokens
+        self.maxLines = maxLines
+    }
 
     private var attributed: AttributedString {
         var a = AttributedString(text.main)
@@ -391,7 +418,7 @@ struct HeroBubble: View {
             .monospacedDigit()
             .lineSpacing(2.5 * s)
             .foregroundStyle(tok.textPrimary)
-            .lineLimit(2)
+            .lineLimit(maxLines)
             .fixedSize(horizontal: false, vertical: true)
             .uiTestFrame("txt.hero.title")
             .accessibilityIdentifier("label.summary")

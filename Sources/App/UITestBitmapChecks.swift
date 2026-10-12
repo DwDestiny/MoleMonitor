@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: `--dog-gallery <directory> --dog-checks` in the UITEST build (scripts/ci_acceptance.py, the dog block), and the panel
-//        gates of UITestPanelChecks.swift (M20).
+//        gates of UITestPanelChecks.swift (M19V to M22). BE, BF, M20 and M21 read the sprite strips (DogSpriteView.swift) and the
+//        helpers of UITestSpriteChecks.swift. BA to BD stay on the eight DogArt stills, which are the fallback of 11.6.
 // Output: BA to BE in <directory>/dog-report.json, and four contact sheets of the eight bitmap poses
 //         (bitmap-sheet-light.png, bitmap-sheet-dark.png, and the same two with the ground shadow).
 // Pos: Test code of the bitmap dog (docs/DESIGN.md 4.9). It exists only in the UITEST build. The release binary has none of it.
@@ -10,11 +11,14 @@
 // BB  Reduce Motion: a pose switch attaches no crossfade. The control run with motion on attaches it.
 // BC  the eight files load as 320 x 240 px, a missing directory falls back without a crash.
 // BD  pairwise XOR of the non-background pixels at 72 x 54 pt 1x, 21 pairs of 7 poses, gate 0.20 (the values are all reported).
-// BE  the share of non-background pixels (the M19 rule): gray at least 1.5 %, every other pose at least 1 %.
-// BF  the ground shadow of each of the 8 poses: center y within 2 px of the lower edge of the dog (72 x 54 px), center x within 2 px
-//     of the dog center, width 0.7 to 0.8 of the dog width (sprint narrower and lighter).
-// M21 problem mode hero in the real panel: dog box at least 64 pt wide, at least 6 pt below the panel top, the bubble box and the
-//     dog ink box do not intersect (diskRed and multi, light and dark).
+// BE  the share of non-background pixels (the M19 rule) on the rest frames of the 10 sprite actions at 72 x 54 pt, light and dark:
+//     sit_gray at least 1.5 %, every other action at least 1 %, at least 12 colors.
+// BF  the ground shadow of each of the 10 sprite actions (DogStageGeometry.shadow) against the rest frame at 320 x 240 px: center y
+//     within 2 px of the lower ink edge, center x within 2 px of the ink center, width 0.68 to 0.82 of the ink (sprint narrower, lighter).
+// M20 the sprite dog in the real panel: no hero body and no draw call in 3 s of unchanged data, then the W04 mapping
+//     (UITestSpriteChecks.runMapping) with Reduce Motion forced off.
+// M21 problem mode hero in the real panel (diskRed and multi, light and dark): dog box at least 64 pt wide and 6 pt below the panel top,
+//     the bubble box at least 4 pt from the ink of every frame of the 10 actions, the highest ink at least 6 pt below the panel top.
 // M22 multi, light and dark: the collapsed problem rows have a gray fill (no hue) and a 3 pt bar in the level color. The first card keeps a tint.
 
 #if UITEST
@@ -182,7 +186,7 @@ extension UITestDogChecks {
         record("BD", "bitmap poses differ at 72 x 54 pt (pairwise XOR >= 0.20)", low.isEmpty, note, values)
     }
 
-    // MARK: BE, the share of non-background pixels (the M19 rule)
+    // MARK: BE, the share of non-background pixels (the M19 rule), on the rest frames of the 10 sprite actions
 
     private func checkBitmapShare() {
         let w = 72, h = 54
@@ -191,87 +195,94 @@ extension UITestDogChecks {
         var problems = [String]()
         for dark in [false, true] {
             let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
-            for pose in DogArtPose.allCases {
-                guard let image = DogArtLibrary.shared.image(pose, width: w, height: h),
+            for action in DogAction.allCases {
+                guard let image = DogSpriteLibrary.shared.restFrame(action),
                       let space = CGColorSpace(name: CGColorSpace.sRGB),
                       let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
                                           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-                    problems.append("\(pose.rawValue): no image")
+                    problems.append("\(action.rawValue): no image")
                     continue
                 }
+                ctx.interpolationQuality = .high
                 ctx.setFillColor(CGColor(srgbRed: surface.r / 255, green: surface.g / 255, blue: surface.b / 255, alpha: 1))
                 ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
                 ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
                 guard let flat = ctx.makeImage(), let shot = UITestPixels.shot(from: flat, pointWidth: CGFloat(w)),
                       let stats = UITestDogStats.measure(shot, region: CGRect(x: 0, y: 0, width: w, height: h), surface: surface) else {
-                    problems.append("\(pose.rawValue) \(dark ? "dark" : "light"): no ink")
+                    problems.append("\(action.rawValue) \(dark ? "dark" : "light"): no ink")
                     continue
                 }
                 let share = Double(stats.ink) / Double(max(1, stats.area))
-                let limit = pose == .gray ? 0.015 : 0.01
-                let key = pose.rawValue + (dark ? ".dark" : ".light")
+                let limit = action == .sitGray ? 0.015 : 0.01
+                let key = action.rawValue + (dark ? ".dark" : ".light")
                 values[key] = (share * 10000).rounded() / 10000
-                rows.append("\(key) \(String(format: "%.1f", share * 100)) %")
+                rows.append("\(key) \(String(format: "%.1f", share * 100)) % \(stats.colors) colors")
                 if share < limit { problems.append("\(key): \(String(format: "%.3f", share)) < \(limit)") }
                 if stats.colors < 12 { problems.append("\(key): only \(stats.colors) colors") }
             }
         }
-        record("BE", "bitmap poses: non-background share at 72 x 54 pt (gray >= 1.5 %, others >= 1 %)", problems.isEmpty && rows.count == 16,
+        record("BE", "sprite rest frames: non-background share at 72 x 54 pt (sit_gray >= 1.5 %, others >= 1 %, 12 colors)",
+               problems.isEmpty && rows.count == 2 * DogAction.allCases.count,
                rows.joined(separator: ", ") + (problems.isEmpty ? "" : ". Problems: " + problems.joined(separator: "; ")), values)
     }
 
-    // MARK: BF, the ground shadow follows each pose
+    // MARK: BF, the ground shadow follows each action
 
-    /// The shadow of every pose, measured on the 72 x 54 px alpha grid (the 1x look of the problem-mode dog), against the ellipse that the
-    /// view draws (`DogBitmapView.shadowSpec`). The grid is read at alpha 0.5. The view reads the 320 x 240 file, so the two differ by
-    /// at most one pixel of the small grid.
+    /// The shadow of every action against its rest frame, in pixels of the 320 x 240 frame (stricter than the old 72 x 54 grid).
+    /// The frame is read at alpha 128. The view draws `DogStageGeometry.shadow` from the manifest ink box (alpha 8).
     private func checkBitmapShadow() {
-        let box = CGSize(width: 72, height: 54)
         var rows = [String]()
         var problems = [String]()
         var values = [String: Double]()
         var sprintOpacity = 1.0
         var otherOpacity = 1.0
-        for pose in DogArtPose.allCases {
-            guard let grid = alphaGrid(pose) else {
-                problems.append("\(pose.rawValue): no picture")
+        let manifest = DogSpriteLibrary.shared.manifest
+        for action in DogAction.allCases {
+            guard let image = DogSpriteLibrary.shared.restFrame(action), let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let ctx = CGContext(data: nil, width: 320, height: 240, bitsPerComponent: 8, bytesPerRow: 320 * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                problems.append("\(action.rawValue): no picture")
                 continue
             }
-            var left = 72, right = -1, bottom = -1
-            for y in 0..<54 {
-                for x in 0..<72 where grid[y][x] >= 0.5 {
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: 320, height: 240))
+            guard let data = ctx.data else { continue }
+            let bytes = data.assumingMemoryBound(to: UInt8.self)
+            var left = 320, right = -1, bottom = -1
+            for y in 0..<240 {
+                for x in 0..<320 where bytes[(y * 320 + x) * 4 + 3] >= 128 {
                     if x < left { left = x }
                     if x > right { right = x }
                     if y > bottom { bottom = y }
                 }
             }
             guard right >= left, bottom >= 0 else {
-                problems.append("\(pose.rawValue): no ink on the grid")
+                problems.append("\(action.rawValue): no ink")
                 continue
             }
-            let spec = DogBitmapView.shadowSpec(pose: pose, box: box, ink: DogArtLibrary.shared.inkBox(pose))
+            let spec = DogStageGeometry.shadow(action, ink: manifest?.action(action)?.restInkBox)
             let bodyWidth = Double(right + 1 - left)
-            let bodyCenter = Double(left + right + 1) / 2 + DogBitmapView.shift(pose, box: box)
             let dy = abs(spec.centerY - Double(bottom + 1))
-            let dx = abs(spec.centerX - bodyCenter)
+            let dx = abs(spec.centerX - Double(left + right + 1) / 2)
             let ratio = spec.width / bodyWidth
-            let dyText = String(format: "%.2f", dy), dxText = String(format: "%.2f", dx)
+            let dyText = String(format: "%.1f", dy), dxText = String(format: "%.1f", dx)
             let ratioText = String(format: "%.2f", ratio), opacityText = String(format: "%.2f", spec.opacity)
-            rows.append(pose.rawValue + " dy " + dyText + " px, dx " + dxText + " px, width " + ratioText + ", opacity " + opacityText)
-            values[pose.rawValue + ".dy"] = (dy * 100).rounded() / 100
-            values[pose.rawValue + ".widthRatio"] = (ratio * 100).rounded() / 100
-            if dy > 2 { problems.append(pose.rawValue + ": center y is " + dyText + " px from the lower edge") }
-            if dx > 2 { problems.append(pose.rawValue + ": center x is " + dxText + " px from the dog center") }
-            if pose == .sprint {
+            rows.append(action.rawValue + " dy " + dyText + " px, dx " + dxText + " px, width " + ratioText + ", opacity " + opacityText)
+            values[action.rawValue + ".dy"] = (dy * 10).rounded() / 10
+            values[action.rawValue + ".dx"] = (dx * 10).rounded() / 10
+            values[action.rawValue + ".widthRatio"] = (ratio * 100).rounded() / 100
+            if dy > 2 { problems.append(action.rawValue + ": center y is " + dyText + " px from the lower edge") }
+            if dx > 2 { problems.append(action.rawValue + ": center x is " + dxText + " px from the dog center") }
+            if action == .sprint {
                 sprintOpacity = spec.opacity
                 if ratio >= 0.65 { problems.append("sprint: width ratio " + ratioText + " is not narrower") }
             } else {
                 otherOpacity = Swift.min(otherOpacity, spec.opacity)
-                if ratio < 0.68 || ratio > 0.82 { problems.append(pose.rawValue + ": width ratio " + ratioText + " is not near 0.75") }
+                if ratio < 0.68 || ratio > 0.82 { problems.append(action.rawValue + ": width ratio " + ratioText + " is not near 0.75") }
             }
         }
         if sprintOpacity >= otherOpacity { problems.append("sprint shadow is not lighter than the others") }
-        record("BF", "bitmap ground shadow follows the pose (center y within 2 px of the lower edge)", problems.isEmpty && rows.count == 8,
+        record("BF", "sprite ground shadow follows the action (center within 2 px of the rest frame, 320 x 240 px)",
+               problems.isEmpty && rows.count == DogAction.allCases.count,
                rows.joined(separator: "; ") + (problems.isEmpty ? "" : ". Problems: " + problems.joined(separator: "; ")), values)
     }
 
@@ -447,67 +458,57 @@ extension UITestRunner {
         return (Double(c.redComponent) * 255, Double(c.greenComponent) * 255, Double(c.blueComponent) * 255)
     }
 
-    /// M21: the hero of the problem mode in the real panel. The dog box is at least 64 pt wide and at least 6 pt below the panel top.
-    /// The bubble box and the dog ink box (both from the alpha of the pictures that the view draws) do not intersect, and the
-    /// highest ink (bubble or dog) is at least 6 pt below the panel top, so nothing is cut at the top.
+    /// M21: the hero of the problem mode in the real panel (now W12 in the panel, DESIGN_V2.md 13.2.1). The dog box is at least
+    /// 64 pt wide and at least 6 pt below the panel top. The bubble box (with its tail) keeps at least 4 pt from the ink (alpha >= 8)
+    /// of every frame of the 10 actions (old limit 2 pt), and the highest ink (bubble or dog) is at least 6 pt below the panel top.
     func stepHeroDog() async {
         let t0 = now()
         DogView.useBitmapArt = true
+        UITestSpriteChecks.motion(false)
+        defer { UITestSpriteChecks.restore() }
         var problems = [String]()
         var notes = [String]()
         var values = [String: Double]()
         let copyBox = UITestTextBox()
-        let library = DogArtLibrary.shared
+        let ink = UITestSpriteChecks.inkUnion()
+        let inkTop = ink.map(\.minY).min() ?? DogStageGeometry.dogBox.minY
         for c in [PreviewCase.diskRed, PreviewCase.multi] {
-            guard let model = await openFixture(c, copyBox: copyBox) else {
+            guard await openFixture(c, copyBox: copyBox) != nil, let hv = hostView else {
                 problems.append("\(c.rawValue): the panel did not open")
                 continue
             }
-            await sleepMs(300)
-            let pose = DogBitmapProbe.lastPose
-            let input = model.data.dogInput
-            guard let rect = panelRect("dog"), let item = input.worstProblem,
-                  let dogInk = library.inkBox(.alert, minAlpha: 8) else {
-                problems.append("\(c.rawValue): no dog frame or no problem item")
-                await closeFixture()
-                continue
-            }
-            if pose != .alert { problems.append("\(c.rawValue): the dog pose is \(pose?.rawValue ?? "nil"), expected alert") }
-            if rect.width < 64 { problems.append("\(c.rawValue): dog box \(Int(rect.width)) pt wide, needs 64") }
-            if rect.minY < 6 { problems.append(c.rawValue + ": dog box top is " + String(format: "%.1f", Double(rect.minY)) + " pt below the panel top, needs 6") }
             for dark in [false, true] {
+                await setAppearance(dark: dark)
                 let key = c.rawValue + (dark ? " dark" : " light")
-                let w = Int(rect.width * 4), h = Int(rect.height * 4)
-                guard let bubbleImage = library.bubble(item: item, level: input.worstLevel, dark: dark, width: w, height: h),
-                      let bubbleInk = DogInkBox.measure(bubbleImage, minAlpha: 8) else {
-                    problems.append("\(key): no bubble picture")
+                guard let stage = panelRect("hero.stage"), let bubble = panelRect("bubble"), let dog = panelRect("dog") else {
+                    problems.append("\(key): no stage, bubble or dog frame")
                     continue
                 }
-                let dogRect = CGRect(x: dogInk.minX * Double(rect.width) + DogBitmapView.shift(.alert, box: rect.size), y: dogInk.minY * Double(rect.height),
-                                     width: dogInk.width * Double(rect.width), height: (dogInk.maxY - dogInk.minY) * Double(rect.height))
-                let bubbleRect = CGRect(x: bubbleInk.minX * Double(rect.width), y: bubbleInk.minY * Double(rect.height),
-                                        width: bubbleInk.width * Double(rect.width), height: (bubbleInk.maxY - bubbleInk.minY) * Double(rect.height))
-                let gap = bubbleRect.minX - dogRect.maxX
-                let topInk = rect.minY + Swift.min(dogRect.minY, bubbleRect.minY)
-                let gapText = String(format: "%.1f", Double(gap)), topText = String(format: "%.1f", Double(topInk))
-                var line = key + " box " + String(Int(rect.width)) + " x " + String(Int(rect.height))
-                line += " pt, dog ink " + String(Int(dogRect.width)) + " x " + String(Int(dogRect.height))
-                line += " pt, gap bubble to dog " + gapText + " pt, top ink " + topText + " pt below the panel top"
-                notes.append(line)
-                if dogRect.intersects(bubbleRect) { problems.append(key + ": the bubble box meets the dog ink box") }
-                if gap < 2 { problems.append(key + ": the bubble is " + gapText + " pt from the dog, needs 2") }
+                let s = stage.width / DogStageGeometry.size.width
+                let local = CGRect(x: (bubble.minX - stage.minX) / s, y: (bubble.minY - stage.minY) / s, width: bubble.width / s,
+                                   height: bubble.height / s)
+                let gap = UITestSpriteChecks.gap(local, ink) * Double(s)
+                let topInk = Double(Swift.min(bubble.minY, stage.minY + inkTop * s))
+                let gapText = String(format: "%.1f", gap), topText = String(format: "%.1f", topInk)
+                notes.append("\(key) dog box \(Int(dog.width)) x \(Int(dog.height)) pt at scale \(String(format: "%.2f", Double(s))), "
+                                 + "gap bubble to the ink of all frames \(gapText) pt, top ink \(topText) pt below the panel top")
+                if dog.width < 64 { problems.append("\(key): dog box \(Int(dog.width)) pt wide, needs 64") }
+                if dog.minY < 6 { problems.append(key + ": dog box top is " + String(format: "%.1f", Double(dog.minY)) + " pt, needs 6") }
+                if gap < 4 { problems.append(key + ": the bubble is " + gapText + " pt from the dog, needs 4") }
                 if topInk < 6 { problems.append(key + ": the highest ink is " + topText + " pt below the panel top, needs 6") }
-                values[key + ".gap"] = Double((gap * 10).rounded() / 10)
-                values[key + ".topInk"] = Double((topInk * 10).rounded() / 10)
+                values[key + ".gap"] = (gap * 10).rounded() / 10
+                values[key + ".topInk"] = (topInk * 10).rounded() / 10
+                values[key + ".boxWidth"] = Double(dog.width)
+                let file = "ui-m21-\(c.rawValue)-\(dark ? "dark" : "light").png"
+                if let shot = windowFrame(hv) ?? capture(hv) { save(shot, file, dark: dark) }
             }
-            values[c.rawValue + ".boxWidth"] = Double(rect.width)
-            values[c.rawValue + ".boxTop"] = Double(rect.minY)
-            values[c.rawValue + ".dogInkHeight"] = ((dogInk.maxY - dogInk.minY) * Double(rect.height) * 10).rounded() / 10
+            resetAppearance()
+            await sleepMs(200)
             await closeFixture()
         }
         var note = notes.joined(separator: "; ")
         if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
-        record("M21", "问题模式比熊：框不小于 64 pt，气泡不压身体，顶部不裁切", problems.isEmpty && notes.count == 4, since: t0, note, values)
+        record("M21", "问题模式比熊：框不小于 64 pt，气泡离比熊 ≥4 pt，顶部不裁切", problems.isEmpty && notes.count == 4, since: t0, note, values)
     }
 
     /// M22: the multi card in both schemes. The three collapsed rows have a gray fill (no hue, near the panel color) and a 3 pt bar in
@@ -595,64 +596,40 @@ extension UITestRunner {
         record("M22", name, problems.isEmpty && notes.count == 8, since: t0, note, values)
     }
 
-    /// M20: the bitmap dog inside the real panel. No callback of the dog view while the data does not change, and the pose follows
-    /// the data points that a test injects into the panel model (30 s apart on the test clock).
+    /// M20: the sprite dog inside the real panel (now W04 in the panel, DESIGN_V2.md 13.2.1). No body evaluation of the hero and no
+    /// draw call of the dog view while the data does not change, and the base action and variant follow the 10 data points of W04
+    /// within 300 ms each. Reduce Motion is forced off (the CI VM reports it on).
     func stepBitmapPanel() async {
         let t0 = now()
         DogView.useBitmapArt = true
-        DogBitmapProbe.simulated = Date()
-        defer { DogBitmapProbe.simulated = nil }
+        UITestSpriteChecks.motion(true)
+        defer { UITestSpriteChecks.restore() }
         let copyBox = UITestTextBox()
-        guard let model = await openFixture(.allGreen, copyBox: copyBox), let hv = hostView else {
-            record("M20", "面板里位图比熊随数据点变化", false, since: t0, "the panel did not open")
+        guard let model = await openFixture(.allGreen, copyBox: copyBox) else {
+            record("M20", "面板里比熊随数据点变化", false, since: t0, "the panel did not open")
             return
         }
         await sleepMs(1800)
-        DogBitmapProbe.reset()
+        DogSpriteProbe.reset()
         await sleepMs(3000)
-        let idleBodies = DogBitmapProbe.bodies
-        let first = DogBitmapProbe.lastPose
-
-        struct Step {
-            var name: String
-            var expected: DogArtPose
-            var edit: (inout DogInput) -> Void
-        }
-        let steps: [Step] = [
-            Step(name: "cpu 95", expected: .sprint) { $0.cpuPercent = 95 },
-            Step(name: "thermal serious", expected: .pant) { $0.thermal = .serious },
-            Step(name: "thermal nominal, disk red", expected: .alert) { $0.thermal = .nominal; $0.worstProblem = .disk; $0.worstLevel = .red },
-            Step(name: "no problem, cpu 20", expected: .walk) { $0.worstProblem = nil; $0.worstLevel = .green; $0.cpuPercent = 20 },
-            Step(name: "collecting", expected: .gray) { $0.isStatic = true; $0.cpuPercent = nil; $0.thermal = nil },
-        ]
+        let idleBodies = DogSpriteProbe.heroBodies
+        let idleDraws = DogSpriteProbe.updateLayers
+        let first = DogSpriteProbe.currentAction
         var problems = [String]()
-        var notes = ["start pose \(first?.rawValue ?? "nil") (fixture cpu 8), idle body evaluations in 3 s: \(idleBodies)"]
-        if first != .lie { problems.append("the start pose is \(first?.rawValue ?? "nil"), expected lie") }
+        var notes = ["start \(first?.rawValue ?? "nil") (fixture cpu 8), in 3 s with unchanged data: \(idleBodies) hero body evaluations, "
+                     + "\(idleDraws) draw calls"]
+        if first != .lieIdle { problems.append("the start action is \(first?.rawValue ?? "nil"), expected lie_idle") }
         if idleBodies != 0 { problems.append("\(idleBodies) body evaluations in 3 s with unchanged data") }
-        var previousShot = capture(hv)
-        var changed = 0
-        for step in steps {
-            DogBitmapProbe.advanceClock(30)
-            var data = model.data
-            step.edit(&data.dogInput)
-            model.replace(data)
-            await sleepMs(500)
-            let seen = DogBitmapProbe.lastPose
-            var differs = "no picture"
-            if let current = capture(hv), let before = previousShot, let rect = panelRect("dog") {
-                let diff = UITestPixels.compare(before, current, region: rect)
-                differs = String(format: "%.3f", diff.fraction)
-                if diff.fraction > 0 { changed += 1 } else { problems.append("\(step.name): the dog region did not change") }
-                previousShot = current
-            }
-            notes.append("\(step.name) -> \(seen?.rawValue ?? "nil") (changed pixels \(differs))")
-            if seen != step.expected { problems.append("\(step.name): shows \(seen?.rawValue ?? "nil"), expected \(step.expected.rawValue)") }
-        }
+        if idleDraws != 0 { problems.append("\(idleDraws) draw calls in 3 s with unchanged data") }
+        let mapping = await UITestSpriteChecks.runMapping(self, model)
         await closeFixture()
+        notes += mapping.notes
+        problems += mapping.problems
         var note = notes.joined(separator: "; ")
         if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
-        record("M20", "面板里位图比熊随数据点变化", problems.isEmpty, since: t0, note,
-               ["idleBodies": Double(idleBodies), "steps": Double(steps.count), "pictureChanges": Double(changed)])
+        record("M20", "面板里比熊随数据点变化", problems.isEmpty, since: t0, note,
+               ["idleBodies": Double(idleBodies), "idleDraws": Double(idleDraws), "steps": Double(UITestSpriteChecks.steps.count),
+                "matched": Double(mapping.latencies.count)])
     }
 }
 #endif
