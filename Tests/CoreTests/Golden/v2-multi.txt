@@ -1,0 +1,66 @@
+# 请帮我排查这台 Mac：磁盘 5 天多占用 314 GB 等 3 项问题
+以下是 MoleMonitor 的只读监测数据。采样于 10月12日 14:05，数据新鲜。
+
+## 1. 现在的问题
+| 顺序 | 项目 | 级别 | 证据 | 已持续 |
+|---|---|---|---|---|
+| 1 | 磁盘 | 红 | 5 天 +314 GB，可用 120 GB | 3 小时 12 分 |
+| 2 | 内存 | 红 | 压力 87%（系统档位：严重），swap 9.8 GB | 25 分 |
+| 3 | CPU | 黄 | 5 分钟均值 74% | 40 分 |
+
+其余正常：耗电、温度。
+
+## 2. 你的任务
+1. 按第 3 节的顺序只读诊断。先处理排在前面的问题。
+2. 列出可以处理的对象：名称、大小或占用、理由、能否恢复。
+3. 等我确认后，才做任何改动。
+4. 回复格式：每个问题一段，按顺序：一句结论 → 证据 → 建议。每条建议标明“只读”或“会改动系统”。
+
+## 3. 排查步骤
+### 3.1 磁盘（红，最优先）
+口径：真实已用不含可清除空间（快照、系统缓存）。增长量 = 当前值 − 窗口内最低值。
+1. 运行 `/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --disk-history --days 30`，找出增长集中的日期。
+2. 运行 `mo analyze --json ~`，找出最大的目录。再对其中最大的子目录运行 `mo analyze --json <目录>`。不要省略 `--json`：交互模式可能把文件移到废纸篓。
+3. 对照第 5 节的写入排行与增长日期，判断来源：下载、虚拟机镜像、Xcode 数据、容器镜像、照片库、本地备份。
+4. 运行 `mo clean --dry-run` 与 `mo purge --dry-run`，只看预览结果。
+5. 列出可回收项：路径（家目录写 ~）、大小、能否再生成。
+
+### 3.2 内存（红）
+口径：等级以系统压力档位为准。压力百分比是近似读数。不看“已用占比”。
+1. 运行 `sysctl vm.swapusage` 与 `vm_stat`，确认 swap 与压缩内存。
+2. 运行 `ps -Ao pid,rss,comm -m | head -n 15`，对照第 5 节的排行找出大户。
+3. 5 分钟后再运行第 2 步。内存持续上涨的 App 可能有泄漏。
+4. 建议顺序：保存后重启该 App（先问我）→ 减少标签页或扩展。不建议 `sudo purge` 或内存清理软件。
+
+### 3.3 其余问题（各做第一步）
+- CPU（黄）：运行 `ps -Ao pid,pcpu,time,comm -r | head -n 15`，找出占用最高的进程。
+
+## 4. 安全规则（必须遵守）
+1. 先只读诊断，再给建议。
+2. 删除、卸载、清理、结束进程、退出 App 之前，先列清单（对象、大小或占用、理由），等我确认。
+3. 不用 sudo。不改 SIP、登录项、风扇、SMC 或电源设置。
+4. Mole 清理只用预览：`mo clean --dry-run`、`mo purge --dry-run`、`mo installer --dry-run`。不运行 `mo optimize`、`mo uninstall`，也不运行不带 `--dry-run` 的 `mo clean`、`mo purge`、`mo installer`。找不到 `mo` 时告诉我，不要自行安装。
+5. 命令报错时，先看 `<命令> --help` 或 `man <命令>`。不猜命令名或参数。
+6. 只读工具：`/Applications/MoleMonitor.app/Contents/Helpers/molemonitor-cli --status`、`--disk-history --days 30`、`--events --days 7`（三者都用同一个 CLI 路径），以及 `mo status --json`、`mo history --json`。数据目录：`~/Library/Application Support/MoleMonitor`。
+
+## 5. 参考数据
+- 机器：Mac15,8 · Apple M3 Max · 内存 64 GB · macOS 15.1 · MoleMonitor 0.4.0
+
+| App（近 5 分钟） | CPU | 内存 |
+|---|---|---|
+| Google Chrome（com.google.Chrome） | 86% | 14.2 GB |
+| Xcode（com.apple.dt.Xcode） | 41% | 6.1 GB |
+| Docker Desktop（com.docker.docker） | 22% | 4.0 GB |
+| WindowServer | 12% | 0.9 GB |
+| Slack（com.tinyspeck.slackmacgap） | 4% | 1.6 GB |
+
+| 指标 | 值 |
+|---|---|
+| 磁盘增长 | 1 天 +34 GB · 5 天 +314 GB · 30 天 +322 GB |
+| 写入最多的 App（近 5 分钟） | Docker Desktop 2.1 GB · Xcode 640 MB · Google Chrome 120 MB |
+| swap | 9.8 GB，30 分钟 +3.1 GB，趋势 ↑↑ |
+| CPU 2 小时 | 均值 61%，峰值 97% |
+| 近 7 天异常记录 | 磁盘 红 1 次 · 内存 红 1 次 · CPU 黄 3 次 |
+
+## 6. 我补充的现象
+[可选：写下你注意到的现象]
