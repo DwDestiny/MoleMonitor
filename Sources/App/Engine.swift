@@ -45,6 +45,10 @@ final class MonitorEngine: ObservableObject {
     @Published private(set) var dataState: DataState = .collecting
     /// Latest sleep records, for the power item.
     @Published private(set) var sleeps: [SleepRecord] = []
+    /// Anomaly records of the last 7 days, newest first (DESIGN_V2.md 12.2 D2). Nil until the engine has loaded them.
+    private(set) var recentEvents: [EventRecord]?
+    /// The last result of `readSleepBlockers`. Nil until the battery sidebar has read it once.
+    private(set) var latestSleepBlockers: [SleepBlocker]?
 
     /// True when the data directory had no history and no alert-state.json at init time.
     let isFirstLaunch: Bool
@@ -274,9 +278,15 @@ final class MonitorEngine: ObservableObject {
                                             cliPath: Bundle.main.bundlePath + "/Contents/Helpers/molemonitor-cli",
                                             dataDir: dataDir.path)
         let growth: [String: DiskGrowth] = status?.items.disk.growth ?? [:]
-        return PromptInput(env: environment, sampledAt: current.sampledAt ?? Date(), freshness: freshness, verdicts: verdicts,
-                           current: current, apps: topApps, appsBasis: appsBasis, cpuSummary: publishedCPUSummary,
-                           diskGrowth: growth)
+        var input = PromptInput(env: environment, sampledAt: current.sampledAt ?? Date(), freshness: freshness, verdicts: verdicts,
+                                current: current, apps: topApps, appsBasis: appsBasis, cpuSummary: publishedCPUSummary,
+                                diskGrowth: growth)
+        input.sleeps = sleeps
+        input.pressure2h = PressureSummary.make(points: trend.segments.flatMap { $0 }, now: Date())
+        input.diskWriters = diskWriters
+        input.sleepBlockers = latestSleepBlockers
+        input.events = recentEvents
+        return input
     }
 
     /// The prompt text for the agent (docs/DESIGN.md 7). Main thread.
@@ -771,6 +781,8 @@ final class MonitorEngine: ObservableObject {
         if eventTracker.observe(verdicts: output.verdicts, current: output.current, diskGrowth: growth, appNames: names, now: now) {
             try? EventLog.write(eventTracker.records, dir: dataDir, now: now)
         }
+        let recent = EventLog.limited(eventTracker.records, now: now).filter { EventLog.overlaps($0, days: 7, now: now) }
+        DispatchQueue.main.async { [weak self] in if self?.recentEvents != recent { self?.recentEvents = recent } }
     }
 
     /// Appends the newest finished 5 minute window once (DESIGN_V2.md 12.2 D1). A window without points writes nothing.
@@ -788,7 +800,10 @@ final class MonitorEngine: ObservableObject {
         queue.async { [weak self] in
             guard let self else { return }
             let list = self.processSampler.sleepBlockers()
-            DispatchQueue.main.async { completion(list) }
+            DispatchQueue.main.async {
+                self.latestSleepBlockers = list
+                completion(list)
+            }
         }
     }
 
