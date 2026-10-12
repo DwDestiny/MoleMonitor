@@ -220,8 +220,10 @@ struct PanelHero: View {
                     .keyframeAnimator(initialValue: CGFloat(1), trigger: rm ? 0 : model.popToken) { content, value in
                         content.scaleEffect(value, anchor: .bottomTrailing)
                     } keyframes: { _ in
-                        MoveKeyframe(0.85)
-                        SpringKeyframe(1, duration: 0.45, spring: Spring(response: 0.32, dampingRatio: 0.72))
+                        KeyframeTrack {
+                            MoveKeyframe(CGFloat(0.85))
+                            SpringKeyframe(CGFloat(1), duration: 0.45, spring: Spring(response: 0.32, dampingRatio: 0.72))
+                        }
                     }
                     .uiTestFrame("bubble")
                 Spacer(minLength: 0)

@@ -440,7 +440,7 @@ final class DogSpriteNSView: NSView {
     // Layers. The stage layer is 320 x 152 pt and y up; `y(_:_:)` turns the top-down numbers of DogStageGeometry into it.
     private let stage = CALayer()
     private let ground = CALayer()
-    private let shadow = CAGradientLayer()
+    private let shadowLayer = CAGradientLayer()
     private let body = CALayer()
     private let frameLayer = CALayer()
     private let sweat = CALayer()
@@ -501,7 +501,7 @@ final class DogSpriteNSView: NSView {
         stage.masksToBounds = true
         stage.cornerRadius = DogStageGeometry.cornerRadius
         root.addSublayer(stage)
-        for l in [ground, shadow, body, sweat, zLayer, marker] { stage.addSublayer(l) }
+        for l in [ground, shadowLayer, body, sweat, zLayer, marker] { stage.addSublayer(l) }
         body.addSublayer(frameLayer)
 
         let size = DogStageGeometry.size
@@ -509,9 +509,9 @@ final class DogSpriteNSView: NSView {
         ground.frame = CGRect(x: -DogStageGeometry.texturePeriod, y: y(DogStageGeometry.textureY, 2),
                               width: size.width + DogStageGeometry.texturePeriod * 2, height: 2)
 
-        shadow.type = .radial
-        shadow.startPoint = CGPoint(x: 0.5, y: 0.5)
-        shadow.endPoint = CGPoint(x: 1, y: 1)
+        shadowLayer.type = .radial
+        shadowLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
+        shadowLayer.endPoint = CGPoint(x: 1, y: 1)
 
         let box = DogStageGeometry.dogBox
         body.bounds = CGRect(origin: .zero, size: box.size)
@@ -578,8 +578,8 @@ final class DogSpriteNSView: NSView {
         }
         ground.contentsScale = 2
         let shade = CGColor(gray: 0, alpha: dark ? 0.40 : 0.13)
-        shadow.colors = [shade, CGColor(gray: 0, alpha: 0)]
-        shadow.locations = [0, 1]
+        shadowLayer.colors = [shade, CGColor(gray: 0, alpha: 0)]
+        shadowLayer.locations = [0, 1]
 
         let drop = drawImage(CGSize(width: 5, height: 7)) { ctx in
             let path = CGMutablePath()
@@ -859,9 +859,9 @@ final class DogSpriteNSView: NSView {
         let s = DogStageGeometry.shadow(action, ink: entry(action)?.restInkBox)
         let center = DogStageGeometry.stagePoint(px: s.centerX, s.centerY)
         let size = CGSize(width: s.width / 2, height: s.height / 2)
-        shadow.bounds = CGRect(origin: .zero, size: size)
-        shadow.position = CGPoint(x: center.x, y: y(center.y, 0))
-        shadow.opacity = Float(s.opacity)
+        shadowLayer.bounds = CGRect(origin: .zero, size: size)
+        shadowLayer.position = CGPoint(x: center.x, y: y(center.y, 0))
+        shadowLayer.opacity = Float(s.opacity)
     }
 
     private func rect(_ index: Int, of frames: Int) -> CGRect {
