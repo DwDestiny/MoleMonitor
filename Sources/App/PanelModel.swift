@@ -79,7 +79,7 @@ extension PanelData {
     init(fixture f: PreviewFixture, state: DataState, now: Date) {
         self.init(verdicts: f.verdicts, current: f.current, trend: f.trend, sleeps: f.sleeps, apps: f.apps,
                   coverage: nil, status: f.status, diskSeries: f.diskSeries, diskTrigger: f.diskTrigger,
-                  dogInput: f.dogInput, dataState: state, now: now)
+                  dogInput: f.dogInput, dataState: state, now: now, events: f.events)
     }
 }
 
@@ -341,6 +341,9 @@ final class PanelModel: ObservableObject, PanelPinning {
         let wasOpen = sidebarItem != nil
         if sidebarItem != item { sidebarItem = item }
         if item != nil { loadSidebarData() }
+        if item == .battery {
+            engine?.readSleepBlockers { [weak self] list in self?.data.sleepBlockers = list }
+        }
         if wasOpen != (item != nil) {
             chrome?.setSidebar(open: item != nil, animated: !(chrome?.isReduceMotion ?? true))
         }
@@ -706,9 +709,15 @@ enum PanelEngineAdapter {
             state = .stale(at)
         }
         let readable = engine.coverage.readable + engine.coverage.unreadable
-        return make(verdicts: verdicts, current: engine.current, trend: engine.trend, sleeps: engine.sleeps, apps: engine.topApps,
-                    appsBasis: engine.appsBasis, coverage: readable > 0 ? engine.coverage : nil, status: engine.status,
-                    diskSeries: engine.diskSeries, diskTrigger: engine.diskTrigger, state: state, now: now)
+        var data = make(verdicts: verdicts, current: engine.current, trend: engine.trend, sleeps: engine.sleeps, apps: engine.topApps,
+                        appsBasis: engine.appsBasis, coverage: readable > 0 ? engine.coverage : nil, status: engine.status,
+                        diskSeries: engine.diskSeries, diskTrigger: engine.diskTrigger, state: state, now: now)
+        data.events = engine.recentEvents ?? []
+        data.diskWriters = engine.diskWriters.map { row in
+            DiskWriterRow(key: row.key, name: row.name, bundleID: nil, bytes: row.bytes, isSystem: row.isSystem)
+        }
+        data.sleepBlockers = engine.latestSleepBlockers
+        return data
     }
 
     /// Fills the disk capacity triple from the status file when the sampler did not (A2a fills it later).
