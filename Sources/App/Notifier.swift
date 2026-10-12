@@ -5,6 +5,8 @@
 //         Callbacks: the action (copy the prompt of one topic, the card stays closed) and a tap on the notification (open the card).
 // Pos: Mac-only notification layer (docs/PROJECT.md 5, docs/DESIGN.md 6.9); without an app bundle it does nothing and reports "unavailable".
 //      The global budget (3 per hour, 10 per day) moved to the engine, which consumes it in problem order.
+//      R-14 (docs/DESIGN_V2.md 14.3): a tap passes the item to `onOpenCard`. The engine hands it to AppDelegate.openPanel(pinning:),
+//      which opens the PanelWindow and pins the sidebar of NotificationPlanner.sidebarItem(for:). Owner WP-B; the callback type is unchanged.
 
 import Foundation
 import UserNotifications
