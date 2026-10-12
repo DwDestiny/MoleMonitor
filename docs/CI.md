@@ -1,7 +1,7 @@
 ---
 title: "MoleMonitor · CI 回归门禁"
 type: ci
-last_updated: 2026-10-11
+last_updated: 2026-10-12
 ---
 
 # CI 回归门禁
@@ -15,7 +15,7 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 | 步骤 | 内容 |
 |---|---|
 | 1. Toolchain | 输出系统版本、芯片、Xcode 和 `swiftc` 版本 |
-| 2. Core and CLI tests | `scripts/test_core.py`（353 条断言）与 `scripts/test_cli.py`（79 项检查） |
+| 2. Core and CLI tests | `scripts/test_core.py`（4171 条断言）与 `scripts/test_cli.py`（116 项检查） |
 | 3. Build app | `python3 scripts/build.py`，输出 `dist/` |
 | 4. Build UI test variant | `python3 scripts/build.py --ui-test`，输出 `dist-uitest/` |
 | 5. Acceptance and UI regression gate | `python3 scripts/ci_acceptance.py`，检查项见 [scripts/README.md](../scripts/README.md) |
@@ -88,9 +88,29 @@ artifact 的内容：
 | N1 | 真实引擎复制 | 引擎驱动的面板，复制文字等于 `PromptBuilder` 对引擎输入的结果，长度不超过 3000，不含家目录与用户名，含“磁盘” |
 | N2 | 打开即有历史 | 用 `trendSeed` 模拟重启后恢复的 2 小时趋势，面板打开的同一刻模型已有不少于一半的种子点 |
 | M14 | 菜单栏图标状态 | 7 个场景下，`MenuIconModel` 与 `AppDelegate` 交给 `StatusIconController` 的姿态和角标等于手写期望表。图标是 24 pt 宽的模板图像，提示文字等于无障碍文字，问题项顺序等于 `ProblemOrder`，不同状态的图像互不相同 |
-| M19 | 面板里比熊真实渲染 | 7 个场景的浅色与深色截图里，比熊区域的非背景像素，动态比熊不少于区域的 1%，静态灰比熊（统计中、数据过期）不少于 1.5%，且都至少 12 种颜色。无障碍树不含占位文字。源码与发布二进制不含 `SKELETON` 字符串 |
+| M19 | 面板里比熊真实渲染（默认路径，现为位图比熊） | 7 个场景的浅色与深色截图里，比熊区域的非背景像素，动态比熊不少于区域的 1%，静态灰比熊（统计中、数据过期）不少于 1.5%，且都至少 12 种颜色。无障碍树不含占位文字。源码与发布二进制不含 `SKELETON` 字符串 |
+| M19V | 面板里矢量比熊真实渲染 | 关闭位图开关（`DogView.useBitmapArt = false`），对 7 个场景的浅色与深色测矢量比熊，门槛与 M19 相同 |
+| M20 | 位图比熊随数据点变化 | 真实面板内，空闲 3 秒位图视图的 body 评估为 0。测试注入 5 个数据点（CPU 95、热状态 serious、磁盘红、清除问题加 CPU 20、统计中），姿态依次为冲刺、喘气、关注、走、灰化，且每步狗区域像素有变化 |
 
-最新全绿运行（run 38115054435）的实测数字见 [VERIFICATION.md](VERIFICATION.md) 条目 3。
+## 比熊门禁（`--dog-gallery <目录> --dog-checks`）
+
+比熊块的各项写入 `dog-report.json`。矢量路径的项（`DogView.useBitmapArt = false`）门槛不变，位图项是新增的。含义与位图阶段的取舍见 [DESIGN.md 4.9.4](DESIGN.md#494-门禁变化)。
+
+| 项 | 检查内容 |
+|---|---|
+| DA、DB、DC、DE | 矢量路径：卡片打开的帧数与成本、关闭后无回调、步态切换腿速、Reduce Motion 无帧。位图路径不适用 DC（没有腿部动画）与 DA 的 60 至 80 帧（没有时间线） |
+| DD | 菜单栏切换帧数与时长，与比熊无关 |
+| DF | 发布二进制不含测试代码，含 `DogBitmapProbe` 与 `UITestBitmapChecks` 的检查，UI 变体含探针（正控） |
+| BA | 位图卡片打开 3 秒与关闭 3 秒，body 评估与矢量帧都为 0 |
+| BB | Reduce Motion 下 4 次姿态切换都不附加淡变，对照组都附加 |
+| BC | 8 个文件加载，320 × 240，缺目录无崩溃并回退矢量，开关路由正确 |
+| BD | 72 × 54 pt 下 7 个姿态两两异或比例，21 对，门槛 0.20 |
+| BE | 非背景像素占比，灰化不少于 1.5%，其余不少于 1%，至少 12 种颜色 |
+| BS | 4 张联系表（`bitmap-sheet-light.png`、`bitmap-sheet-dark.png` 与带阴影的两张）已写出 |
+
+另外，`ci_acceptance.py` 检查 `Contents/Resources/DogArt` 内 8 个文件与源文件逐字节相同，并审计 `DogBitmapView.swift` 的非注释代码不含 `Timer`、`TimelineView`、`Canvas`、`CADisplayLink`、`DispatchSource`、`asyncAfter`。
+
+最新全绿运行（run 38115054435）的实测数字见 [VERIFICATION.md](VERIFICATION.md) 条目 3。位图阶段的运行见条目 4。
 
 ## 局限
 

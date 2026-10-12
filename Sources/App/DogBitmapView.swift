@@ -145,8 +145,9 @@ struct DogBitmapView: View {
 
     /// The crossfade (docs/DESIGN.md 5.1: easeInOut, 0.20 to 0.25 s).
     static let fadeSeconds = 0.22
-    /// A soft ground shadow under the picture (the existing `shadow` token). Off unless the contrast needs it.
-    static var groundShadow = false
+    /// A soft ground shadow under the picture (the existing `shadow` token). On since the first CI sheets (docs/DESIGN.md 4.9):
+    /// the white dog on the light card looked to float without it. In dark mode the token is black 35 %, which is nearly invisible.
+    static var groundShadow = true
 
     init(input: DogInput, size: CGSize) {
         self.input = input
@@ -177,6 +178,11 @@ struct DogBitmapView: View {
         ZStack {
             if DogBitmapView.groundShadow, let shade = DogBitmapView.shadowColor(dark: dark) {
                 DogBitmapView.shadowShape(box: box).fill(shade)
+                    .frame(width: box.width, height: box.height)
+                    // The dog shrinks while the bubble shows (DESIGN.md 4.4). The shadow shrinks about the same point.
+                    .scaleEffect(target == .alert ? CGFloat(DogArt.bubbleShrink) : CGFloat(1),
+                                 anchor: UnitPoint(x: CGFloat(DogArt.bubbleShrinkAnchor.x / DogArt.designSize.w),
+                                                   y: CGFloat(DogArt.bubbleShrinkAnchor.y / DogArt.designSize.h)))
             }
             poseImage(slotA, box: box)
             poseImage(slotB, box: box)
