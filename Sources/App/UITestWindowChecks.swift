@@ -597,25 +597,56 @@ enum UITestWindowChecks {
         await r.sleepMs(350)
 
         // 4. A fast pointer across three rows never opens the sidebar (above 0.6 pt/ms).
-        w.testPointerEnter()
+        //    The step is 60 pt, so the nominal speed with a 10 ms sleep is 6 pt/ms. A VM stall can stretch a sleep. The measured
+        //    time between two moves decides: if any step is slower than 0.9 pt/ms (the limit 0.6 plus 50 %), the pass is void and
+        //    is done again, at most 3 times. If all 3 passes are void, the check fails: the sweep was never fast.
         let rows: [SidebarItem] = [.cpu, .memory, .disk]
+        let stepPt = 60.0
+        let minSweepSpeed = 0.9
         var everOpen = false
-        var y = 120.0
-        for row in rows {
-            for _ in 0..<8 {
-                y += 25
-                w.testPointer(.row(row), at: NSPoint(x: 120, y: y))
-                if w.shownSidebarItem != nil { everOpen = true }
+        var validPasses = 0
+        var voidPasses = 0
+        var slowestStep = Double.infinity
+        for _ in 0..<3 {
+            var closeTries = 0
+            while w.shownSidebarItem != nil && closeTries < 10 { w.testPointerLeave(); await r.sleepMs(300); closeTries += 1 }
+            w.testPointerEnter()
+            var y = 120.0
+            var lastT: Double? = nil
+            var passSlowest = Double.infinity
+            var passOpen = false
+            for row in rows {
+                for _ in 0..<8 {
+                    y += stepPt
+                    let t = r.now()
+                    if let l = lastT { passSlowest = Swift.min(passSlowest, stepPt / Swift.max(0.001, (t - l) * 1000)) }
+                    lastT = t
+                    w.testPointer(.row(row), at: NSPoint(x: 120, y: y))
+                    if w.shownSidebarItem != nil { passOpen = true }
+                    await r.sleepMs(10)
+                }
+            }
+            w.testPointer(.neutral, at: NSPoint(x: 120, y: y + stepPt))
+            let sweepEnd = r.now()
+            while (r.now() - sweepEnd) * 1000 < 600 {
+                if w.shownSidebarItem != nil { passOpen = true }
                 await r.sleepMs(10)
             }
+            slowestStep = Swift.min(slowestStep, passSlowest)
+            if passSlowest < minSweepSpeed {
+                voidPasses += 1
+            } else {
+                validPasses += 1
+                everOpen = passOpen
+                w.testPointerLeave()
+                break
+            }
+            w.testPointerLeave()
         }
-        w.testPointer(.neutral, at: NSPoint(x: 120, y: y + 25))
-        let sweepEnd = r.now()
-        while (r.now() - sweepEnd) * 1000 < 600 {
-            if w.shownSidebarItem != nil { everOpen = true }
-            await r.sleepMs(10)
-        }
-        if everOpen { problems.append("a fast pass over three rows opened the sidebar") }
+        if validPasses == 0 { problems.append("test environment too slow: no fast sweep was produced in 3 passes (slowest step \(fmt(slowestStep, 2)) pt/ms, needs at least \(minSweepSpeed))") }
+        else if everOpen { problems.append("a fast pass over three rows opened the sidebar") }
+        values["fastPassVoid"] = Double(voidPasses)
+        values["fastPassSlowestStepSpeed"] = slowestStep.isFinite ? slowestStep : -1
         values["fastPassOpened"] = everOpen ? 1 : 0
         w.testPointerLeave()
         await r.sleepMs(200)
@@ -638,7 +669,7 @@ enum UITestWindowChecks {
 
         let ok = problems.isEmpty
         r.record("W06", "hover intent in the window", ok, since: t0,
-                 "rest: no open at 200 ms (\(!openedEarly)), open at \(fmt(openMs)) ms; switch \(fmt(switchMs)) ms; close after leaving \(fmt(leaveMs)) ms; fast pass over 3 rows opened=\(everOpen); pinned sidebar held 5 s=\(!pinLost)"
+                 "rest: no open at 200 ms (\(!openedEarly)), open at \(fmt(openMs)) ms; switch \(fmt(switchMs)) ms; close after leaving \(fmt(leaveMs)) ms; fast pass over 3 rows opened=\(everOpen) (valid \(validPasses), void \(voidPasses), slowest step \(fmt(slowestStep, 2)) pt/ms); pinned sidebar held 5 s=\(!pinLost)"
                  + (ok ? "" : " PROBLEMS: " + problems.joined(separator: " / ")), values)
         await r.closePanelQuietly()
     }

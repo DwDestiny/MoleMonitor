@@ -39,7 +39,7 @@ jobs:
       - name: Core and CLI tests
         run: |
           set -o pipefail
-          SWIFTC=/usr/bin/swiftc python3 scripts/test_core.py
+          SWIFTC=/usr/bin/swiftc python3 scripts/test_core.py 2>&1 | tee "$RUNNER_TEMP/core-tests.log"
           SWIFTC=/usr/bin/swiftc python3 scripts/test_cli.py
 
       - name: Build app
@@ -54,6 +54,7 @@ jobs:
       - name: Acceptance and UI regression gate (回归门禁)
         env:
           MOLEMONITOR_CI_OUT: ${{ runner.temp }}
+          MOLEMONITOR_CORE_LOG: ${{ runner.temp }}/core-tests.log
         run: python3 scripts/ci_acceptance.py
 
       - name: Upload preview, UI frames and reports

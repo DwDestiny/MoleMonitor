@@ -53,21 +53,61 @@ GATES = [
         ("BB", "Reduce Motion no crossfade"), ("BC", "bitmap files load"), ("BD", "pose pairwise XOR"),
         ("BE", "non-background share"), ("BF", "ground shadow")]],
     # New gates of v2 (13.3). WP-F2 activated every W gate that has a real check reported as pass in the UI run (CI run 38341738663).
-    # W13, W20 and W21 stay pending: their checks are Core unit tests (Tests/CoreTests), which fail the "Core and CLI tests" step
-    # but have no per-gate result for this script. W16 stays pending: no check named W16 exists yet (gate L covers the same ground).
+    # W13, W20 and W21 are Core unit test suites. They are read from the log of scripts/test_core.py (CORE_GATE_SUITES below).
+    # W16 stays pending: no check named W16 exists yet (gate L covers the same ground).
     *[{"id": i, "name": n, "status": "active", "source": src} for i, n, src in [
         ("W01", "preview matrix", "ui"), ("W02", "layout and problem-first", "ui"), ("W03", "open speed and no white flash", "ui"),
         ("W04", "action mapping and speed continuity", "ui"), ("W05", "sidebar", "ui"), ("W06", "hover intent", "ui"),
         ("W07", "drag readout", "ui"), ("W08", "menu bar five states", "ui"), ("W09", "copy", "ui"),
         ("W10", "Esc layers and close", "ui"), ("W11", "dog strips at run time", "ui"), ("W12", "bubble and dog gap", "ui"),
-        ("W14", "main thread work per frame", "ui"), ("W15", "Reduce Motion", "ui"),
+        ("W13", "bubble templates", "core"), ("W14", "main thread work per frame", "ui"), ("W15", "Reduce Motion", "ui"),
         ("W17", "CPU while open", "ui"), ("W18", "sprite memory", "ui"),
-        ("W19", "capacity triple", "ui"), ("W22", "value alignment", "ui")]],
+        ("W19", "capacity triple", "ui"), ("W20", "prompt", "core"), ("W21", "memory pressure percent", "core"),
+        ("W22", "value alignment", "ui")]],
     *[{"id": i, "name": n, "status": "pending", "source": src} for i, n, src in [
-        ("W13", "bubble templates", "core"), ("W16", "closed panel costs nothing", "ui"),
-        ("W20", "prompt", "core"), ("W21", "memory pressure percent", "core")]],
+        ("W16", "closed panel costs nothing", "ui")]],
 ]
-GATE_EVALUATED_SOURCES = ("ui", "dog")
+GATE_EVALUATED_SOURCES = ("ui", "dog", "core")
+# Core gates (source "core"): the sections of the output of scripts/test_core.py ("== <section>" lines, "FAIL (line N): ..." lines).
+# A gate passes only if every listed section appears and no FAIL line follows a listed section. A missing section fails the gate.
+# Mapping from DESIGN_V2.md 13.3: W13 BubbleCopy unit tests, W20 the prompt golden samples (structure, length, golden files),
+# W21 the pressure percent tests (MemoryTests).
+CORE_GATE_SUITES = {
+    "W13": ["BubbleCopyTests"],
+    "W20": ["PromptBuilder: structure (DESIGN_V2.md 8.4)", "PromptBuilder: length and compression", "Prompt: golden files"],
+    "W21": ["MemoryTests"],
+}
+
+
+def core_gate_results(log_text):
+    """Return {gate id: (ok, detail)} read from the text of the Core test log. Pure function, tested by --self-test."""
+    sections = {}
+    current = None
+    total_failed = None
+    for line in log_text.splitlines():
+        line = line.strip()
+        if line.startswith("== "):
+            current = line[3:]
+            sections.setdefault(current, 0)
+        elif line.startswith("FAIL (line") and current is not None:
+            sections[current] += 1
+        elif line.startswith("Result:"):
+            m = re.match(r"Result: (\d+) passed, (\d+) failed", line)
+            if m:
+                total_failed = int(m.group(2))
+    results = {}
+    for gate_id, names in CORE_GATE_SUITES.items():
+        missing = [n for n in names if n not in sections]
+        failed = {n: sections[n] for n in names if sections.get(n)}
+        if missing:
+            results[gate_id] = (False, f"suite not in the Core test log: {missing}")
+        elif failed:
+            results[gate_id] = (False, f"failed assertions: {failed}")
+        elif total_failed is None:
+            results[gate_id] = (False, "the Core test log has no Result line")
+        else:
+            results[gate_id] = (True, f"suites {names} present, 0 failed assertions in them (whole run: {total_failed} failed)")
+    return results
 gate_by_id = {g["id"]: g for g in GATES}
 gate_results = {}  # gate id -> "pass" | "fail" | "skip"; only gates that ran have an entry
 
@@ -136,6 +176,16 @@ def gate_self_test():
         problems.append("active ui gate list changed")
     if gate_ids("dog", "active") != ["DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE", "BF"]:
         problems.append("active dog gate list changed")
+    good = "== BubbleCopyTests\n== MemoryTests\n== PromptBuilder: structure (DESIGN_V2.md 8.4)\n== PromptBuilder: length and compression\n== Prompt: golden files\nResult: 10 passed, 0 failed\n"
+    if not all(ok for ok, _ in core_gate_results(good).values()):
+        problems.append("core gate reader: a good log does not pass")
+    bad = core_gate_results(good.replace("== MemoryTests\n", "== MemoryTests\nFAIL (line 3): x\n"))
+    if bad["W21"][0] or not bad["W13"][0]:
+        problems.append("core gate reader: a failed assertion is not attributed to its suite")
+    if core_gate_results(good.replace("== BubbleCopyTests\n", ""))["W13"][0]:
+        problems.append("core gate reader: a missing suite passes")
+    if core_gate_results("")["W20"][0]:
+        problems.append("core gate reader: an empty log passes")
     for line in problems:
         print("FAIL  gate self-test: " + line)
     if not problems:
@@ -414,11 +464,12 @@ check(button_total >= 6 and not bad_buttons, "source audit: every Button in Pane
       f"buttons found {button_total}, without both: {bad_buttons}")
 check(not (root / "Sources/App/Panel.swift").exists(), "source audit: the old Panel.swift is gone")
 timer_hits = []
-for file in panel_files:
+# DESIGN_V2.md 13.2: the audit covers Panel*.swift (with PanelWindow.swift and its UITEST hooks) and DogSpriteView.swift.
+for file in panel_files + [root / "Sources/App/DogSpriteView.swift"]:
     text = re.sub(r"//.*", "", file.read_text(encoding="utf-8"))
     if re.search(r"\bTimer\b|TimelineView|Timer\.publish", text):
         timer_hits.append(file.name)
-check(not timer_hits, "source audit: no Timer or TimelineView in the panel files", str(timer_hits))
+check(not timer_hits, "source audit: no Timer or TimelineView in the panel files and DogSpriteView.swift", str(timer_hits))
 # The placeholder text of the skeleton is gone from every view the panel and the menu bar use.
 skeleton_hits = []
 for file in sorted((root / "Sources/App").glob("*.swift")) + [root / "Sources/MoleMonitor.swift"]:
@@ -507,8 +558,20 @@ else:
         for item in skipped_ui:
             print(f"  {item['id']} {item['name']}: {item['note']}", flush=True)
 
+# Core gates W13, W20, W21: read from the log of scripts/test_core.py (the workflow tees it to MOLEMONITOR_CORE_LOG).
+core_log = os.environ.get("MOLEMONITOR_CORE_LOG")
+core_text = Path(core_log).read_text(encoding="utf-8", errors="replace") if core_log and Path(core_log).exists() else ""
+if not core_text:
+    print("NOTE  MOLEMONITOR_CORE_LOG is not set or the file is missing: the Core gates W13, W20, W21 fail "
+          "(run `python3 scripts/test_core.py | tee <file>` and set MOLEMONITOR_CORE_LOG=<file>)", flush=True)
+for gate_id, (ok, detail) in core_gate_results(core_text).items():
+    gate_record(gate_id, "pass" if ok else "fail")
+    check(ok, f"core gate {gate_id} {gate_by_id[gate_id]['name']}", detail)
+    if ok:
+        print(f"      {detail}", flush=True)
+
 print()
-print("(summary of the gates read from ui-report.json; the dog gates follow below)", flush=True)
+print("(summary of the gates read from ui-report.json and the Core test log; the dog gates follow below)", flush=True)
 for line in gate_summary(sources=("ui", "core", "script"))[0]:
     print(line, flush=True)
 if failures:

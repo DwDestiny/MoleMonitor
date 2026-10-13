@@ -15,7 +15,7 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 | 步骤 | 内容 |
 |---|---|
 | 1. Toolchain | 输出系统版本、芯片、Xcode 和 `swiftc` 版本 |
-| 2. Core and CLI tests | `scripts/test_core.py`（4948 条断言）与 `scripts/test_cli.py`（124 项检查） |
+| 2. Core and CLI tests | `scripts/test_core.py`（4948 条断言，输出同时写入 `$RUNNER_TEMP/core-tests.log`）与 `scripts/test_cli.py`（124 项检查） |
 | 3. Build app | `python3 scripts/build.py`，输出 `dist/` |
 | 4. Build UI test variant | `python3 scripts/build.py --ui-test`，输出 `dist-uitest/` |
 | 5. Acceptance and UI regression gate | `python3 scripts/ci_acceptance.py`，检查项见 [scripts/README.md](../scripts/README.md) |
@@ -141,8 +141,8 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 |---|---|
 | `ui` | `ui-report.json` 中编号相同的项 |
 | `dog` | `dog-report.json` 中编号相同的项 |
-| `core` | 工作流步骤 “Core and CLI tests”。`ci_acceptance.py` 没有读取器，因此不能设为 `active` |
-| `script` | 后续步骤的脚本。同样不能设为 `active` |
+| `core` | 工作流步骤 “Core and CLI tests” 的日志，由环境变量 `MOLEMONITOR_CORE_LOG` 指向。映射见下文 |
+| `script` | 后续步骤的脚本。没有读取器，因此不能设为 `active` |
 
 旧门禁（A 至 L、M2 至 M22、N1、N2、DA 至 DE、BA 至 BF）全部登记为 `active`，行为不变。M2、M3、M22 的结果由 W02 提供：脚本把 W02 的报告复制成这三个编号。W02 检查三件事：每个场景的行顺序与高度，只有最严重的一行有淡底色，其他行没有底色（浅色与深色各检查一次）。因此 W02 同时承担旧 M22 的语义。
 一个编号可以报告两次（W06 有模型部分和窗口部分）。登记表只保留失败：后一次通过不会覆盖前一次失败。
@@ -158,23 +158,47 @@ INACTIVE gates (未激活, not passed, not failed): W01 ...; W02 ...
 
 ### v2 门禁的激活状态（2026-10-13，WP-F2）
 
-激活依据：run 38341738663（分支 `v2/wp-d`，提交 `5f20c2a`）的日志。表中 18 项在该次运行里报告 `pass`，现已激活。激活后的 CI 运行见 [VERIFICATION.md](VERIFICATION.md) 条目 7。
+激活依据：run 38341738663（分支 `v2/wp-d`，提交 `5f20c2a`）的日志。`ui` 来源的 18 项在该次运行里报告 `pass`，现已激活。`core` 来源的 3 项由 `ci_acceptance.py` 读取 Core 测试日志，同样已激活。激活后的 CI 运行见 [VERIFICATION.md](VERIFICATION.md) 条目 7 和 8。
 
 | 状态 | 门禁 |
 |---|---|
 | `active`，来源 `ui`（18 项） | W01、W02、W03、W04、W05、W06、W07、W08、W09、W10、W11（运行时部分）、W12、W14、W15、W17、W18、W19、W22 |
-| `pending`（4 项） | W13、W20、W21、W16 |
+| `active`，来源 `core`（3 项） | W13、W20、W21 |
+| `pending`（1 项） | W16 |
 
-W08 的检查在 UI 测试变体里运行，因此来源从 `dog` 改为 `ui`。W11 的来源从 `script` 改为 `ui`，名称改为 “dog strips at run time”。条带文件的像素检查是 `scripts/check_sprites.py`，它需要 Pillow 与 numpy，不在 CI 里运行，由开发者在本机运行。
+W08 的检查在 UI 测试变体里运行，因此来源从 `dog` 改为 `ui`。W11 的来源从 `script` 改为 `ui`，名称改为 “dog strips at run time”。
 
-未激活的原因：
+#### Core 门禁 W13、W20、W21
 
-| 门禁 | 原因 |
+工作流步骤 “Core and CLI tests” 把 `scripts/test_core.py` 的输出写入 `$RUNNER_TEMP/core-tests.log`（`tee`）。步骤 “Acceptance and UI regression gate” 通过环境变量 `MOLEMONITOR_CORE_LOG` 把该文件交给 `ci_acceptance.py`。脚本读取日志里的 `== <套件>` 行和 `FAIL (line N)` 行。一个门禁只在以下条件都满足时通过：它的每个套件都出现在日志里，套件内没有 `FAIL` 行，日志有 `Result:` 行。套件不存在算失败，不算未激活。日志文件缺失时三个门禁都失败。
+
+| 门禁 | 套件（`section` 名称） | 依据 |
+|---|---|---|
+| W13 | `BubbleCopyTests` | [DESIGN_V2.md](DESIGN_V2.md) 13.3：Core 单测（`BubbleCopy`），全部模板在最坏取值下 ≤24 宽度单位 |
+| W20 | `PromptBuilder: structure (DESIGN_V2.md 8.4)`、`PromptBuilder: length and compression`、`Prompt: golden files` | 13.3：黄金样例 ≤3000 字符，第 4 节安全规则逐字存在 |
+| W21 | `MemoryTests` | 13.3：压力百分比 77 到 23%，0 到 100%，100 到 0%，−1 与 101 为 nil |
+
+> **注意**：测试程序只输出套件名，不输出每个套件的通过数。因此门禁读取“套件存在且没有失败断言”，不读通过数。在本机运行时，先运行 `python3 scripts/test_core.py | tee 日志文件`，再设置 `MOLEMONITOR_CORE_LOG=日志文件` 运行 `ci_acceptance.py`。
+
+#### 未激活：W16
+
+UI 测试里没有名为 W16 的检查。关闭面板零成本已由门禁 L 检查，精灵缓存在关闭后为 0 字节已由 W18 记录。独立的 W16 检查是已知缺口，由协调者另行安排。需要的断言见 [DESIGN_V2.md](DESIGN_V2.md) 13.3 的 W16 一行。
+
+#### W06 窗口部分的计时（2026-10-13）
+
+run 38344898067 的 W06 失败过一次：“快速扫过三行打开了侧栏”。原因：测试用 25 pt 步长和 10 ms 睡眠，名义速度 2.5 pt/ms。CI 虚拟机卡顿时睡眠被拉长到约 42 ms 以上，速度跌到限值 0.6 pt/ms 以下，扫过不再“快”。现在步长为 60 pt，并测量每步的实际间隔。只要有一步的速度低于 0.9 pt/ms（限值 0.6 加 50% 余量），这次扫过作废并重做，最多 3 次。3 次都作废时，门禁报告“test environment too slow”并失败，不算通过。限值 0.6 pt/ms 和打开延迟不变。报告里的 `fastPassVoid` 记录作废次数。
+
+#### 源码审计
+
+审计 `Panel*.swift`（包括 `PanelWindow.swift` 和其中 `#if UITEST` 的钩子）与 `DogSpriteView.swift`，内容是不含 `Timer`、`TimelineView`。钩子不含这些词，因此不需要排除。
+
+#### 已知未覆盖
+
+| 内容 | 说明 |
 |---|---|
-| W13、W20、W21 | 检查是 Core 单元测试（`BubbleCopyTests`、`PromptTests`、`MemoryTests`）。它们在步骤 “Core and CLI tests” 里运行，失败会使作业失败，但没有逐门禁的结果可供 `ci_acceptance.py` 读取 |
-| W16 | UI 测试里没有名为 W16 的检查。关闭面板零成本已由门禁 L 检查，精灵缓存在关闭后为 0 字节已由 W18 记录。独立的 W16 检查尚未写 |
-
-W16 的源码审计（`Panel*.swift` 无 `Timer`、`TimelineView`）已覆盖 `PanelWindow.swift`，包括其中 `#if UITEST` 的钩子，并且通过。钩子不含这些词，因此不需要排除。
+| `scripts/check_sprites.py` | W11 的像素部分需要 Pillow 与 numpy，不在 CI 里运行。新增或改动条带后，开发者在本机运行 |
+| W16 独立检查 | 见上文 |
+| 真机项 | 帧率、观感、系统授权框等，见 [HANDOFF.md](HANDOFF.md) |
 
 ### 接入新门禁
 
