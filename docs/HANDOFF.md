@@ -1,34 +1,34 @@
 ---
 title: "MoleMonitor · Claude 接手说明"
 type: handoff
-last_updated: 2026-10-12
+last_updated: 2026-10-13
 ---
 
 # Claude 接手说明
 
-MoleMonitor 的功能代码已经写完。`Sources/Core/` 与 CLI 在 Linux 上测试。`Sources/App/` 在 CI 的 macOS 虚拟机上构建并通过回归门禁，但没有在用户的 Mac 上人工验收。Linux VPS 可以继续阅读、设计、改源码和写文档。AppKit、SwiftUI、UserNotifications、IOKit 的真机检查必须在 Apple Silicon Mac 上完成。
+MoleMonitor 的功能代码已经写完，面板 v2 已实现并合并到 `main`（提交 `3dae2ad`）。`Sources/Core/` 与 CLI 在 Linux 上测试。`Sources/App/` 在 CI 的 macOS 虚拟机上构建并通过回归门禁，但没有在用户的 Mac 上人工验收。Linux VPS 可以继续阅读、设计、改源码和写文档。AppKit、SwiftUI、UserNotifications、IOKit 的真机检查必须在 Apple Silicon Mac 上完成。
 
-状态卡与比熊的设计真源是 [DESIGN.md](DESIGN.md)。产品范围与数据口径见 [PROJECT.md](PROJECT.md)。如果两者冲突，以 DESIGN.md 与 [VERIFICATION.md](VERIFICATION.md) 为准。
+面板、菜单栏图标与比熊的设计真源是 [DESIGN_V2.md](DESIGN_V2.md)。[DESIGN.md](DESIGN.md) 中被取代的章节已有标记，数据层与提示词规则仍有效。产品范围与数据口径见 [PROJECT.md](PROJECT.md)。如果文档冲突，以 DESIGN_V2.md 与 [VERIFICATION.md](VERIFICATION.md) 为准。
 
 ## 当前状态
 
 | 部分 | 状态 |
 |---|---|
 | 产品方向 | 只读 macOS 14+ 菜单栏健康哨兵。只检测和预警，不做清理 |
-| 状态卡 | 问题优先：有问题时突出问题名与证据，正常项靠后。安静模式高 332 pt，问题模式高 560 或 620 pt，宽度固定 328 pt。尺寸见 [DESIGN.md 2.5](DESIGN.md#25-尺寸与间距) |
-| 数据层 | 引擎每 30 秒采样一次，内存保存 2 小时环形缓冲，每 5 分钟写 `trend.json`。设计见 [DESIGN.md 第 6 章](DESIGN.md#6-数据层规格) |
+| 状态卡 | 自定义 `NSPanel` 窗口。主列 352 pt 宽，高 524 pt（台式机 484 pt），四段：英雄区、六行分项、异常区、底栏。点击或悬停一行，右侧展开 320 pt 的侧栏。设计见 [DESIGN_V2.md](DESIGN_V2.md) |
+| 数据层 | 引擎每 30 秒采样一次，内存保存 2 小时环形缓冲，每 5 分钟写 `trend.json`，另写 5 分钟汇总文件 `rollup-YYYY-MM.ndjson` 与 `events.json`（异常记录）。设计见 [DESIGN.md 第 6 章](DESIGN.md#6-数据层规格)和 [DESIGN_V2.md 第 12 章](DESIGN_V2.md) |
 | 健康规则 | CPU、内存、温度、磁盘、耗电五项都已实现。占用 App 前 5 名已实现 |
 | 提示词 | 状态卡有“复制给 Agent”按钮，生成不超过 3000 字的排查提示词。CLI 命令是 `molemonitor-cli prompt`。提示词禁止 `mo optimize`、`mo uninstall` 和非 dry-run 清理。删除、卸载、清理、结束进程前须经用户确认 |
-| 状态卡比熊 | AI 生成的位图姿态，共 8 张（7 个姿态加灰化）。姿态静态显示，切换时 0.22 秒淡入，没有连续动画。位图动画推迟，等用户在真机上用 Activity Monitor 测过 CPU 之后再定。旧的程序化矢量比熊保留作回退（`DogView.useBitmapArt`） |
-| 菜单栏图标 | 矢量比熊正面头像剪影加角标。状态切换有不超过 8 帧的动画 |
+| 状态卡比熊 | AI 生成的序列帧动画，10 个动作。CPU 决定奔跑速度，其他状态决定动作。降级链：序列帧，8 张静态位图，矢量比熊（`DogView.useBitmapArt`）。门禁见 [CI.md](CI.md) |
+| 菜单栏图标 | 矢量比熊正面头像剪影加角标，五个状态（正常、留意、异常、采集中、过期）。状态切换有不超过 8 帧的动画 |
 | 素材 | AI 生成，版权归属法律上不确定，不适用 GPL。发布前须由用户确认，见 [ASSETS.md](ASSETS.md) 第 4 节 |
-| `Sources/Core/` | 完成。Linux 上 4171 条断言通过 |
-| `Sources/cli/`（`molemonitor-cli`） | 完成。Linux 上 116 项检查通过 |
+| `Sources/Core/` | 完成。Linux 上 4948 条断言通过 |
+| `Sources/cli/`（`molemonitor-cli`） | 完成。Linux 上 124 项检查通过 |
 | `Sources/App/` | 完成，通过 CI 回归门禁。文件划分见 [Sources/README.md](../Sources/README.md) |
 | `Sources/App/UITest*.swift` | 界面回归测试代码。只在 `-D UITEST` 构建中存在 |
 | `Sources/Sensors.swift` | 保留的只读 SMC |
 | `scripts/build.py` | 编译 App 和 CLI，ad-hoc 签名。`--ui-test` 构建测试变体 |
-| CI | `.github/workflows/build-mac.yml`，单作业，15 分钟上限。说明见 [CI.md](CI.md) |
+| CI | `.github/workflows/build-mac.yml`，单作业，30 分钟上限，UI 测试预算 420 s。说明见 [CI.md](CI.md) |
 | 旧方案 | Go 采集器、`fetch_status.py`、1 Hz 界面定时器已删除 |
 
 > **注意**：CI 结果是回归门禁，不是真机验收。不要写成“验收通过”。虚拟机是软件渲染，不能证明真机帧率、观感、菜单栏位置和通知授权框。见 [VERIFICATION.md](VERIFICATION.md) 条目 3 至 6。
@@ -49,14 +49,15 @@ MoleMonitor 的功能代码已经写完。`Sources/Core/` 与 CLI 在 Linux 上�
 | 阶段 2 | CPU 与内存规则、占用 App 前 5 名、实时网速与整机 CPU 曲线 |
 | 阶段 3 | 温度与热状态规则、自绘比熊、菜单栏图标动画 |
 | 阶段 4 | 睡眠掉电与整机耗电规则 |
-| 状态卡重设计 | 问题优先版面、三档高度、2 小时趋势、复制给 Agent |
+| 状态卡重设计 | 问题优先版面、2 小时趋势、复制给 Agent |
+| 面板 v2 | NSPanel 窗口、侧栏、序列帧比熊、菜单栏五态、气泡。门禁 W01 至 W22（18 项已激活，4 项未激活，见 [CI.md](CI.md)） |
 | 位图比熊 | 8 张位图、淡入、地面阴影、门禁 BA 至 BF |
 
 ## 未做
 
 | 项 | 说明 |
 |---|---|
-| 位图比熊的连续动画 | 推迟，等真机 CPU 数据 |
+| 真机动画手感与 CPU | 序列帧动画已实现。CI 虚拟机是软件渲染，真机帧率和 CPU 须用户测 |
 | 真机验收 | 见下文“下一步”的清单 |
 | 素材版权确认 | 用户须决定 [ASSETS.md](ASSETS.md) 的 A1 至 A5 |
 | 安装、登录启动、公证、Release | 按用户具体授权执行 |
@@ -125,7 +126,7 @@ gh run download -n molemonitor-ci
 
 | 编号 | 检查项 |
 |---|---|
-| 1 | 动效手感与 ProMotion 流畅度：面板打开的入场，比熊姿态切换的 0.22 秒淡入。位图阶段没有连续动画，这是已知取舍 |
+| 1 | 动效手感与 ProMotion 流畅度：面板打开的入场，比熊奔跑与动作切换，侧栏展开 |
 | 2 | 真实通知授权框，以及点击通知后展开状态卡 |
 | 3 | 菜单栏图标在真实壁纸上的观感：1x 下喘气与耳朵抬起的轮廓，温度计与闪电角标偏弱 |
 | 4 | 状态卡打开时，Activity Monitor 里的 CPU 和闲置 CPU。CI 虚拟机是软件渲染，0.02% 不能外推 |

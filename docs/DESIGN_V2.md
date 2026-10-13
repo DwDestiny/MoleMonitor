@@ -2,7 +2,7 @@
 
 本文档定义面板 v2 的完整设计：菜单栏图标、英雄区比熊动画、分项区、侧栏明细、异常区和一键复制提示词。本文档取代 [DESIGN.md](DESIGN.md) 中第 13 章列出的章节和门禁。没有被列出的旧章节继续有效。
 
-- 状态：设计稿，待甲方验收。
+- 状态：v2 已实现并合并到 `main`（提交 `3dae2ad`），通过 CI 回归门禁。真机验收待用户确认。门禁状态见 [CI.md](CI.md)。
 - 日期：2026-10-12。
 - 范围：Mac 应用 `Sources/App/`、核心逻辑 `Sources/Core/`、CLI `Sources/cli/`、CI 门禁 `scripts/ci_acceptance.py`。
 - 产品边界：见 [PROJECT.md](PROJECT.md)。本文档不改变“只检测、只预警、只读”的边界。

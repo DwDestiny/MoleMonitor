@@ -358,8 +358,8 @@ p50, p95 = timings[len(timings) // 2], timings[int(len(timings) * 0.95) - 1]
 print(f"CLI --status --brief on this runner: p50={p50:.1f} ms p95={p95:.1f} ms (30 runs, includes process spawn)", flush=True)
 check(p50 <= 50, "CLI p50 under 50 ms (runner VM, informational limit)", f"{p50:.1f}")
 
-# 6. M1 and M3: static previews. 7 cases x light and dark x full and empty data = 28 files, 328 pt wide at scale 2.
-#    Height by case is one of the three tiers. Every file is a non-empty PNG, and no two files are equal.
+# 6. M1 and M3: static previews. 7 cases x light and dark x full and empty data = 28 main column files, 352 pt wide at scale 2.
+#    All files have one height (v2). Every file is a non-empty PNG, and no two files are equal.
 def png_size(data):
     if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
         return None
