@@ -52,16 +52,20 @@ GATES = [
         ("DD", "menu bar switch"), ("DE", "Reduce Motion no frames"), ("BA", "bitmap dog no body evaluation"),
         ("BB", "Reduce Motion no crossfade"), ("BC", "bitmap files load"), ("BD", "pose pairwise XOR"),
         ("BE", "non-background share"), ("BF", "ground shadow")]],
-    # New gates of v2 (13.3). All pending until the owning work package has delivered its check and WP-F activates it.
-    *[{"id": i, "name": n, "status": "pending", "source": src} for i, n, src in [
+    # New gates of v2 (13.3). WP-F2 activated every W gate that has a real check reported as pass in the UI run (CI run 38341738663).
+    # W13, W20 and W21 stay pending: their checks are Core unit tests (Tests/CoreTests), which fail the "Core and CLI tests" step
+    # but have no per-gate result for this script. W16 stays pending: no check named W16 exists yet (gate L covers the same ground).
+    *[{"id": i, "name": n, "status": "active", "source": src} for i, n, src in [
         ("W01", "preview matrix", "ui"), ("W02", "layout and problem-first", "ui"), ("W03", "open speed and no white flash", "ui"),
         ("W04", "action mapping and speed continuity", "ui"), ("W05", "sidebar", "ui"), ("W06", "hover intent", "ui"),
-        ("W07", "drag readout", "ui"), ("W08", "menu bar five states", "dog"), ("W09", "copy", "ui"),
-        ("W10", "Esc layers and close", "ui"), ("W11", "dog strips", "script"), ("W12", "bubble and dog gap", "ui"),
-        ("W13", "bubble templates", "core"), ("W14", "main thread work per frame", "ui"), ("W15", "Reduce Motion", "ui"),
-        ("W16", "closed panel costs nothing", "ui"), ("W17", "CPU while open", "ui"), ("W18", "sprite memory", "ui"),
-        ("W19", "capacity triple", "ui"), ("W20", "prompt", "core"), ("W21", "memory pressure percent", "core"),
-        ("W22", "value alignment", "ui")]],
+        ("W07", "drag readout", "ui"), ("W08", "menu bar five states", "ui"), ("W09", "copy", "ui"),
+        ("W10", "Esc layers and close", "ui"), ("W11", "dog strips at run time", "ui"), ("W12", "bubble and dog gap", "ui"),
+        ("W14", "main thread work per frame", "ui"), ("W15", "Reduce Motion", "ui"),
+        ("W17", "CPU while open", "ui"), ("W18", "sprite memory", "ui"),
+        ("W19", "capacity triple", "ui"), ("W22", "value alignment", "ui")]],
+    *[{"id": i, "name": n, "status": "pending", "source": src} for i, n, src in [
+        ("W13", "bubble templates", "core"), ("W16", "closed panel costs nothing", "ui"),
+        ("W20", "prompt", "core"), ("W21", "memory pressure percent", "core")]],
 ]
 GATE_EVALUATED_SOURCES = ("ui", "dog")
 gate_by_id = {g["id"]: g for g in GATES}
@@ -74,7 +78,9 @@ def gate_ids(source, status=None):
 
 def gate_record(gate_id, result):
     if gate_by_id.get(gate_id, {}).get("status") == "active":
-        gate_results[gate_id] = result
+        # One id can be reported twice (W06 has a model part and a window part). A failure is never overwritten by a later pass.
+        if gate_results.get(gate_id) != "fail":
+            gate_results[gate_id] = result
 
 
 def gate_summary(results=None, sources=None):
@@ -125,6 +131,7 @@ def gate_self_test():
         problems.append("an active gate without result is not counted as failed")
     # The legacy lists must keep the exact set the gate has always required.
     expected_ui = list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M19V", "M20", "M21", "M22"]
+    expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 17, 18, 19, 22)]
     if gate_ids("ui", "active") != expected_ui:
         problems.append("active ui gate list changed")
     if gate_ids("dog", "active") != ["DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE", "BF"]:
