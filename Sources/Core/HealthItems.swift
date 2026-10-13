@@ -131,25 +131,26 @@ enum TextFormat {
         }
     }
 
-    /// "已持续" of DESIGN.md 6.8: 刚刚, N 分, N 小时 M 分, N 天 M 小时. "—" without a start time.
+    /// "已持续" of DESIGN.md 6.8: 刚刚, N 分, N 小时 M 分, N 天 M 小时. A zero remainder is left out ("3 小时", not "3 小时 0 分"). "—" without a start time.
     static func duration(since start: Date?, now: Date) -> String {
         guard let start else { return "\u{2014}" }
         let seconds = max(0, Int(now.timeIntervalSince(start)))
         let minutes = seconds / 60
         if minutes < 1 { return "刚刚" }
+        return hoursAndMinutes(minutes)
+    }
+
+    /// "45 分", "3 小时", "3 小时 20 分", "2 天", "2 天 3 小时". A zero remainder is left out.
+    private static func hoursAndMinutes(_ minutes: Int) -> String {
         if minutes < 60 { return "\(minutes) 分" }
         let hours = minutes / 60
-        if hours < 24 { return "\(hours) 小时 \(minutes % 60) 分" }
-        return "\(hours / 24) 天 \(hours % 24) 小时"
+        if hours < 24 { return minutes % 60 == 0 ? "\(hours) 小时" : "\(hours) 小时 \(minutes % 60) 分" }
+        return hours % 24 == 0 ? "\(hours / 24) 天" : "\(hours / 24) 天 \(hours % 24) 小时"
     }
 
     /// A length of time: "45 分", "6 小时 20 分", "2 天 3 小时". Used for sleep length.
     static func span(seconds: Double) -> String {
-        let minutes = max(0, Int((seconds / 60).rounded()))
-        if minutes < 60 { return "\(minutes) 分" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours) 小时 \(minutes % 60) 分" }
-        return "\(hours / 24) 天 \(hours % 24) 小时"
+        hoursAndMinutes(max(0, Int((seconds / 60).rounded())))
     }
 
     /// CPU style percent: integer, "<1%" below one, "—" when missing. A multi-core app may exceed 100.

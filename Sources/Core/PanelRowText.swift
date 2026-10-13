@@ -14,8 +14,7 @@ import Foundation
 /// The state dot of a row (DESIGN_V2.md 3.5). The shape carries the meaning, the color repeats it.
 enum PanelDot: String, Equatable {
     case red, yellow
-    case normal            // Gray filled circle: measured and healthy
-    case neutralHollow     // Network: no health level
+    case normal            // Gray filled circle: measured and healthy. The network row too (no health level, so always quiet)
     case collecting, stale, missing, failed
 }
 
@@ -50,7 +49,7 @@ struct PanelRowState: Equatable, Identifiable {
         switch dot {
         case .red: state = "异常"
         case .yellow: state = "留意"
-        case .normal, .neutralHollow: state = "正常"
+        case .normal: state = "正常"
         case .collecting: state = "采集中"
         case .stale: state = "数据已过期"
         case .missing: state = "无数据"
@@ -140,7 +139,7 @@ enum PanelRows {
         case .stale: return .stale
         case .fresh: break
         }
-        guard let v else { return hasValue ? .neutralHollow : .missing }
+        guard let v else { return hasValue ? .normal : .missing }
         switch v.level {
         case .red: return .red
         case .yellow: return .yellow
@@ -177,8 +176,9 @@ enum PanelRows {
             default: s.note = "5 分钟均值 " + percentInt(c.cpuMean5m)
             }
         case .memory:
+            // Memory shows the full triple: the value on the right is the pressure, so the free part belongs in the note.
             let cap = CapacityFormat.memory(c)
-            s.note = cap.usedOfTotal
+            s.note = cap.usedOfTotalAvailable
             if code == "swap_growth", let g = c.swapGrowth30m {
                 s.valuePrefix = "swap"
                 s.value = TextFormat.signedBytes(g)
@@ -188,7 +188,6 @@ enum PanelRows {
             }
         case .disk:
             let cap = CapacityFormat.disk(c)
-            s.note = cap.usedOfTotal
             var growth: Int64?
             switch code {
             case "growth_1d": growth = input.diskGrowth["1d"]?.bytes
@@ -196,6 +195,11 @@ enum PanelRows {
             case "growth_30d": growth = input.diskGrowth["30d"]?.bytes
             default: break
             }
+            // The free space stays out of the note while the value shows it ("可用 412 GB"). A growth value or a stale
+            // clock prefix replaces the "可用" label, so then the note carries it.
+            var staleValue = false
+            if case .stale = input.dataState { staleValue = true }
+            s.note = (growth != nil || staleValue) ? cap.usedOfTotalAvailable : cap.usedOfTotal
             if let growth {
                 s.value = TextFormat.signedDiskGB(growth)
             } else {
@@ -220,9 +224,9 @@ enum PanelRows {
             s.value = percentInt(c.batteryPercent)
             switch code {
             case "sleep_drain":
-                if let rate = sleepRate(c.lastSleep) { s.note = "睡眠每小时 " + String(format: "%.1f%%", rate) } else { s.note = "睡眠掉电偏快" }
+                if let rate = sleepRate(c.lastSleep) { s.note = "睡眠时每小时掉电 " + String(format: "%.1f%%", rate) } else { s.note = "睡眠掉电偏快" }
             case "awake_drain":
-                if let rate = c.awakeDrainPerHour { s.note = "使用中每小时 " + String(format: "%.0f%%", rate) } else { s.note = "掉电偏快" }
+                if let rate = c.awakeDrainPerHour { s.note = "每小时掉电 " + String(format: "%.0f%%", rate) } else { s.note = "掉电偏快" }
             default:
                 switch c.powerSource {
                 case .ac?: s.note = "电源适配器"
@@ -260,7 +264,7 @@ struct AnomalyBar: Equatable, Identifiable {
     var item: HealthItem
     var sidebar: SidebarItem
     var level: HealthLevel
-    /// "磁盘 · 异常", "内存 · 留意".
+    /// "磁盘异常", "内存留意".
     var title: String
     /// "5 天增长", "压力警告".
     var reason: String
@@ -310,21 +314,21 @@ enum PanelAnomalies {
     /// Level word of the title: red 异常, yellow 留意.
     static func levelWord(_ level: HealthLevel) -> String { level == .red ? "异常" : "留意" }
 
-    /// The single line of the anomaly area: "异常 4 项 · 最久已持续 3 小时". The duration part is left out when no start is known.
+    /// The single line of the anomaly area: "异常 4 项，最久已持续 3 小时". The duration part is left out when no start is known.
     static func summary(items: [HealthItem], verdicts: [ItemVerdict], now: Date) -> String {
         var text = "异常 \(items.count) 项"
         let starts = items.compactMap { item in verdicts.first(where: { $0.item == item })?.since }
         if let first = starts.min() {
             let long = TextFormat.duration(since: first, now: now)
-            text += " \u{00B7} 最久已持续 " + long
+            text += "，最久已持续 " + long
         }
         return text
     }
 
-    /// The line under the sidebar title of a problem item: "已持续 3 小时 12 分 · 开始 06:20". Nil for a normal item.
+    /// The line under the sidebar title of a problem item: "已持续 3 小时 12 分，开始 06:20". Nil for a normal item.
     static func episode(_ verdict: ItemVerdict?, now: Date, timeZone: TimeZone = TimeZone.current) -> String? {
         guard let v = verdict, v.level == .red || v.level == .yellow, let since = v.since else { return nil }
-        return "已持续 " + TextFormat.duration(since: since, now: now) + " \u{00B7} " + startText(since, now: now, timeZone: timeZone)
+        return "已持续 " + TextFormat.duration(since: since, now: now) + "，" + startText(since, now: now, timeZone: timeZone)
     }
 
     /// The bars for the anomalies, in plan order. `shown` comes from `PanelLayoutPlan.shownAnomalies`.
@@ -332,7 +336,7 @@ enum PanelAnomalies {
         shown.compactMap { item in
             guard let v = verdicts.first(where: { $0.item == item }) else { return nil }
             let row = SidebarItem(item)
-            return AnomalyBar(item: item, sidebar: row, level: v.level, title: row.label + " · " + levelWord(v.level),
+            return AnomalyBar(item: item, sidebar: row, level: v.level, title: row.label + levelWord(v.level),
                               reason: reasonWord(item: item, code: v.reasonCode),
                               duration: TextFormat.duration(since: v.since, now: now),
                               start: v.since.map { startText($0, now: now, timeZone: timeZone) } ?? PanelRows.dash)

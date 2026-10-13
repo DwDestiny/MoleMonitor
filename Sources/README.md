@@ -57,7 +57,7 @@ last_updated: 2026-10-11
 | `DogRig.swift` | 比熊动画数学：每帧的部件变换参数与变换后的图层列表。`DogRig.bubbleLayers` 单独给出关注气泡的图层（位图比熊用） |
 | `DogArtPose.swift` | 位图比熊的选图：`DogArtPose`（8 个姿态）与 `DogArtSelector`（平滑、迟滞、最短保持 4 秒，无定时器，由调用方逐个数据点推进）。规则见 [DESIGN.md 4.9](../docs/DESIGN.md#49-位图阶段) |
 | `DogAction.swift` | 面板 v2 比熊的动作：`DogAction`（10 个动作）、`DogActionInput`、`DogStage`（4.4 优先级、叠加层、4.6 过渡、4.5 步频曲线）、`DogDirector`（CPU 平滑 tau 6 秒、步态迟滞、倍率每次最多变 0.25、帧率上限 18 fps），输出 `DogStagePlan`。规则见 [DESIGN_V2.md 4.4 至 4.6](../docs/DESIGN_V2.md) |
-| `BubbleCopy.swift` | 气泡文案的唯一来源：`BubbleInput` 到 `BubbleText`（主行、证据、等级、副行），`allTemplates` 列出每个模板的最长值（W12、W13） |
+| `BubbleCopy.swift` | 气泡文案的唯一来源：`BubbleInput` 到 `BubbleText`（主行、证据、等级），`BubbleText.wrapped` 在逗号处折行（视图画这一行），`allTemplates` 列出每个模板的最长值（W12、W13） |
 | `HeroLogic.swift` | 英雄区的纯逻辑：`HeroFacts`（从判定与读数取动作输入和气泡证据）、`HeroBrain`（导演、文字 30 秒数字规则、摸狗、长按、复制反馈、打开时彩蛋）、`HeroMemory`（进程内计数） |
 
 ## App 文件

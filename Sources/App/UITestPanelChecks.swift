@@ -169,7 +169,7 @@ extension UITestRunner {
     /// Tertiary text (placeholder values of the collecting state, "近 7 天无记录") is inactive text and is not measured.
     func contrastTargets(_ model: PanelModel) -> [(id: String, minimum: Double)] {
         var out = [(id: String, minimum: Double)]()
-        var text = ["txt.hero.title", "txt.hero.subtitle", "txt.anomaly.quiet", "txt.anomaly.count"]
+        var text = ["txt.hero.title", "txt.anomaly.quiet", "txt.anomaly.count"]
         if model.footerState.enabled { text.append("txt.btn.title") }
         for id in text { out.append((id, 4.5)) }
         for row in model.rows {
@@ -895,9 +895,10 @@ extension UITestRunner {
 
     // MARK: W19
 
-    /// "已用 593 / 995 GB" or "已用 31.4 / 64 GB": the used value, the total and the unit.
+    /// "已用 593 / 995 GB" or "已用 31.4 / 64 GB": the used value, the total and the unit. A ", 可用 ..." part after the comma is ignored.
     func parseNote(_ note: String) -> (used: Double, total: Double, unit: String)? {
-        let parts = note.replacingOccurrences(of: "已用 ", with: "").split(separator: " ").map(String.init)
+        let head = note.components(separatedBy: "，").first ?? note
+        let parts = head.replacingOccurrences(of: "已用 ", with: "").split(separator: " ").map(String.init)
         guard parts.count == 4, parts[1] == "/", let used = Double(parts[0]), let total = Double(parts[2]) else { return nil }
         return (used, total, parts[3])
     }
@@ -917,7 +918,12 @@ extension UITestRunner {
                         continue
                     }
                     let cap = item == .disk ? CapacityFormat.disk(data.current) : CapacityFormat.memory(data.current)
-                    if row.note != cap.usedOfTotal { problems.append("\(c.rawValue) \(item.rawValue): note '\(row.note)' differs from '\(cap.usedOfTotal)'") }
+                    // The free part is in the note unless the value on the right is the free space ("可用 412 GB").
+                    let valueIsAvailable = item == .disk && row.valuePrefix == "可用"
+                    let expectedNote = (item == .memory || !valueIsAvailable) ? cap.usedOfTotalAvailable : cap.usedOfTotal
+                    if row.note != expectedNote {
+                        problems.append("\(c.rawValue) \(item.rawValue): note '\(row.note)' differs from '\(expectedNote)'")
+                    }
                     if cap.isMissing {
                         if cap.total != "—" || cap.used != "—" || cap.available != "—" { problems.append("\(c.rawValue) \(item.rawValue): missing source gives no three dashes") }
                         if row.note != "已用 —" { problems.append("\(c.rawValue) \(item.rawValue): missing note '\(row.note)'") }
@@ -1048,8 +1054,8 @@ extension UITestRunner {
                 let n = [cap.total, cap.used, cap.available].map { Double($0.split(separator: " ").first ?? "") ?? -1 }
                 if abs(n[1] + n[2] - n[0]) > 0.0001 { problems.append("\(c.rawValue) \(item.rawValue): used + available differs from total") }
                 // The main column note shows the same used and total strings.
-                if let row = model.rows.first(where: { $0.item == item }), row.note != cap.usedOfTotal {
-                    problems.append("\(c.rawValue) \(item.rawValue): main note '\(row.note)' differs from '\(cap.usedOfTotal)'")
+                if let row = model.rows.first(where: { $0.item == item }), !row.note.hasPrefix(cap.usedOfTotal) {
+                    problems.append("\(c.rawValue) \(item.rawValue): main note '\(row.note)' does not start with '\(cap.usedOfTotal)'")
                 }
                 // The accessibility tree carries the same strings.
                 if let node = axNodes().first(where: { $0.id == "cap.area" }) {

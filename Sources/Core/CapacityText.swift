@@ -40,6 +40,12 @@ struct CapacityText: Equatable {
         isMissing ? "已用 —" : "已用 " + usedNumber + " / " + total
     }
 
+    /// The note line with the free part: "已用 875 / 995 GB，可用 120 GB". "已用 —" when a source value is missing.
+    /// The free value is total minus used, the same string as the sidebar (gate W19).
+    var usedOfTotalAvailable: String {
+        isMissing ? "已用 —" : usedOfTotal + "，可用 " + available
+    }
+
     /// The same value for a spoken label: "已用 593 吉字节，总容量 995 吉字节" is not needed. Plain text is enough.
     var accessibilityText: String {
         isMissing ? "容量不可用" : "总容量 " + total + "，已用 " + used + "，可用 " + available
