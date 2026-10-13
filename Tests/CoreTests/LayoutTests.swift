@@ -155,7 +155,7 @@ func runLayoutTests() {
 
     section("PanelFooter and PanelArea")
     let f0 = PanelFooterState.make(dataState: .fresh, anomalyCount: 0)
-    expect(f0.mode == .inspect && f0.title == "让 Agent 做一次日常巡检" && f0.enabled, "quiet footer")
+    expect(f0.mode == .inspect && f0.title == "复制日常巡检提示词" && f0.subtitle == "粘贴给你的 Agent" && f0.enabled, "quiet footer has the same shape as the problem footer")
     let f1 = PanelFooterState.make(dataState: .fresh, anomalyCount: 2)
     expect(f1.mode == .copyProblems && f1.title == "复制排查提示词" && f1.subtitle == "粘贴给你的 Agent", "problem footer")
     expect(f1.copiedTitle == "\u{2713} 已复制" && f1.copiedBubble == "已复制，去问你的 Agent 吧", "copied texts")

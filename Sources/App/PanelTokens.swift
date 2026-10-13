@@ -261,7 +261,7 @@ enum PanelSlots {
         PanelSlot(name: "anomaly.reason", size: 11, weight: .regular, rounded: false, width: 188, lines: 1, sample: "swap 30 分钟增长"),
         PanelSlot(name: "anomaly.duration", size: 13, weight: .medium, rounded: false, width: 120, lines: 1, sample: "1 天 3 小时"),
         PanelSlot(name: "anomaly.start", size: 11, weight: .regular, rounded: false, width: 120, lines: 1, sample: "开始 昨天 22:10"),
-        PanelSlot(name: "button.title", size: 13, weight: .semibold, rounded: false, width: PanelMetrics.primaryButtonWidth - 24, lines: 1, sample: "让 Agent 做一次日常巡检"),
+        PanelSlot(name: "button.title", size: 13, weight: .semibold, rounded: false, width: PanelMetrics.primaryButtonWidth - 24, lines: 1, sample: "复制日常巡检提示词"),
         PanelSlot(name: "button.sub", size: 11, weight: .regular, rounded: false, width: PanelMetrics.primaryButtonWidth - 24, lines: 1, sample: "粘贴给你的 Agent"),
     ]
 }

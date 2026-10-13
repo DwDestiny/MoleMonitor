@@ -391,7 +391,7 @@ struct PanelFooterState: Equatable {
 
     static func make(dataState: DataState, anomalyCount: Int) -> PanelFooterState {
         if case .collecting = dataState {
-            return PanelFooterState(mode: .inspectDisabled, title: "让 Agent 做一次日常巡检", subtitle: nil, enabled: false,
+            return PanelFooterState(mode: .inspectDisabled, title: "复制日常巡检提示词", subtitle: "粘贴给你的 Agent", enabled: false,
                                     copiedTitle: "\u{2713} 已复制", copiedBubble: "巡检单已复制，交给 Agent 吧",
                                     failedBubble: "没复制上，再点一次试试")
         }
@@ -400,7 +400,7 @@ struct PanelFooterState: Equatable {
                                     copiedTitle: "\u{2713} 已复制", copiedBubble: "已复制，去问你的 Agent 吧",
                                     failedBubble: "没复制上，再点一次试试")
         }
-        return PanelFooterState(mode: .inspect, title: "让 Agent 做一次日常巡检", subtitle: nil, enabled: true,
+        return PanelFooterState(mode: .inspect, title: "复制日常巡检提示词", subtitle: "粘贴给你的 Agent", enabled: true,
                                 copiedTitle: "\u{2713} 已复制", copiedBubble: "巡检单已复制，交给 Agent 吧",
                                 failedBubble: "没复制上，再点一次试试")
     }
