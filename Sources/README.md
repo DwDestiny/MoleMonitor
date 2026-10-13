@@ -1,7 +1,7 @@
 ---
 title: "MoleMonitor Sources"
 type: module
-last_updated: 2026-10-11
+last_updated: 2026-10-13
 ---
 
 # Sources
@@ -44,7 +44,16 @@ last_updated: 2026-10-11
 | `HealthAlerts.swift` | 判定对应的一句证据和一句给 Agent 的提示 |
 | `HealthPipeline.swift` | 引擎的纯逻辑部分：每次评估得出五项判定、问题顺序和补全的读数 |
 | `ProblemOrder.swift` | 灯、卡片、图标角标和提示共用的问题顺序 |
-| `PanelLayout.swift` | 状态卡版面计划：区块顺序、三档高度（332、560、620）和压缩步骤 |
+| `PanelLayout.swift` | v2 面板版面计划：行顺序、异常项和面板高度（524 pt，台式机 484 pt）。异常区固定 36 pt，异常数量不改变高度 |
+| `PanelRowText.swift` | 主列全部文字的唯一来源：行状态（点、名称、读数）、异常条、底栏、异常区的一行、迷你曲线数据。缺失、统计中、过期和测得的零值显示不同 |
+| `PanelWindowGeometry.swift` | 面板窗口的纯几何：菜单栏图标位置和屏幕可见区得出窗口框（侧栏关闭与打开）、动效常量、点击策略 |
+| `HoverIntent.swift` | 侧栏悬停意图状态机（W06 的 Core 部分）：静止 350 ms 打开，快速移动重新计时，固定后忽略指针。无时钟、无定时器，调用方传入时间 |
+| `SidebarContent.swift` | v2 侧栏内容规划：范围、图表数据（线、柱、时间带、读数文字）、统计、排行表、记录分组、脚注 |
+| `RollupStore.swift` | 5 分钟汇总文件 `rollup-YYYY-MM.ndjson` 的聚合、追加、读取、清理，供 24 小时与 7 天曲线。只存数字与枚举 |
+| `EventLog.swift` | `events.json`：问题段记录、原子写、上限，`EventTracker` 把等级变化转为记录。只存 App 显示名 |
+| `InterfaceRates.swift` | 两次网卡计数器读数得出每个物理网卡的速率与累计量。物理网卡取自 `NetworkFilter.isPhysical`，VPN 不重复计入 |
+| `MemoryBreakdown.swift` | 内存拆分（App、联动、压缩，已用与可用）、`PressurePercent.from(level:)`、磁盘三元组 `DiskCapacity`。空值表示未测得 |
+| `CapacityText.swift` | 容量文字的唯一格式化器：总量、已用、可用，一个单位，已用加可用等于总量（W19）。磁盘用十进制 GB，内存用二进制 GB |
 | `Prompt.swift` | “复制给 Agent”的中文提示文本与隐私文字脱敏 |
 | `StatusExtras.swift` | `status.json` 的新增字段，App 与 `molemonitor-cli prompt` 之间的约定 |
 | `AppUsage.swift` | 占用 App 的 CPU 与内存排行、窗口均值和单应用 CPU 规则的输入 |
@@ -67,7 +76,7 @@ last_updated: 2026-10-11
 | `Engine.swift` | `MonitorEngine`：一个 30 秒 tick，睡眠与唤醒，写 `status.json`，`alert-state.json` 与 NDJSON。状态卡打开时启动 2 秒实时采样定时器，关闭时取消并清空缓冲 |
 | `Sampler.swift` | 读磁盘容量、`sysctl` 网卡计数器、开机时间。只读 |
 | `Notifier.swift` | `UNUserNotificationCenter` 授权与发送。无 App 包时报告 `unavailable` |
-| `StatusIcon.swift` | `StatusIconController`：把图标状态和提示文字应用到状态栏按钮，缓存图像 |
+| `StatusIcon.swift` | `StatusIconController`：菜单栏图标的唯一所有者。把五态图标、提示文字和 VoiceOver 标签应用到状态栏按钮，缓存图像，状态切换动画不超过 8 帧。绘制在 `DogShapes.swift` 的 `MenuIconRenderer`。阶段 1 的 SF Symbol 图标代码已删除 |
 | `Clipboard.swift` | 把文本写入通用剪贴板，触控板上给一次轻触反馈 |
 | `ProcessSampler.swift` | 用 libproc 读进程列表，输出 `ProcessSample` 与覆盖率。排名在 Core 的 `AppRanking` |
 | `SystemSampler.swift` | 读每核 CPU tick、网卡计数器、内存压力和机器信息。取代旧的 `LiveSampler` |
@@ -79,19 +88,23 @@ last_updated: 2026-10-11
 | `UITestDogChecks.swift` | 比熊动画门禁（矢量路径：DA 至 DE），输出 `dog-report.json`。整个文件在 `#if UITEST` 内 |
 | `UITestBitmapChecks.swift` | 位图比熊门禁 BA 至 BD（8 张静态位图），BE、BF（10 个序列帧动作的静止帧），面板门禁 M19V、M20、M21（M22 由 W02 取代，不再记录），8 姿态联系表。整个文件在 `#if UITEST` 内 |
 | `UITestSpriteChecks.swift` | 序列帧比熊门禁 W04（复用 M20 的映射结果）、W11（运行时部分）、W12、W14、W15、W17（在 W14 的同一 10 秒窗口内测量）、W18（统计整次运行中上屏的动作与缓存峰值，只补跑还没上屏的动作），截图 `ui-w12-*.png`。每项检查结束后把已记录的全部条目写入 `ui-wpd-items.json`，并在标准输出打印一行 `WPD-SUMMARY` 摘要。整个文件在 `#if UITEST` 内 |
+| `UITestIconChecks.swift` | 菜单栏图标门禁 W08（9 个场景对手写期望表，浅深色头部墨迹与角标颜色，五态两两异或）和门禁 A 的辅助函数 `headInkCheck`。整个文件在 `#if UITEST` 内 |
+| `UITestWindowChecks.swift` | 窗口门禁 W03（打开速度、无白闪）、W05（侧栏窗口动效）、W06（窗口内悬停意图）、W10（Esc 层级与关闭）。整个文件在 `#if UITEST` 内 |
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
-| `PanelRoot.swift` | 状态卡根视图：固定的头部、滚动的中部、固定的底栏。按版面计划渲染，不排序。入场动画 |
+| `PanelRoot.swift` | 面板根视图：主列（352 pt：英雄区、六行、异常区、底栏）和打开时的侧栏（320 pt）。按版面计划渲染，不排序。入场动画：每次启动一次完整入场，之后淡入 |
+| `PanelWindow.swift` | `PanelWindow`：自定义 `NSPanel`，取代 `NSPopover`。窗口放在菜单栏图标下，开关动效，点击与按键，事件监视器（只在显示时存在），侧栏窗口动画，侧栏悬停规则。无周期定时器，延迟调用是可取消的任务。实现 `PanelChrome`，调用 `PanelPinning` |
+| `PanelChrome.swift` | 窗口与内容之间的两个协议：`PanelChrome`（窗口服务内容）、`PanelPinning`（内容服务窗口）。只有协议，无 AppKit 类型 |
+| `PanelRows.swift` | 主列的六行：状态点、名称与说明、右对齐读数、80 × 24 pt 迷你曲线。行高 40 pt |
+| `PanelAnomaly.swift` | 主列的异常区：固定 36 pt 的一行（安静、统计中、过期或异常摘要） |
+| `PanelSidebar.swift` | 侧栏列（320 pt）：标题、范围控件、图表、统计、容量区、排行、脚注、异常记录。只在侧栏打开时构建，关闭即释放 |
 | `PanelHero.swift` | 英雄区舞台 320 × 152 pt：`HeroTokens`（舞台色、地面、气泡、夜空），`HeroModel`（数据点在 body 内同步给 `HeroBrain`，一个数据点一次 body 评估），`PanelHero(data:quiet:copyBubble:includeAppNames:lastNightClean:)`，`HeroBubble`（最多 2 行，弹出用 SwiftUI 关键帧，RM 时不缩放）。降级：序列帧、8 张静态位图、矢量比熊 |
 | `DogSpriteView.swift` | 序列帧比熊：`DogSpriteLibrary`（条带解码与 8 MB LRU 缓存，最后一个视图关闭时清空），`DogStageGeometry`（舞台尺寸、比熊框、气泡、阴影），`DogSpriteNSView`（Core Animation 离散关键帧播放条带，地面纹理、阴影、汗珠、z、爱心，按 alpha 命中测试）。无 `Timer`、`CADisplayLink`、`TimelineView` |
-| `PanelProblem.swift` | 问题卡、问题行、其余正常行、证据区。`ProblemRowButtonStyle`：折叠行在浅色与深色下都是灰底加 3 pt 等级色条 |
-| `PanelCharts.swift` | 图表：问题曲线（2 小时粗段加 5 分钟细段）、迷你线、磁盘 30 天图 |
-| `PanelApps.swift` | 占用 App 行、证据列表、折叠行 |
-| `PanelMore.swift` | “更多”折叠行及展开内容 |
-| `PanelFooter.swift` | 按钮样式、复制按钮、授权行、底栏 |
+| `PanelCharts.swift` | 数字过渡修饰器和面板共用的小工具。侧栏图表用 `Path` 手绘，不用 Swift Charts（W07） |
+| `PanelFooter.swift` | 底栏：一个主按钮 `btn.copy`（复制提示词或巡检请求）和“…”按钮及其 `NSMenu`（菜单项标识符 `menu.*`）。按钮样式 |
 | `PanelTokens.swift` | 颜色、字号、动效、尺寸令牌（含 `rowFill`、`rowBackground`、`rowBar`），格式化函数，灯，流式布局 |
-| `PanelPreview.swift` | `--preview` 渲染 28 张静态图 |
-| `UITestPanelChecks.swift` | 状态卡的界面门禁 M2 至 M6、M11 至 M14、M19、M19V、M20、N1、N2。整个文件在 `#if UITEST` 内 |
-| `UITestHarness.swift` | 界面回归测试代码（检查 A 至 L）。整个文件在 `#if UITEST` 内，只存在于 `scripts/build.py --ui-test` 的变体 |
+| `PanelPreview.swift` | `--preview` 渲染静态图：主列 28 张（7 个场景，浅深两种外观，满数据与空数据，352 pt 宽，2 倍），侧栏各项加异常记录，在 `multi` 场景上 |
+| `UITestPanelChecks.swift` | 面板界面门禁 M4 至 M6、M11 至 M14、M19、M19V、M20、N1、N2，以及 W01、W02（取代 M2、M3、M22）、W07、W09、W19、W22。整个文件在 `#if UITEST` 内 |
+| `UITestHarness.swift` | 界面回归测试代码（检查 A 至 L）和登记检查的运行器。整个文件在 `#if UITEST` 内，只存在于 `scripts/build.py --ui-test` 的变体 |
 
 ## 入口模式
 
@@ -100,11 +113,12 @@ last_updated: 2026-10-11
 | 无参数 | 启动菜单栏 App |
 | `--self-test` | 用合成磁盘历史检查增长量、磁盘等级和缺失值编码 |
 | `--diagnose --seconds N` | 无界面运行引擎，输出状态 JSON。N 取 5 至 1800，默认 22。未设 `MOLEMONITOR_DATA_DIR` 时使用临时数据目录 |
-| `--preview <绝对路径>` | 导出静态状态卡图（3 个等级，浅色与深色，共 6 张 PNG） |
+| `--preview <绝对路径前缀>` | 导出静态面板图（主列 28 张加侧栏图，PNG） |
+| `--dog-gallery <目录>` | 导出比熊图册。加 `--dog-checks` 运行比熊门禁（UI 测试变体） |
 | `--ui-test --ui-test-out <目录>` | 只存在于 `-D UITEST` 构建。运行界面回归，输出 `ui-report.json` 与截图 |
 
 > **注意**：`App/` 和 `MoleMonitor.swift` 已通过 CI 回归门禁（macOS 虚拟机），但没有真机验收。`Sensors.swift` 的运行行为尚未验证。验证状态见 [VERIFICATION.md](../docs/VERIFICATION.md)，CI 说明见 [CI.md](../docs/CI.md)。
 
-位图素材在 [Resources/DogArt/](../Resources/DogArt)（8 个 PNG 与 PROVENANCE.md，来源与许可见 [ASSETS.md](../docs/ASSETS.md)）。`scripts/build.py` 把它们复制到 `Contents/Resources/DogArt`。
+序列帧素材在 [Resources/DogSprites/](../Resources/DogSprites)（10 个动作条带与 manifest，`scripts/build.py` 复制到 `Contents/Resources/DogSprites`，门禁 `scripts/check_sprites.py`）。位图素材在 [Resources/DogArt/](../Resources/DogArt)（8 个 PNG 与 PROVENANCE.md，来源与许可见 [ASSETS.md](../docs/ASSETS.md)）。`scripts/build.py` 把它们复制到 `Contents/Resources/DogArt`。
 
-测试源码在 [Tests/](../Tests)：`CoreTests/` 测 Core（含 `DogArtPoseTests.swift`），`CliTests/make_status/` 生成 CLI 测试数据。
+测试源码在 [Tests/](../Tests)：`CoreTests/` 测 Core（含 `DogArtPoseTests.swift`、`DogActionTests.swift`、`BubbleCopyTests.swift`、`HeroLogicTests.swift`、`HoverIntentTests.swift`），`CliTests/make_status/` 生成 CLI 测试数据。
