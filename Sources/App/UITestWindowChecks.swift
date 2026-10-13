@@ -597,11 +597,11 @@ enum UITestWindowChecks {
         await r.sleepMs(350)
 
         // 4. A fast pointer across three rows never opens the sidebar (above 0.6 pt/ms).
-        //    The step is 60 pt, so the nominal speed with a 10 ms sleep is 6 pt/ms. A VM stall can stretch a sleep. The measured
+        //    The step is 100 pt, so the nominal speed with a 10 ms sleep is 10 pt/ms. A VM stall or the row change render (about 100 ms on the CI VM) can stretch one step. The measured
         //    time between two moves decides: if any step is slower than 0.9 pt/ms (the limit 0.6 plus 50 %), the pass is void and
         //    is done again, at most 3 times. If all 3 passes are void, the check fails: the sweep was never fast.
         let rows: [SidebarItem] = [.cpu, .memory, .disk]
-        let stepPt = 60.0
+        let stepPt = 100.0
         let minSweepSpeed = 0.9
         var everOpen = false
         var validPasses = 0
