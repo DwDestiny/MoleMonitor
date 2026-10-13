@@ -404,13 +404,16 @@ extension UITestRunner {
         var problems = [String]()
         var notes = [String]()
         let copyBox = UITestTextBox()
-        for c in PreviewCase.allCases {
-            guard await openFixture(c, copyBox: copyBox) != nil, let hv = hostView else {
-                problems.append("\(c.rawValue): the panel did not open")
-                continue
-            }
-            for dark in [false, true] {
-                await setAppearance(dark: dark)
+        // One panel for all cases: the fixture data changes in place (PanelModel.load), so the scheme switches only twice.
+        guard let model = await openFixture(.allGreen, copyBox: copyBox), let hv = hostView else {
+            record("M19V", "面板里矢量比熊真实渲染（开关关闭，沿用 M19 门槛）", false, since: t0, "the panel did not open")
+            return
+        }
+        for dark in [false, true] {
+            await setAppearance(dark: dark)
+            for c in PreviewCase.allCases {
+                model.load(c)
+                await sleepMs(200)
                 let key = c.rawValue + (dark ? " dark" : " light")
                 let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
                 guard let shot = capture(hv), let rect = panelRect("dog"),
@@ -424,10 +427,10 @@ extension UITestRunner {
                 if share < minShare { problems.append("\(key): ink share \(String(format: "%.3f", share)) < \(minShare)") }
                 if stats.colors < 12 { problems.append("\(key): only \(stats.colors) colors, not a drawn dog") }
             }
-            resetAppearance()
-            await sleepMs(200)
-            await closeFixture()
         }
+        resetAppearance()
+        await sleepMs(200)
+        await closeFixture()
         var note = "vector dog (switch false): " + notes.joined(separator: "; ")
         if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
         record("M19V", "面板里矢量比熊真实渲染（开关关闭，沿用 M19 门槛）", problems.isEmpty && notes.count >= 14, since: t0, note,
@@ -448,10 +451,14 @@ extension UITestRunner {
         let copyBox = UITestTextBox()
         let ink = UITestSpriteChecks.inkUnion()
         let inkTop = ink.map(\.minY).min() ?? DogStageGeometry.dogBox.minY
+        guard let model = await openFixture(.diskRed, copyBox: copyBox), let hv = hostView else {
+            record("M21", "问题模式比熊：框不小于 64 pt，气泡离比熊 ≥4 pt，顶部不裁切", false, since: t0, "the panel did not open")
+            return
+        }
         for c in [PreviewCase.diskRed, PreviewCase.multi] {
-            guard await openFixture(c, copyBox: copyBox) != nil, let hv = hostView else {
-                problems.append("\(c.rawValue): the panel did not open")
-                continue
+            if c != .diskRed {
+                model.load(c)
+                await sleepMs(200)
             }
             for dark in [false, true] {
                 await setAppearance(dark: dark)
@@ -478,10 +485,10 @@ extension UITestRunner {
                 let file = "ui-m21-\(c.rawValue)-\(dark ? "dark" : "light").png"
                 if let shot = windowFrame(hv) ?? capture(hv) { save(shot, file, dark: dark) }
             }
-            resetAppearance()
-            await sleepMs(200)
-            await closeFixture()
         }
+        resetAppearance()
+        await sleepMs(200)
+        await closeFixture()
         var note = notes.joined(separator: "; ")
         if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
         record("M21", "问题模式比熊：框不小于 64 pt，气泡离比熊 ≥4 pt，顶部不裁切", problems.isEmpty && notes.count == 4, since: t0, note, values)
@@ -505,7 +512,7 @@ extension UITestRunner {
             record("M20", "面板里比熊随数据点变化", false, since: t0, "the panel did not open")
             return
         }
-        await sleepMs(1800)
+        await sleepMs(1200)
         DogSpriteProbe.reset()
         await sleepMs(3000)
         let idleBodies = DogSpriteProbe.heroBodies

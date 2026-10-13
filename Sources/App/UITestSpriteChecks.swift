@@ -94,7 +94,7 @@ enum UITestSpriteChecks {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(r.items) { try? data.write(to: r.outDir.appendingPathComponent("ui-wpd-items.json")) }
         // One short line on stdout as well: the runner keeps only the tail of stdout when it stops at its time limit.
-        let watched: Set<String> = ["M2", "M19", "M19V", "M20", "M21", "W02", "W04", "W11", "W12", "W14", "W15", "W17", "W18"]
+        let watched: Set<String> = ["C", "I", "W09", "M2", "M19", "M19V", "M20", "M21", "W02", "W04", "W11", "W12", "W14", "W15", "W16", "W17", "W18"]
         var parts = [String]()
         for item in r.items where watched.contains(item.id) || item.status == "fail" {
             var part = item.id + "=" + item.status
@@ -164,7 +164,7 @@ enum UITestSpriteChecks {
             } else {
                 problems.append("\(step.name): shows \(seen) after 300 ms, expected \(step.action.rawValue)/\(step.variant.rawValue)")
             }
-            await r.sleepMs(250)
+            await r.sleepMs(120)
         }
         PanelHero.nightOverride = false
         lastMapping = (problems, notes, latencies)
@@ -250,7 +250,18 @@ enum UITestSpriteChecks {
     // MARK: W12
 
     /// Stage points of every pixel with alpha >= 8 in any frame of the 10 actions (one union mask of the 320 x 240 frame).
+    @MainActor
     static func inkUnion() -> [CGRect] {
+        if let cached = inkCache { return cached }
+        let out = makeInkUnion()
+        inkCache = out
+        return out
+    }
+
+    /// W12 and M21 use the same union; it is computed once per run.
+    @MainActor private static var inkCache: [CGRect]?
+
+    private static func makeInkUnion() -> [CGRect] {
         let library = DogSpriteLibrary(directory: DogSpriteLibrary.shared.directory)
         guard let m = library.manifest else { return [] }
         var mask = [Bool](repeating: false, count: 320 * 240)
@@ -319,7 +330,7 @@ enum UITestSpriteChecks {
                 window.contentView = host
                 window.setContentSize(host.fittingSize)
                 window.orderFrontRegardless()
-                await r.sleepMs(250)
+                await r.sleepMs(150)
                 let key = name + (dark ? ".dark" : ".light")
                 guard let stage = UITestFrameStore.shared.get("hero.stage"), let bubble = UITestFrameStore.shared.get("bubble"),
                       let text = UITestFrameStore.shared.get("txt.hero.title") else {
@@ -364,7 +375,9 @@ enum UITestSpriteChecks {
             window.appearance = NSAppearance(named: .aqua)
             window.contentView = NSHostingView(rootView: probe)
             window.setContentSize(NSSize(width: 220, height: 140))
-            await r.sleepMs(80)
+            _ = await r.waitFor(timeoutMs: 300) {
+                UITestFrameStore.shared.get("txt.hero.title") != nil && UITestFrameStore.shared.get("w12.bubble") != nil
+            }
             guard let t = UITestFrameStore.shared.get("txt.hero.title"), let b = UITestFrameStore.shared.get("w12.bubble") else { return nil }
             return (t, b)
         }
@@ -433,7 +446,7 @@ enum UITestSpriteChecks {
             model.replace(point(base, cpu: 95, seconds: Double(k) * 45))
             await r.sleepMs(300)
         }
-        await r.sleepMs(1500)
+        await r.sleepMs(800)
         DogSpriteProbe.reset()
         let cpu0 = r.cpuSeconds(), wall0 = r.now()
         let samples = await feed(r, model, base: base, cpu: 95, seconds: 10, start: 135)
@@ -480,7 +493,7 @@ enum UITestSpriteChecks {
             model.replace(point(base, cpu: 95, seconds: Double(k) * 45))
             await r.sleepMs(300)
         }
-        await r.sleepMs(1500)
+        await r.sleepMs(800)
         let cpu0 = r.cpuSeconds(), wall0 = r.now()
         await feed(r, model, base: base, cpu: 95, seconds: 10, start: 135)
         lastCpu = ((r.cpuSeconds() - cpu0) / max(0.001, r.now() - wall0) * 100, DogSpriteProbe.currentAction?.rawValue ?? "nil")
@@ -501,7 +514,7 @@ enum UITestSpriteChecks {
             let copyBox = UITestTextBox()
             guard let model = await r.openFixture(.allGreen, copyBox: copyBox) else { continue }
             model.replace(point(model.data, cpu: 60, [.thermal: .yellow], seconds: 45))
-            await r.sleepMs(1500)
+            await r.sleepMs(1000)
             let dog = DogSpriteProbe.view?.animationCount ?? -1
             let panel = r.hostView.map { r.layerSignature($0).animated } ?? -1
             if reduce, let host = r.hostView { rmKeys = animationKeys(host) }
@@ -512,7 +525,7 @@ enum UITestSpriteChecks {
         let left: String = rmKeys.isEmpty ? "" : " Animations left under RM: " + rmKeys.joined(separator: ", ")
         let ok = still?.dog == 0 && still?.panel == 0 && (moving?.dog ?? 0) > 0
         r.record("W15", "RM", ok, since: t0,
-                 "trot with sweat, steady state after 1.5 s. Reduce Motion forced on: \(still?.dog ?? -1) animations on the dog layers, "
+                 "trot with sweat, steady state after 1 s. Reduce Motion forced on: \(still?.dog ?? -1) animations on the dog layers, "
                      + "\(still?.panel ?? -1) in the whole panel window (limit 0). Control, motion on: \(moving?.dog ?? -1) on the dog, "
                      + "\(moving?.panel ?? -1) in the panel (needs > 0). The bubble pop is a SwiftUI keyframe with a fixed trigger under RM."
                      + left,
@@ -535,37 +548,57 @@ enum UITestSpriteChecks {
         }
         let base = model.data
         var peak = 0
-        var seen = Set<DogAction>()
+        let before = DogSpriteProbe.screens
         var log = [String]()
         func watch(_ ms: Double) async {
             let end = r.now() + ms / 1000
             while r.now() < end {
-                if let a = DogSpriteProbe.view?.screenAction { seen.insert(a) }
                 peak = max(peak, DogSpriteLibrary.shared.cachedBytes)
                 await r.sleepMs(40)
             }
         }
-        // The wait of each step covers the end of the previous loop (lie_idle 1.5 s, walk 1 s) and the one-shot before it.
-        let plan: [(String, PanelData?, Double)] = [
-            ("lie", point(base, cpu: 5, seconds: 45), 600),
-            ("walk", point(base, cpu: 25, seconds: 90), 2200),
-            ("trot", point(base, cpu: 60, seconds: 135), 1300),
-            ("sprint", point(base, cpu: 95, seconds: 180), 1000),
-            ("notice", point(base, cpu: 95, [.disk: .yellow], seconds: 225), 1600),
-            ("wag", nil, 1200),
-            ("pant", point(base, cpu: 95, [.disk: .yellow, .thermal: .red], seconds: 270), 1600),
-            ("sniff", point(base, cpu: nil, state: .collecting, seconds: 315), 1300),
-            ("gray", point(base, cpu: nil, state: .stale(Date().addingTimeInterval(-900)), seconds: 360), 1300),
-        ]
-        for (name, data, wait) in plan {
-            if let data {
-                model.replace(data)
-            } else {
-                DogSpriteProbe.view?.onTap?()
-            }
-            await watch(wait)
-            log.append("\(name) \(DogSpriteLibrary.shared.cachedBytes / 1024) KB")
+        // The earlier checks (M20, W04, W12, W14, W15) already showed most actions. DogSpriteProbe.screens and peakBytes count over
+        // the whole run, so a step runs only when its action was not on screen yet. The wait covers the end of the previous loop
+        // (lie_idle 1.5 s, walk 1 s) and the stand_up before a one-shot from lying.
+        struct MemoryStep {
+            var name: String
+            var action: DogAction
+            var cpu: Double?
+            var levels: [HealthItem: HealthLevel] = [:]
+            var state: DataState = .fresh
+            var tap = false
+            var wait: Double
         }
+        let plan = [
+            MemoryStep(name: "walk", action: .walk, cpu: 25, wait: 2200),
+            MemoryStep(name: "trot", action: .trot, cpu: 60, wait: 1300),
+            MemoryStep(name: "sprint", action: .sprint, cpu: 95, wait: 1000),
+            MemoryStep(name: "notice", action: .notice, cpu: nil, levels: [.disk: .yellow], wait: 2600),
+            MemoryStep(name: "wag", action: .wag, cpu: nil, tap: true, wait: 2000),
+            MemoryStep(name: "pant", action: .pantLie, cpu: nil, levels: [.disk: .yellow, .thermal: .red], wait: 1600),
+            MemoryStep(name: "sniff", action: .sniff, cpu: nil, state: .collecting, wait: 1300),
+            MemoryStep(name: "gray", action: .sitGray, cpu: nil, state: .stale(Date().addingTimeInterval(-900)), wait: 1300),
+        ]
+        var cpu: Double = 5
+        var levels = [HealthItem: HealthLevel]()
+        var clock = 0.0
+        var ran = [String]()
+        await watch(600)
+        for step in plan where !DogSpriteProbe.screens.contains(step.action) {
+            if step.tap {
+                DogSpriteProbe.view?.onTap?()
+            } else {
+                cpu = step.cpu ?? cpu
+                levels = step.levels.isEmpty ? levels : step.levels
+                clock += 45
+                model.replace(point(base, cpu: step.state == .fresh ? cpu : nil, levels, state: step.state, seconds: clock))
+            }
+            await watch(step.wait)
+            ran.append(step.name)
+            log.append("\(step.name) \(DogSpriteLibrary.shared.cachedBytes / 1024) KB")
+        }
+        peak = max(peak, DogSpriteLibrary.shared.peakBytes)
+        let seen = DogSpriteProbe.screens
         let final = DogSpriteLibrary.shared.cachedBytes
         await r.closeFixture()
         await r.sleepMs(300)
@@ -573,7 +606,8 @@ enum UITestSpriteChecks {
         let budget = DogSpriteLibrary.budgetBytes
         let names = DogAction.allCases.filter { seen.contains($0) }.map(\.rawValue)
         let ok = peak <= budget && final <= budget && seen.count == DogAction.allCases.count
-        var note = "actions on screen \(seen.count) of 10 (\(names.joined(separator: ","))); cache after each step: \(log.joined(separator: ", ")); "
+        var note = "actions on screen in this run \(seen.count) of 10 (\(names.joined(separator: ","))); \(before.count) seen by the earlier checks, "
+        note += "steps run here: \(ran.isEmpty ? "none" : ran.joined(separator: ", ")); cache after each step: \(log.joined(separator: ", ")); "
         note += "peak \(peak / 1024) KB, end \(final / 1024) KB (limit \(budget / 1024) KB); after close \(afterClose) bytes (W16 needs 0). "
         note += "Hand-overs \(DogSpriteProbe.delegateSteps) by animationDidStop, \(DogSpriteProbe.guardSteps) by the guard."
         r.record("W18", "精灵内存", ok, since: t0, note,

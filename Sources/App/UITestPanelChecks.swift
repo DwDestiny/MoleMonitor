@@ -855,7 +855,10 @@ extension UITestRunner {
         let copyButtons = axNodes().filter { $0.id == "btn.copy" }
         if !copyButtons.isEmpty && copyButtons.count != 1 { problems.append("\(copyButtons.count) nodes named btn.copy") }
         let ids = UITestFrameStore.shared.ids.filter { $0.hasPrefix("btn.") }
-        let allowed: Set<String> = ["btn.copy", "btn.more", "btn.records", "btn.notifyAuth"]
+        // W09 counts primary buttons. The frame store keeps the ids of earlier checks, so it also holds the sidebar controls of
+        // DESIGN_V2.md 6: the close button and the range segments (6.4: 2 小时 / 24 小时 / 7 天, disk 30 天). They are not primary buttons.
+        let sidebar = Set(["btn.sideClose"] + SidebarRange.allCases.map { "btn.range." + $0.rawValue })
+        let allowed: Set<String> = Set(["btn.copy", "btn.more", "btn.records", "btn.notifyAuth"]).union(sidebar)
         let extra = ids.filter { !allowed.contains($0) }
         if !extra.isEmpty { problems.append("other buttons: \(extra)") }
         let rect = panelRect("btn.copy")

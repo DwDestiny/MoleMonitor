@@ -78,7 +78,7 @@ last_updated: 2026-10-11
 | `DogGallery.swift` | `--dog-gallery` 导出所有静态姿态、菜单栏图标和角标的 PNG 图册。图册判矢量渲染器，渲染 `DogView` 时临时关闭位图开关 |
 | `UITestDogChecks.swift` | 比熊动画门禁（矢量路径：DA 至 DE），输出 `dog-report.json`。整个文件在 `#if UITEST` 内 |
 | `UITestBitmapChecks.swift` | 位图比熊门禁 BA 至 BD（8 张静态位图），BE、BF（10 个序列帧动作的静止帧），面板门禁 M19V、M20、M21（M22 由 W02 取代，不再记录），8 姿态联系表。整个文件在 `#if UITEST` 内 |
-| `UITestSpriteChecks.swift` | 序列帧比熊门禁 W04（复用 M20 的映射结果）、W11（运行时部分）、W12、W14、W15、W17（在 W14 的同一 10 秒窗口内测量）、W18，截图 `ui-w12-*.png`。每项检查结束后把已记录的全部条目写入 `ui-wpd-items.json`，并在标准输出打印一行 `WPD-SUMMARY` 摘要。整个文件在 `#if UITEST` 内 |
+| `UITestSpriteChecks.swift` | 序列帧比熊门禁 W04（复用 M20 的映射结果）、W11（运行时部分）、W12、W14、W15、W17（在 W14 的同一 10 秒窗口内测量）、W18（统计整次运行中上屏的动作与缓存峰值，只补跑还没上屏的动作），截图 `ui-w12-*.png`。每项检查结束后把已记录的全部条目写入 `ui-wpd-items.json`，并在标准输出打印一行 `WPD-SUMMARY` 摘要。整个文件在 `#if UITEST` 内 |
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
 | `PanelRoot.swift` | 状态卡根视图：固定的头部、滚动的中部、固定的底栏。按版面计划渲染，不排序。入场动画 |
 | `PanelHero.swift` | 英雄区舞台 320 × 152 pt：`HeroTokens`（舞台色、地面、气泡、夜空），`HeroModel`（数据点在 body 内同步给 `HeroBrain`，一个数据点一次 body 评估），`PanelHero(data:quiet:copyBubble:includeAppNames:lastNightClean:)`，`HeroBubble`（最多 2 行，弹出用 SwiftUI 关键帧，RM 时不缩放）。降级：序列帧、8 张静态位图、矢量比熊 |

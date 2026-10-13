@@ -174,6 +174,7 @@ final class DogSpriteLibrary: @unchecked Sendable {
     private var stills = [DogAction: CGImage]()
     private var loading = Set<DogAction>()
     private var clients = 0
+    private var peak = 0
     private let queue = DispatchQueue(label: "molemonitor.sprites", qos: .userInitiated)
 
     init(directory: URL?) {
@@ -214,6 +215,13 @@ final class DogSpriteLibrary: @unchecked Sendable {
         defer { lock.unlock() }
         let all = Array(strips.values) + Array(props.values) + Array(stills.values)
         return all.reduce(0) { $0 + $1.bytesPerRow * $1.height }
+    }
+
+    /// Highest cache total after an insert since this library was made (W18 reads it over the whole UI test run).
+    var peakBytes: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return peak
     }
 
     /// The actions that a view shows or is about to show. They are never evicted.
@@ -299,6 +307,7 @@ final class DogSpriteLibrary: @unchecked Sendable {
             if let gone = strips.removeValue(forKey: victim) { bytes -= gone.bytesPerRow * gone.height }
             order.remove(at: index)
         }
+        peak = max(peak, bytes)
     }
 
     /// One frame of a strip as its own image (snapshot mode and the gates).
@@ -465,7 +474,13 @@ final class DogSpriteNSView: NSView {
     private let relay = DogAnimationRelay()
 
     // What the screen shows.
-    private var screen: DogAction?
+    private var screen: DogAction? {
+        didSet {
+#if UITEST
+            if let screen { DogSpriteProbe.screens.insert(screen) }
+#endif
+        }
+    }
     private var screenVariant: DogVariant = .normal
     private var screenUsesStrip = false
     private var currentImage: CGImage?
@@ -1249,6 +1264,8 @@ enum DogSpriteProbe {
     static var fades = 0
     static var delegateSteps = 0
     static var guardSteps = 0
+    /// Every action that was on screen in this run (W18 counts them over all checks).
+    static var screens = Set<DogAction>()
 
     static func observe(_ v: DogSpriteNSView, plan: DogStagePlan) {
         view = v
