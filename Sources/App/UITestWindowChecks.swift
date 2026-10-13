@@ -621,17 +621,40 @@ enum UITestWindowChecks {
         var values = [String: Double]()
 
         // 1. Rest on a row: no open at 200 ms, open at 350 to 500 ms.
-        let restStart = r.now()
-        w.testPointer(.row(.cpu), at: mainPoint(w, 0.5))
-        await r.sleepMs(200)
-        let openedEarly = w.shownSidebarItem != nil
-        var openMs: Double?
-        while (r.now() - restStart) * 1000 < 900 {
-            if w.shownSidebarItem == .cpu { openMs = (r.now() - restStart) * 1000; break }
-            await r.sleepMs(5)
+        //    The 200 ms check is a negative assertion, so it cannot take the best of 3. A real-time guard decides instead: when the
+        //    time from the pointer move to the check is 300 ms or more (openDelay 350 ms minus 50 ms), a VM stall stretched the
+        //    sleep and the sidebar may open correctly. That attempt is void. The sidebar closes and the attempt runs again, at most
+        //    3 times. An open inside a valid attempt is a real failure and is not repeated.
+        var restStart = r.now()
+        var restElapsed = [Double]()
+        var restValid = false
+        var openedEarly = false
+        for _ in 0..<3 {
+            restStart = r.now()
+            w.testPointer(.row(.cpu), at: mainPoint(w, 0.5))
+            await r.sleepMs(200)
+            openedEarly = w.shownSidebarItem != nil
+            let elapsed = (r.now() - restStart) * 1000
+            restElapsed.append(elapsed)
+            if elapsed < 300 { restValid = true; break }
+            var closeTries = 0
+            while w.shownSidebarItem != nil && closeTries < 10 { w.testPointerLeave(); await r.sleepMs(300); closeTries += 1 }
+            await r.sleepMs(300)
+            w.testPointerEnter()
         }
-        if openedEarly { problems.append("opened before 200 ms") }
-        if let ms = openMs { if ms < 340 || ms > 500 { problems.append("opened at \(fmt(ms)) ms (expected 350 to 500)") } } else { problems.append("did not open after 900 ms of rest") }
+        let restText = restElapsed.map { String(Int($0.rounded())) }.joined(separator: "/")
+        var openMs: Double?
+        if restValid {
+            while (r.now() - restStart) * 1000 < 900 {
+                if w.shownSidebarItem == .cpu { openMs = (r.now() - restStart) * 1000; break }
+                await r.sleepMs(5)
+            }
+            if openedEarly { problems.append("opened before 200 ms") }
+            if let ms = openMs { if ms < 340 || ms > 500 { problems.append("opened at \(fmt(ms)) ms (expected 350 to 500)") } } else { problems.append("did not open after 900 ms of rest") }
+        } else {
+            problems.append("test environment too slow: the 200 ms rest check was never run within 300 ms (attempts \(restText) ms)")
+        }
+        r.info["w06RestAttempts"] = restText + " ms"
         values["openMs"] = openMs ?? -1
         await r.sleepMs(300)
 
@@ -734,7 +757,7 @@ enum UITestWindowChecks {
 
         let ok = problems.isEmpty
         r.record("W06", "hover intent in the window", ok, since: t0,
-                 "rest: no open at 200 ms (\(!openedEarly)), open at \(fmt(openMs)) ms; switch \(fmt(switchMs)) ms; close after leaving \(fmt(leaveMs)) ms; fast pass over 3 rows opened=\(everOpen) (valid \(validPasses), void \(voidPasses), slowest step \(fmt(slowestStep, 2)) pt/ms); pinned sidebar held 5 s=\(!pinLost)"
+                 "rest: no open at 200 ms (\(!openedEarly), rest attempts \(restText) ms), open at \(fmt(openMs)) ms; switch \(fmt(switchMs)) ms; close after leaving \(fmt(leaveMs)) ms; fast pass over 3 rows opened=\(everOpen) (valid \(validPasses), void \(voidPasses), slowest step \(fmt(slowestStep, 2)) pt/ms); pinned sidebar held 5 s=\(!pinLost)"
                  + (ok ? "" : " PROBLEMS: " + problems.joined(separator: " / ")), values)
         await r.closePanelQuietly()
     }
