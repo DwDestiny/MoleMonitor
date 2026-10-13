@@ -637,8 +637,10 @@ enum UITestWindowChecks {
             let elapsed = (r.now() - restStart) * 1000
             restElapsed.append(elapsed)
             if elapsed < 300 { restValid = true; break }
+            // Leave first: it cancels a pending open (the sidebar may be about to open) and starts the close of an open one.
+            w.testPointerLeave()
             var closeTries = 0
-            while w.shownSidebarItem != nil && closeTries < 10 { w.testPointerLeave(); await r.sleepMs(300); closeTries += 1 }
+            while w.shownSidebarItem != nil && closeTries < 10 { await r.sleepMs(300); closeTries += 1 }
             await r.sleepMs(300)
             w.testPointerEnter()
         }
