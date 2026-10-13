@@ -418,6 +418,9 @@ final class UITestRunner {
         let status = pending ? "pending" : (ok == nil ? "skipped" : (ok == true ? "pass" : "fail"))
         let ms = (now() - t0) * 1000
         items.append(UITestItem(id: id, name: name, status: status, ms: (ms * 10).rounded() / 10, note: note, values: values))
+        // One short line per gate first: scripts/ci_acceptance.py echoes the "GATE " lines at once, so a run that stops at its
+        // time budget still shows the last gate that ended. FileHandle writes are unbuffered, so the line leaves at once.
+        log("GATE \(id) \(status) \(Int(ms)) ms \(name)")
         log("[\(status.uppercased())] \(id) \(name) (\(Int(ms)) ms) \(note)")
     }
 
