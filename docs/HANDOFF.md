@@ -22,7 +22,7 @@ MoleMonitor 的功能代码已经写完，面板 v2 已实现并合并到 `main`
 | 状态卡比熊 | AI 生成的序列帧动画，10 个动作。CPU 决定奔跑速度，其他状态决定动作。降级链：序列帧，8 张静态位图，矢量比熊（`DogView.useBitmapArt`）。门禁见 [CI.md](CI.md) |
 | 菜单栏图标 | 矢量比熊正面头像剪影加角标，五个状态（正常、留意、异常、采集中、过期）。状态切换有不超过 8 帧的动画 |
 | 素材 | AI 生成，版权归属法律上不确定，不适用 GPL。发布前须由用户确认，见 [ASSETS.md](ASSETS.md) 第 4 节 |
-| `Sources/Core/` | 完成。Linux 上 4948 条断言通过 |
+| `Sources/Core/` | 完成。Linux 上 5127 条断言通过 |
 | `Sources/cli/`（`molemonitor-cli`） | 完成。Linux 上 124 项检查通过 |
 | `Sources/App/` | 完成，通过 CI 回归门禁。文件划分见 [Sources/README.md](../Sources/README.md) |
 | `Sources/App/UITest*.swift` | 界面回归测试代码。只在 `-D UITEST` 构建中存在 |

@@ -12,7 +12,7 @@ last_updated: 2026-10-13
 |---|---|---|
 | `build.py` | 仅 Mac（arm64，macOS 14+） | 编译 App 与 CLI，组装并签名 `dist/MoleMonitor.app`。加 `--ui-test` 则构建 `dist-uitest/MoleMonitor.app` |
 | `ci_acceptance.py` | 仅 arm64 macOS | 回归门禁：对已构建的 App 做签名、自检、真实采样、CLI 读回、预览图和界面回归检查，并按门禁登记表汇总 |
-| `test_core.py` | Linux 与 Mac | 编译并运行 `Tests/CoreTests/`，共 4948 条断言 |
+| `test_core.py` | Linux 与 Mac | 编译并运行 `Tests/CoreTests/`，共 5127 条断言 |
 | `test_cli.py` | Linux 与 Mac | 编译 `molemonitor-cli`，运行 124 项检查 |
 | `check_sprites.py` | Linux 与 Mac（需要 Pillow 与 numpy） | 门禁 W11 的像素部分：检查 `Resources/DogSprites/` 的条带与 manifest。加 `--sheet-dir 目录` 输出联系表。不在 CI 里运行，开发者在本机运行 |
 

@@ -586,7 +586,7 @@ App 与 CLI 编译同一份 `Core/` 源文件，因此磁盘增长量只有一�
 
 | 项 | 现状 |
 |---|---|
-| `Sources/Core/` | 纯 Foundation 逻辑。在 Linux 上通过 4948 条断言（`python3 scripts/test_core.py`） |
+| `Sources/Core/` | 纯 Foundation 逻辑。在 Linux 上通过 5127 条断言（`python3 scripts/test_core.py`） |
 | `Sources/cli/` | `molemonitor-cli`。在 Linux 上通过 124 项检查（`python3 scripts/test_cli.py`） |
 | `Sources/App/` | 引擎、采样器、通知、菜单栏图标、NSPanel 状态卡与侧栏、序列帧比熊。已在 CI 虚拟机上构建并通过回归门禁。未在用户的 Mac 上人工验收 |
 | `scripts/build.py` | 已重写：不下载，编译 App 和 CLI，ad-hoc 签名。`--ui-test` 构建测试变体。已在 CI 上运行 |

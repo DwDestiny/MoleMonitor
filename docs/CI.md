@@ -15,7 +15,7 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 | 步骤 | 内容 |
 |---|---|
 | 1. Toolchain | 输出系统版本、芯片、Xcode 和 `swiftc` 版本 |
-| 2. Core and CLI tests | `scripts/test_core.py`（4948 条断言，输出同时写入 `$RUNNER_TEMP/core-tests.log`）与 `scripts/test_cli.py`（124 项检查） |
+| 2. Core and CLI tests | `scripts/test_core.py`（5127 条断言，输出同时写入 `$RUNNER_TEMP/core-tests.log`）与 `scripts/test_cli.py`（124 项检查） |
 | 3. Build app | `python3 scripts/build.py`，输出 `dist/` |
 | 4. Build UI test variant | `python3 scripts/build.py --ui-test`，输出 `dist-uitest/` |
 | 5. Acceptance and UI regression gate | `python3 scripts/ci_acceptance.py`，检查项见 [scripts/README.md](../scripts/README.md) |
@@ -222,6 +222,32 @@ run 38344898067 的 W06 失败过一次：“快速扫过三行打开了侧栏�
 4. 推送并确认 CI 全绿。
 
 > **注意**：不要用降低阈值的方式让门禁通过。`pending` 门禁报告的结果只显示为 `INFO`，不计入通过，也不使 CI 失败。
+
+## 延迟类门禁的重复测量
+
+延迟类门禁衡量的是能力，不是卡顿。CI 虚拟机偶尔卡顿 100 ms 左右，单次测量会被污染。因此延迟类门禁最多测 3 次，只要有 1 次满足限值就通过。3 次都不满足则失败。限值不变。真回归每次都慢，所以仍会失败。报告的说明里写出每一次的数值，例如 `attempts 223/179/131 ms`。
+
+适用范围：
+
+| 门禁 | 重复的测量 | 每次尝试之间 |
+|---|---|---|
+| W03 | 点击到首个可见帧（限 150 ms）和比熊区域就绪（限 150 ms） | 关闭面板，等 300 ms |
+| W05 | hover open、close、click open、click close 的窗口动效用时 | 把窗口恢复到动作之前的状态 |
+| W06 UI 部分 | 情形 2：侧栏打开后切换到另一行（限 200 ms 加 20 ms 余量） | 回到第一行，等侧栏显示，再等 300 ms |
+
+不适用的内容，每次都必须满足：
+
+- 否定类断言：W06 的“停留 200 ms 不打开”“快速扫过三行不打开”，W03 的“无白闪”和“比熊在首帧里”，W05 的“主列不移动”和“高度不变”。
+- 冷启动首帧 M12。冷启动不能重复。M12 的限值是 300 ms，正常范围是 199 至 221 ms。虚拟机卡顿时测到过 304 ms 和 316 ms。M12 保持现状，偶发的失败需要重跑。
+
+原因：run 38338270673 之后，同一套代码在不同运行里，每次都有一个不同的计时门禁因虚拟机卡顿失败。
+
+| 门禁 | 失败数值 | 限值 | 正常范围 |
+|---|---|---|---|
+| M12 | 304 ms 和 316 ms | 300 ms | 199 至 221 ms |
+| W03 | 223 ms 和 179 ms | 150 ms | 93 至 130 ms |
+| W05 click open | 252 ms | 250 ms | 208 至 224 ms |
+| W06 UI 部分的切换 | 228 ms | 220 ms | 产品延迟 120 ms |
 
 ## 局限
 
