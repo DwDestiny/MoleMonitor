@@ -100,9 +100,6 @@ enum DogStageGeometry {
     static let tailSize = CGSize(width: 8, height: 6)
     /// The tail tip stays this far left of the right edge of the bubble, so the bubble box keeps its width.
     static let tailInset: CGFloat = 8
-    /// The subline starts at this x and sits 2 pt below the bubble tail (it follows the bubble height).
-    static let subX: CGFloat = 16
-    static let subFont: CGFloat = 11
 
     /// Bed prop: 192 x 112 px with its base line at 108 px, so it stands on the ground line.
     static let bedRect = CGRect(x: 16, y: 87, width: 96, height: 56)
