@@ -140,7 +140,6 @@ struct PanelHero: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.panelSnapshot) private var snapshot
-    @Environment(\.tok) private var tok
 
 #if UITEST
     /// Night on or off for every hero. The UI test build starts in the day and without easter eggs, so screenshots repeat.
@@ -214,30 +213,18 @@ struct PanelHero: View {
                     .accessibilityHidden(true)
             }
             dog(plan: plan, scale: s, dark: dark, tokens: tokens, reduceMotion: rm)
-            // The subline follows the bubble 2 pt below it, so the gap stays the same for a 1-line and a 2-line bubble.
-            VStack(alignment: .leading, spacing: 2 * s) {
-                HStack(spacing: 0) {
-                    HeroBubble(text: text, scale: s, tokens: tokens)
-                        .keyframeAnimator(initialValue: CGFloat(1), trigger: rm ? 0 : model.popToken) { content, value in
-                            content.scaleEffect(value, anchor: .bottomTrailing)
-                        } keyframes: { _ in
-                            KeyframeTrack {
-                                MoveKeyframe(CGFloat(0.85))
-                                SpringKeyframe(CGFloat(1), duration: 0.45, spring: Spring(response: 0.32, dampingRatio: 0.72))
-                            }
+            HStack(spacing: 0) {
+                HeroBubble(text: text, scale: s, tokens: tokens)
+                    .keyframeAnimator(initialValue: CGFloat(1), trigger: rm ? 0 : model.popToken) { content, value in
+                        content.scaleEffect(value, anchor: .bottomTrailing)
+                    } keyframes: { _ in
+                        KeyframeTrack {
+                            MoveKeyframe(CGFloat(0.85))
+                            SpringKeyframe(CGFloat(1), duration: 0.45, spring: Spring(response: 0.32, dampingRatio: 0.72))
                         }
-                        .uiTestFrame("bubble")
-                    Spacer(minLength: 0)
-                }
-                if let sub = text.sub {
-                    Text(sub)
-                        .font(.system(size: DogStageGeometry.subFont * s))
-                        .monospacedDigit()
-                        .foregroundStyle(tok.textSecondary)
-                        .lineLimit(1)
-                        .padding(.leading, (DogStageGeometry.subX - DogStageGeometry.bubbleOrigin.x) * s)
-                        .uiTestFrame("txt.hero.subtitle")
-                }
+                    }
+                    .uiTestFrame("bubble")
+                Spacer(minLength: 0)
             }
             .frame(width: DogStageGeometry.bubbleMaxWidth * s, alignment: .leading)
             .padding(.leading, DogStageGeometry.bubbleOrigin.x * s)
@@ -403,7 +390,7 @@ struct HeroBubble: View {
     }
 
     private var attributed: AttributedString {
-        var a = AttributedString(text.main)
+        var a = AttributedString(text.wrapped)
         if let e = text.emphasis, let level = text.level, let range = a.range(of: e) {
             a[range].font = .system(size: DogStageGeometry.bubbleFont * scale, weight: .semibold)
             a[range].foregroundColor = tok.levelText(level)

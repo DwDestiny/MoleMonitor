@@ -270,7 +270,7 @@ private func runPlannerTests() {
     let diskPending = PendingNotification(alert: diskV.alert!, title: "磁盘 5 天多占用了 314 GB")
     let both = plan([diskV, red, verdict(.power, .red, "awake_drain", minutesAgo: 10, type: "power_awake_drain")], disk: [diskPending], state: &s11)
     expect(both.map { $0.item } == [.disk, .memory, .power], "candidates follow the verdict order: \(both.map { $0.item.rawValue })")
-    expect(both[0].title == "磁盘 5 天多占用了 314 GB · 已持续 3 小时 0 分", "disk title gets the duration: \(both[0].title)")
+    expect(both[0].title == "磁盘 5 天多占用了 314 GB · 已持续 3 小时", "disk title gets the duration: \(both[0].title)")
     var budget = NotificationBudget()
     let sent = NotificationPlanner.schedule(both, budget: &budget, now: now)
     expect(sent.map { $0.item } == [.power, .memory, .disk], "delivery is in reverse order")

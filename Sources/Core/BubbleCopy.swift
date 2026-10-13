@@ -3,6 +3,7 @@
 // Input: BubbleInput: data state, CPU, the gait on screen, the problems in order, the night flag and the event (docs/DESIGN_V2.md 4.10, 4.11).
 // Output: BubbleText: the main line, the evidence part to emphasize, its level, and the optional second line. BubbleCopy.text(for:) builds them.
 //         BubbleCopy.width(_:) counts width units (0.4: full-width 1, half-width 0.5). BubbleCopy.allTemplates lists every template at its worst value (W13).
+//         BubbleText.wrapped is the text the view draws: a long text breaks at its comma, so the system never splits a word (W12).
 // Pos: The one source of the bubble texts. Foundation only. A1 created the signature; WP-D owns the file.
 //      Copy rules: the dog says "我", the owner is "你", never "您"; plain words; a problem text has an evidence number.
 
@@ -83,16 +84,16 @@ struct BubbleInput: Equatable {
 struct BubbleText: Equatable {
     /// At most 24 width units (DESIGN_V2.md 0.4). A problem text holds at least one digit.
     var main: String
-    /// "还有 N 项需要处理" when there are 2 or more problems.
-    var sub: String?
     /// The part of `main` that shows the evidence ("314 GB", "87%"). The view sets it in semibold and the level color.
     var emphasis: String? = nil
     /// Level of the emphasized part. Nil for texts without a problem.
     var level: HealthLevel? = nil
 
-    init(main: String, sub: String? = nil, emphasis: String? = nil, level: HealthLevel? = nil) {
+    /// The text as drawn: `main`, with one line break at the comma when the text is longer than one line (`BubbleCopy.wrapped`).
+    var wrapped: String { BubbleCopy.wrapped(main) }
+
+    init(main: String, emphasis: String? = nil, level: HealthLevel? = nil) {
         self.main = main
-        self.sub = sub
         self.emphasis = emphasis
         self.level = level
     }
@@ -107,12 +108,11 @@ enum BubbleCopy {
 
     static func text(for input: BubbleInput) -> BubbleText {
         let problems = input.problems
-        let sub: String? = problems.count >= 2 ? "还有 \(problems.count - 1) 项需要处理" : nil
         switch input.event {
         case .copySucceeded(let inspection):
-            return BubbleText(main: inspection ? "巡检单已复制，交给 Agent 吧" : "已复制，去问你的 Agent 吧", sub: sub)
+            return BubbleText(main: inspection ? "巡检单已复制，交给 Agent 吧" : "已复制，去问你的 Agent 吧")
         case .copyFailed:
-            return BubbleText(main: "没复制上，再点一次试试", sub: sub)
+            return BubbleText(main: "没复制上，再点一次试试")
         default:
             break
         }
@@ -123,9 +123,7 @@ enum BubbleCopy {
         }
         if case .collecting = input.dataState { return BubbleText(main: "我先闻闻看，30 秒后告诉你") }
         if let first = problems.first {
-            var t = problemText(first)
-            t.sub = sub
-            return t
+            return problemText(first)
         }
         if input.event.isEgg, let egg = eggText(input.event) { return BubbleText(main: egg) }
         return quietText(input)
@@ -245,6 +243,49 @@ enum BubbleCopy {
         if s < 3600 { return "\(Int(s / 60)) 分钟" }
         if s < 86400 { return "\(Int(s / 3600)) 小时" }
         return "\(Int(s / 86400)) 天"
+    }
+
+    // MARK: Line break
+
+    /// Text width in em at the bubble font. Digits are tabular (0.62 em), so the estimate is above the 0.5 units of `width`.
+    static func em(_ text: String) -> Double {
+        text.unicodeScalars.reduce(0) { sum, u in
+            guard u.isASCII else { return sum + 1 }
+            switch u {
+            case "0"..."9": return sum + 0.62
+            case " ": return sum + 0.28
+            case "A"..."Z": return sum + 0.68
+            case "%": return sum + 0.88
+            case ".", ":", ",": return sum + 0.3
+            case "/": return sum + 0.35
+            default: return sum + 0.55
+            }
+        }
+    }
+
+    /// One line of the bubble holds about 12.6 em (164 pt inside the padding, 13 pt font). A text up to this size stays on one line.
+    static let oneLineEm = 12.1
+
+    /// Breaks a long text once, at the comma, so a word never splits across the lines ("该 / 让 Agent 看看了" is the bug this fixes).
+    /// A text without a comma breaks after "一直占着". The comma stays at the end of line 1. A text that fits one line, or has
+    /// no break point, stays as it is.
+    static func wrapped(_ main: String) -> String {
+        guard em(main) > oneLineEm else { return main }
+        var cuts = [String.Index]()
+        var i = main.startIndex
+        while i < main.endIndex {
+            if main[i] == "，" { cuts.append(main.index(after: i)) }
+            i = main.index(after: i)
+        }
+        if let r = main.range(of: "一直占着 ") { cuts.append(main.index(before: r.upperBound)) }
+        let best = cuts.min { a, b in
+            max(em(String(main[..<a])), em(String(main[a...]))) < max(em(String(main[..<b])), em(String(main[b...])))
+        }
+        guard let cut = best else { return main }
+        let first = String(main[..<cut])
+        var rest = String(main[cut...])
+        if rest.hasPrefix(" ") { rest.removeFirst() }
+        return first + "\n" + rest
     }
 
     /// Width units (0.4): every character outside ASCII counts 1, ASCII counts 0.5.
