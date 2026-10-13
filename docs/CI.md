@@ -1,7 +1,7 @@
 ---
 title: "MoleMonitor · CI 回归门禁"
 type: ci
-last_updated: 2026-10-12
+last_updated: 2026-10-13
 ---
 
 # CI 回归门禁
@@ -15,7 +15,7 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 | 步骤 | 内容 |
 |---|---|
 | 1. Toolchain | 输出系统版本、芯片、Xcode 和 `swiftc` 版本 |
-| 2. Core and CLI tests | `scripts/test_core.py`（4171 条断言）与 `scripts/test_cli.py`（116 项检查） |
+| 2. Core and CLI tests | `scripts/test_core.py`（4948 条断言）与 `scripts/test_cli.py`（124 项检查） |
 | 3. Build app | `python3 scripts/build.py`，输出 `dist/` |
 | 4. Build UI test variant | `python3 scripts/build.py --ui-test`，输出 `dist-uitest/` |
 | 5. Acceptance and UI regression gate | `python3 scripts/ci_acceptance.py`，检查项见 [scripts/README.md](../scripts/README.md) |
@@ -79,7 +79,7 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 |---|---|---|
 | A | 状态栏与图标 | 菜单栏按钮有图标，红色磁盘等级时图标是模板图像，角标为磁盘，姿态为喘气，无障碍文字含“磁盘” |
 | B | 打开 | 点击后状态卡显示，窗口可见，实时采样在 1.5 秒内启动，定时器共 2 个，冷启动首次打开的主线程最长间隔小于 600 ms |
-| C | 入场动画在推进 | 用窗口截图或图层数值，确认完整入场动画在推进并最终稳定。截图时刻为 0 到 900 ms 的 8 帧。窗口与入场强制关闭 RM，狗与气泡跟随系统设置 |
+| C | 入场动画在推进 | 用窗口截图或图层数值，确认完整入场动画在推进并最终稳定。截图时刻为 0 到 900 ms 的 8 帧。窗口与入场强制关闭 RM，狗与气泡跟随系统设置。原因：CI 虚拟机把系统“减少动态效果”报告为打开，不强制关闭时入场退化为淡入，测不到推进 |
 | D | 实时数据流入面板 | 面板模型中的趋势点数递增，相邻截图的像素有变化 |
 | E | 主线程流畅度 | 120 Hz 定时器测主线程间隔：要求 p95 小于 40 ms，max 小于 250 ms |
 | F | 悬停交互 | 合成鼠标悬停到磁盘图上，图的像素发生变化 |
@@ -90,8 +90,8 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 | K | 退出 | 点击“退出”按钮，进程以退出码 0 结束，`status.json` 在退出时被写入 |
 | L | 关闭面板零成本 | 关闭 3 秒后，实时采样为关，只剩 1 个定时器（5 分钟 tick），缓冲为空，CPU 小于 5% 单核 |
 | M1 | 场景互不相同 | 7 个场景的预览图两两不同（sha256） |
-| M2 | 问题优先排序 | 区块的纵向顺序等于 `ProblemOrder`，灯的顺序与区块一致 |
-| M3 | 高度分档 | 弹窗高度为 332（安静）、560（单项或双项问题）、620（多项问题） |
+| M2 | 问题优先排序（v2：由 W02 取代，见下文） | 区块的纵向顺序等于 `ProblemOrder`，灯的顺序与区块一致 |
+| M3 | 高度分档（v2：由 W02 取代，v2 高度固定 524 pt） | 弹窗高度为 332（安静）、560（单项或双项问题）、620（多项问题） |
 | M4 | 刷新与展开不改高度 | 10 次刷新、点击行、展开占用 App 与更多后，弹窗高度变化为 0 |
 | M5 | 对比度 | 浅色与深色下，正文对比度不低于 4.5，灯与曲线不低于 3 |
 | M6 | 大字号 | 字号放大到 1.25 倍后，`PanelSlots.all` 中没有文字被截断 |
@@ -105,7 +105,7 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 | M19V | 面板里矢量比熊真实渲染 | 关闭位图开关（`DogView.useBitmapArt = false`），对 7 个场景的浅色与深色测矢量比熊，门槛与 M19 相同 |
 | M20 | 位图比熊随数据点变化 | 真实面板内，空闲 3 秒位图视图的 body 评估为 0。测试注入 5 个数据点（CPU 95、热状态 serious、磁盘红、清除问题加 CPU 20、统计中），姿态依次为冲刺、喘气、关注、走、灰化，且每步狗区域像素有变化 |
 | M21 | 问题模式比熊（G2 第 1 轮） | diskRed 与 multi，浅色与深色。比熊框宽 ≥ 64 pt，框顶距面板顶 ≥ 6 pt。气泡包围框与比熊身体（alpha ≥ 8）包围框不相交，相距 ≥ 2 pt。最高墨迹距面板顶 ≥ 6 pt。姿态为关注 |
-| M22 | 浅深色折叠问题卡（G2 第 1、2 轮） | multi，浅色与深色各验。3 张折叠问题行的底与面板底色相差 ≤ 20，色相（通道最大差）≤ 4，左缘 3 pt 色条与本级灯色相差 ≤ 30 并比另一级更近。第一张问题卡有淡底（色相 ≥ 6） |
+| M22 | 浅深色折叠问题卡（G2 第 1、2 轮。v2：由 W02 取代，见下文） | multi，浅色与深色各验。3 张折叠问题行的底与面板底色相差 ≤ 20，色相（通道最大差）≤ 4，左缘 3 pt 色条与本级灯色相差 ≤ 30 并比另一级更近。第一张问题卡有淡底（色相 ≥ 6） |
 
 ## 比熊门禁（`--dog-gallery <目录> --dog-checks`）
 
@@ -144,7 +144,8 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 | `core` | 工作流步骤 “Core and CLI tests”。`ci_acceptance.py` 没有读取器，因此不能设为 `active` |
 | `script` | 后续步骤的脚本。同样不能设为 `active` |
 
-旧门禁（A 至 L、M2 至 M22、N1、N2、DA 至 DE、BA 至 BF）全部登记为 `active`，行为不变。
+旧门禁（A 至 L、M2 至 M22、N1、N2、DA 至 DE、BA 至 BF）全部登记为 `active`，行为不变。M2、M3、M22 的结果由 W02 提供：脚本把 W02 的报告复制成这三个编号。W02 检查三件事：每个场景的行顺序与高度，只有最严重的一行有淡底色，其他行没有底色（浅色与深色各检查一次）。因此 W02 同时承担旧 M22 的语义。
+一个编号可以报告两次（W06 有模型部分和窗口部分）。登记表只保留失败：后一次通过不会覆盖前一次失败。
 
 输出末尾的汇总行格式如下：
 
@@ -154,6 +155,26 @@ INACTIVE gates (未激活, not passed, not failed): W01 ...; W02 ...
 ```
 
 `ACCEPTANCE PASSED` 前出现一次 `ui` 来源的汇总。`DOG ANIMATION CHECKS PASSED` 前出现一次全部来源的汇总。
+
+### v2 门禁的激活状态（2026-10-13，WP-F2）
+
+激活依据：run 38341738663（分支 `v2/wp-d`，提交 `5f20c2a`）的日志。表中 18 项在该次运行里报告 `pass`，现已激活。激活后的 CI 运行见 [VERIFICATION.md](VERIFICATION.md) 条目 7。
+
+| 状态 | 门禁 |
+|---|---|
+| `active`，来源 `ui`（18 项） | W01、W02、W03、W04、W05、W06、W07、W08、W09、W10、W11（运行时部分）、W12、W14、W15、W17、W18、W19、W22 |
+| `pending`（4 项） | W13、W20、W21、W16 |
+
+W08 的检查在 UI 测试变体里运行，因此来源从 `dog` 改为 `ui`。W11 的来源从 `script` 改为 `ui`，名称改为 “dog strips at run time”。条带文件的像素检查是 `scripts/check_sprites.py`，它需要 Pillow 与 numpy，不在 CI 里运行，由开发者在本机运行。
+
+未激活的原因：
+
+| 门禁 | 原因 |
+|---|---|
+| W13、W20、W21 | 检查是 Core 单元测试（`BubbleCopyTests`、`PromptTests`、`MemoryTests`）。它们在步骤 “Core and CLI tests” 里运行，失败会使作业失败，但没有逐门禁的结果可供 `ci_acceptance.py` 读取 |
+| W16 | UI 测试里没有名为 W16 的检查。关闭面板零成本已由门禁 L 检查，精灵缓存在关闭后为 0 字节已由 W18 记录。独立的 W16 检查尚未写 |
+
+W16 的源码审计（`Panel*.swift` 无 `Timer`、`TimelineView`）已覆盖 `PanelWindow.swift`，包括其中 `#if UITEST` 的钩子，并且通过。钩子不含这些词，因此不需要排除。
 
 ### 接入新门禁
 
@@ -171,7 +192,7 @@ INACTIVE gates (未激活, not passed, not failed): W01 ...; W02 ...
 
 ### 激活门禁
 
-1. 工作包的检查已合并，并在 CI 的 `ui-report.json` 或 `dog-report.json` 中报告该编号。
+1. 工作包的检查已合并，并在 CI 的 `ui-report.json` 或 `dog-report.json` 中报告该编号为 `pass`。
 2. WP-F 把 `GATES` 中该条的 `status` 改为 `active`。
 3. 运行 `python3 scripts/ci_acceptance.py --self-test`。该命令在任何系统上都能运行，检查登记表本身。
 4. 推送并确认 CI 全绿。
