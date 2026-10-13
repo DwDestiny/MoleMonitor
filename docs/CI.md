@@ -162,11 +162,22 @@ INACTIVE gates (未激活, not passed, not failed): W01 ...; W02 ...
 
 | 状态 | 门禁 |
 |---|---|
-| `active`，来源 `ui`（18 项） | W01、W02、W03、W04、W05、W06、W07、W08、W09、W10、W11（运行时部分）、W12、W14、W15、W17、W18、W19、W22 |
+| `active`，来源 `ui`（19 项） | W01、W02、W03、W04、W05、W06、W07、W08、W09、W10、W11（运行时部分）、W12、W14、W15、W17、W18、W19、W22、W23 |
 | `active`，来源 `core`（3 项） | W13、W20、W21 |
 | `pending`（1 项） | W16 |
 
 W08 的检查在 UI 测试变体里运行，因此来源从 `dog` 改为 `ui`。W11 的来源从 `script` 改为 `ui`，名称改为 “dog strips at run time”。
+
+#### UI 门禁 W23（侧栏内容可见或渐隐）
+
+W23 在 `Sources/App/UITestSidebarChecks.swift`。它对 7 页侧栏（cpu、memory、disk、network、battery、thermal、anomaly_log）各量一次内容高度（`side.content`）和可用高度（`side.scroll`）。检查分两档：
+
+| 档位 | 窗口高度 | 通过条件 |
+|---|---|---|
+| 笔记本 | 524 pt | 内容高度不超过可用高度（没有被裁切），并且没有渐隐遮罩（`side.fade`） |
+| 台式机 | 484 pt（`multi` 夹具去掉电池） | 内容高度超过可用高度时有渐隐遮罩，否则没有。至少一页超高，否则检查无效，算失败 |
+
+可用高度等于窗口高度减 72 pt（标题 44 pt 加时间范围控件 28 pt），门禁同时检查这个数。静态预览不画 484 pt 档，也不画遮罩，所以遮罩只由 W23 证明。
 
 #### Core 门禁 W13、W20、W21
 

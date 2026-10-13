@@ -227,6 +227,19 @@ func runSidebarTests() {
     input.trend = TrendSeries(segments: [(0..<10).map { TrendPoint(t: now.addingTimeInterval(-Double(9 - $0) * 30), cpu: 10, thermal: $0 < 5 ? .nominal : .fair) }])
     let th = SidebarChart.make(input)
     expect(th.style == .step && th.domain == 0...3 && th.lines.count == 2 && th.lines[1].secondary, "thermal step with a CPU line")
+    expect(th.legend == [ChartLegendEntry(text: "热状态", quiet: false), ChartLegendEntry(text: "CPU 占用 0\u{2013}100%", quiet: true)], "thermal legend, got \(th.legend)")
+    expect(th.yLabels?.top == "临界" && th.yLabels?.bottom == "正常", "thermal axis words, got \(String(describing: th.yLabels))")
+    expect(c2.legend.isEmpty && c2.yLabels?.top == "100%" && c2.yLabels?.bottom == "0%", "one line has no legend, percent axis")
+    input.item = .network
+    input.range = .h2
+    input.trend = TrendSeries(segments: [(0..<10).map { TrendPoint(t: now.addingTimeInterval(-Double(9 - $0) * 30), rx: 2_000_000, tx: 100_000) }])
+    let net2 = SidebarChart.make(input)
+    expect(net2.legend.map { $0.text } == ["\u{2193} 下行", "\u{2191} 上行"] && net2.legend.map { $0.quiet } == [false, true], "network legend with arrows, got \(net2.legend)")
+    input.item = .memory
+    input.trend = TrendSeries(segments: [(0..<10).map { TrendPoint(t: now.addingTimeInterval(-Double(9 - $0) * 30), swapUsed: 9_800_000_000, pressurePercent: 80) }])
+    let mem2 = SidebarChart.make(input)
+    expect(mem2.legend.map { $0.text } == ["压力", "swap 0\u{2013}11 GB"], "memory legend with the swap scale, got \(mem2.legend)")
+    input.item = .thermal
     expect(th.readout(at: now, timeZone: utc)?.contains("偏热") == true, "thermal readout uses the word")
 
     section("Sidebar: ranking and footnotes")

@@ -63,7 +63,7 @@ GATES = [
         ("W13", "bubble templates", "core"), ("W14", "main thread work per frame", "ui"), ("W15", "Reduce Motion", "ui"),
         ("W17", "CPU while open", "ui"), ("W18", "sprite memory", "ui"),
         ("W19", "capacity triple", "ui"), ("W20", "prompt", "core"), ("W21", "memory pressure percent", "core"),
-        ("W22", "value alignment", "ui")]],
+        ("W22", "value alignment", "ui"), ("W23", "sidebar content visible or faded", "ui")]],
     *[{"id": i, "name": n, "status": "pending", "source": src} for i, n, src in [
         ("W16", "closed panel costs nothing", "ui")]],
 ]
@@ -171,7 +171,7 @@ def gate_self_test():
         problems.append("an active gate without result is not counted as failed")
     # The legacy lists must keep the exact set the gate has always required.
     expected_ui = list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M19V", "M20", "M21", "M22"]
-    expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 17, 18, 19, 22)]
+    expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 17, 18, 19, 22, 23)]
     if gate_ids("ui", "active") != expected_ui:
         problems.append("active ui gate list changed")
     if gate_ids("dog", "active") != ["DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE", "BF"]:

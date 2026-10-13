@@ -89,6 +89,7 @@ last_updated: 2026-10-13
 | `UITestBitmapChecks.swift` | 位图比熊门禁 BA 至 BD（8 张静态位图），BE、BF（10 个序列帧动作的静止帧），面板门禁 M19V、M20、M21（M22 由 W02 取代，不再记录），8 姿态联系表。整个文件在 `#if UITEST` 内 |
 | `UITestSpriteChecks.swift` | 序列帧比熊门禁 W04（复用 M20 的映射结果）、W11（运行时部分）、W12、W14、W15、W17（在 W14 的同一 10 秒窗口内测量）、W18（统计整次运行中上屏的动作与缓存峰值，只补跑还没上屏的动作），截图 `ui-w12-*.png`。每项检查结束后把已记录的全部条目写入 `ui-wpd-items.json`，并在标准输出打印一行 `WPD-SUMMARY` 摘要。整个文件在 `#if UITEST` 内 |
 | `UITestIconChecks.swift` | 菜单栏图标门禁 W08（9 个场景对手写期望表，浅深色头部墨迹与角标颜色，五态两两异或）和门禁 A 的辅助函数 `headInkCheck`。整个文件在 `#if UITEST` 内 |
+| `UITestSidebarChecks.swift` | 侧栏门禁 W23：7 页侧栏在 524 pt 档内容全部可见，在 484 pt 档超高时有渐隐遮罩。整个文件在 `#if UITEST` 内 |
 | `UITestWindowChecks.swift` | 窗口门禁 W03（打开速度、无白闪）、W05（侧栏窗口动效）、W06（窗口内悬停意图）、W10（Esc 层级与关闭）。整个文件在 `#if UITEST` 内 |
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
 | `PanelRoot.swift` | 面板根视图：主列（352 pt：英雄区、六行、异常区、底栏）和打开时的侧栏（320 pt）。按版面计划渲染，不排序。入场动画：每次启动一次完整入场，之后淡入 |
@@ -96,7 +97,7 @@ last_updated: 2026-10-13
 | `PanelChrome.swift` | 窗口与内容之间的两个协议：`PanelChrome`（窗口服务内容）、`PanelPinning`（内容服务窗口）。只有协议，无 AppKit 类型 |
 | `PanelRows.swift` | 主列的六行：状态点、名称与说明、右对齐读数、80 × 24 pt 迷你曲线。行高 40 pt |
 | `PanelAnomaly.swift` | 主列的异常区：固定 36 pt 的一行（安静、统计中、过期或异常摘要） |
-| `PanelSidebar.swift` | 侧栏列（320 pt）：标题、范围控件、图表、统计、容量区、排行、脚注、异常记录。只在侧栏打开时构建，关闭即释放 |
+| `PanelSidebar.swift` | 侧栏列（320 pt）：标题、范围控件、图表、统计、容量区、排行、脚注、异常记录。内容超高时内部滚动，底部有渐隐遮罩。只在侧栏打开时构建，关闭即释放 |
 | `PanelHero.swift` | 英雄区舞台 320 × 152 pt：`HeroTokens`（舞台色、地面、气泡、夜空），`HeroModel`（数据点在 body 内同步给 `HeroBrain`，一个数据点一次 body 评估），`PanelHero(data:quiet:copyBubble:includeAppNames:lastNightClean:)`，`HeroBubble`（最多 2 行，弹出用 SwiftUI 关键帧，RM 时不缩放）。降级：序列帧、8 张静态位图、矢量比熊 |
 | `DogSpriteView.swift` | 序列帧比熊：`DogSpriteLibrary`（条带解码与 8 MB LRU 缓存，最后一个视图关闭时清空），`DogStageGeometry`（舞台尺寸、比熊框、气泡、阴影），`DogSpriteNSView`（Core Animation 离散关键帧播放条带，地面纹理、阴影、汗珠、z、爱心，按 alpha 命中测试）。无 `Timer`、`CADisplayLink`、`TimelineView` |
 | `PanelCharts.swift` | 数字过渡修饰器和面板共用的小工具。侧栏图表用 `Path` 手绘，不用 Swift Charts（W07） |

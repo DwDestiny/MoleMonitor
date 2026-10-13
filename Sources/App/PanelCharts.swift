@@ -55,9 +55,9 @@ enum ChartProbeHook {
 
 enum ChartMetrics {
     static let width: CGFloat = 287
-    static let height: CGFloat = 160
+    static let height: CGFloat = 128
     /// The plot area. The rest below holds the time axis (10 pt).
-    static let plotHeight: CGFloat = 142
+    static let plotHeight: CGFloat = 110
     static let axisHeight: CGFloat = 18
 }
 
@@ -165,24 +165,22 @@ struct ChartMain: View, Equatable {
         return [text(from), text(mid), text(to)]
     }
 
-    private func topLabel() -> String? {
-        guard let line = data.lines.first else { return nil }
-        switch line.unit {
-        case .percent: return String(format: "%.0f%%", data.domain.upperBound)
-        case .gigabytes: return String(format: "%.0f GB", data.domain.upperBound)
-        case .bytesPerSecond: return SidebarText.rate(data.domain.upperBound)
-        case .thermal: return nil
+    /// The legend of a chart with two lines: a short stroke in the line color, then the name. It sits top right on a label plate.
+    private var legendView: some View {
+        HStack(spacing: 8) {
+            ForEach(Array(data.legend.enumerated()), id: \.offset) { _, entry in
+                HStack(spacing: 4) {
+                    Capsule().fill(entry.quiet ? tok.textTertiary : lineColor).frame(width: 10, height: 2)
+                    Text(entry.text).font(PanelType.axis).foregroundStyle(tok.textSecondary).lineLimit(1)
+                }
+            }
         }
-    }
-
-    private func bottomLabel() -> String? {
-        guard let line = data.lines.first else { return nil }
-        switch line.unit {
-        case .percent: return String(format: "%.0f%%", data.domain.lowerBound)
-        case .gigabytes: return String(format: "%.0f GB", data.domain.lowerBound)
-        case .bytesPerSecond: return "0"
-        case .thermal: return nil
-        }
+        .padding(.horizontal, 4)
+        .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(tok.labelPlate))
+        .frame(width: ChartMetrics.width - 3, alignment: .trailing)
+        .offset(y: 3)
+        .accessibilityHidden(true)
+        .uiTestFrame("chart.legend")
     }
 
     var body: some View {
@@ -214,8 +212,8 @@ struct ChartMain: View, Equatable {
                     .stroke(tok.chartThreshold, style: StrokeStyle(lineWidth: 0.75, dash: [3, 3]))
             }
             ChartBarsShape(data: data).fill(lineColor.opacity(0.7))
-            ForEach(Array(data.lines.enumerated()), id: \.offset) { _, line in
-                if line.secondary {
+            ForEach(Array(data.lines.enumerated()), id: \.offset) { index, line in
+                if data.lineIsQuiet(index) {
                     ChartLineShape(data: data, line: line, style: .line, closed: false)
                         .stroke(tok.textTertiary, style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
                 } else {
@@ -226,16 +224,17 @@ struct ChartMain: View, Equatable {
                         .stroke(lineColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                 }
             }
-            if let top = topLabel(), let bottom = bottomLabel(), data.isEmpty == false {
-                Text(top).font(PanelType.axis).foregroundStyle(tok.textSecondary)
+            if let labels = data.yLabels, data.isEmpty == false {
+                Text(labels.top).font(PanelType.axis).foregroundStyle(tok.textSecondary)
                     .padding(.horizontal, 3)
                     .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(tok.labelPlate))
                     .offset(x: 3, y: 3)
-                Text(bottom).font(PanelType.axis).foregroundStyle(tok.textSecondary)
+                Text(labels.bottom).font(PanelType.axis).foregroundStyle(tok.textSecondary)
                     .padding(.horizontal, 3)
                     .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(tok.labelPlate))
                     .offset(x: 3, y: ChartMetrics.plotHeight - 17)
             }
+            if !data.isEmpty && !data.legend.isEmpty { legendView }
             HStack(spacing: 0) {
                 ForEach(Array(axisLabels().enumerated()), id: \.offset) { index, label in
                     Text(label)

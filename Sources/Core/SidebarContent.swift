@@ -93,6 +93,12 @@ struct ChartTimeBand: Equatable {
     var kind: ChartBandKind
 }
 
+struct ChartLegendEntry: Equatable {
+    var text: String
+    /// True: the quiet gray line. False: the main line color.
+    var quiet: Bool
+}
+
 struct ChartData: Equatable {
     var item: SidebarItem
     var range: SidebarRange
@@ -125,6 +131,42 @@ struct ChartData: Equatable {
         let span = window.upperBound.timeIntervalSince(window.lowerBound)
         guard span > 0 else { return 0 }
         return min(1, max(0, firstData.timeIntervalSince(window.lowerBound) / span))
+    }
+
+    /// Whether the line at `index` is drawn in the quiet gray: a secondary line, or any second line of one chart (download and upload
+    /// are told apart by shade and by the legend, 2026-10-13).
+    func lineIsQuiet(_ index: Int) -> Bool {
+        guard index < lines.count else { return false }
+        return lines[index].secondary || index > 0
+    }
+
+    /// Legend of a chart with two lines: the text and the shade of each line. Empty for a chart with one line.
+    var legend: [ChartLegendEntry] {
+        let shown = lines.indices.filter { lines[$0].pointCount > 0 }
+        guard shown.count > 1 else { return [] }
+        return shown.map { index in
+            let line = lines[index]
+            var text = line.name
+            switch line.name {
+            case "下行": text = "\u{2193} 下行"
+            case "上行": text = "\u{2191} 上行"
+            case "swap": text = "swap 0\u{2013}" + String(Int((line.scale?.upperBound ?? 1).rounded(.up))) + " GB"
+            case "CPU": text = "CPU 占用 0\u{2013}100%"
+            default: break
+            }
+            return ChartLegendEntry(text: text, quiet: lineIsQuiet(index))
+        }
+    }
+
+    /// The two plate labels at the top and bottom of the plot (Y axis of the first line). Nil without a line.
+    var yLabels: (top: String, bottom: String)? {
+        guard let line = lines.first else { return nil }
+        switch line.unit {
+        case .percent: return (String(format: "%.0f%%", domain.upperBound), String(format: "%.0f%%", domain.lowerBound))
+        case .gigabytes: return (String(format: "%.0f GB", domain.upperBound), String(format: "%.0f GB", domain.lowerBound))
+        case .bytesPerSecond: return (SidebarText.rate(domain.upperBound), "0")
+        case .thermal: return (PanelRows.thermalWord(.critical), PanelRows.thermalWord(.nominal))
+        }
     }
 
     /// X position (0 to 1) of a time in the window.

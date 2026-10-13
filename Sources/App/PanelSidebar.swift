@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: PanelModel and the item whose sidebar is open.
-// Output: The sidebar column (320 pt wide): header, range control, chart, stats, capacity area, ranking, footnotes, and the anomaly log.
+// Output: The sidebar column (320 pt wide): header, range control, chart, stats, capacity area, ranking, footnotes, and the anomaly log. A taller content scrolls and shows a fade at the bottom edge.
 // Pos: Right or left column of the panel (docs/DESIGN_V2.md 6). It is built only while the sidebar is open, so closing releases it.
 
 import AppKit
@@ -376,7 +376,7 @@ private struct RankingView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
-                .frame(width: PanelMetrics.sidebarContentWidth, height: 28)
+                .frame(width: PanelMetrics.sidebarContentWidth, height: 26)
                 .overlay(alignment: .bottomLeading) {
                     if row.fraction >= 0.01 {
                         Capsule().fill(tok.chartLine.opacity(0.5))
@@ -441,6 +441,25 @@ private struct RecordsView: View {
     }
 }
 
+// MARK: - Scroll state
+
+/// Height of the content and the distance scrolled, read inside the sidebar scroll view.
+struct SideScrollMetrics: Equatable {
+    var content: CGFloat
+    var offset: CGFloat
+    static let fadeHeight: CGFloat = 28
+
+    /// True when content lies below the visible part: the content is taller than the room, and the end is not reached yet.
+    static func hasMore(content: CGFloat, offset: CGFloat, room: CGFloat) -> Bool {
+        content > room + 0.5 && offset + room < content - 1
+    }
+}
+
+private struct SideScrollKey: PreferenceKey {
+    static var defaultValue = SideScrollMetrics(content: 0, offset: 0)
+    static func reduce(value: inout SideScrollMetrics, nextValue: () -> SideScrollMetrics) { value = nextValue() }
+}
+
 // MARK: - Sidebar
 
 struct PanelSidebarView: View {
@@ -448,10 +467,11 @@ struct PanelSidebarView: View {
     let item: SidebarItem
     @Environment(\.tok) private var tok
     @Environment(\.panelSnapshot) private var snapshot
+    @State private var moreBelow = false
 
     @ViewBuilder
     private func content(_ state: SidebarContentState) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             if let chart = state.chart {
                 ChartPanel(data: chart, level: state.level)
             }
@@ -481,9 +501,40 @@ struct PanelSidebarView: View {
                 .uiTestFrame("side.footnote")
             }
         }
-        .padding(.top, 12)
-        .padding(.bottom, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
         .frame(width: PanelMetrics.sidebarContentWidth, alignment: .topLeading)
+    }
+
+    /// The scrolling content. When the content is taller than the room, a fade at the bottom edge shows that more follows. It goes away when
+    /// the content fits or the end is reached (2026-10-13). No scroll bar.
+    private func scrolling(_ state: SidebarContentState) -> some View {
+        GeometryReader { room in
+            ScrollView(.vertical, showsIndicators: false) {
+                content(state)
+                    .uiTestFrame("side.content")
+                    .background(GeometryReader { proxy in
+                        Color.clear.preference(key: SideScrollKey.self,
+                                               value: SideScrollMetrics(content: proxy.size.height, offset: -proxy.frame(in: .named("sideScroll")).minY))
+                    })
+            }
+            .coordinateSpace(name: "sideScroll")
+            .onPreferenceChange(SideScrollKey.self) { metrics in
+                let more = SideScrollMetrics.hasMore(content: metrics.content, offset: metrics.offset, room: room.size.height)
+                if more != moreBelow { moreBelow = more }
+            }
+            .overlay(alignment: .bottom) {
+                if moreBelow {
+                    LinearGradient(colors: [PanelTokens.surface(dark: tok.dark).opacity(0), PanelTokens.surface(dark: tok.dark)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: SideScrollMetrics.fadeHeight)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .uiTestFrame("side.fade")
+                }
+            }
+        }
+        .uiTestFrame("side.scroll")
     }
 
     var body: some View {
@@ -495,7 +546,7 @@ struct PanelSidebarView: View {
                 content(state)
                 Spacer(minLength: 0)
             } else {
-                ScrollView(.vertical, showsIndicators: false) { content(state) }
+                scrolling(state)
             }
         }
         .padding(.horizontal, PanelMetrics.sidebarPadding)
