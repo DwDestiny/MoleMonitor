@@ -208,7 +208,7 @@ enum BubbleCopy {
             return v.level == .red ? make("热到降速了，已持续 ", d, "") : make("有点热，已经 ", d, "了")
         case .power:
             let r = v.number.map { rate($0) } ?? "—"
-            if v.reasonCode == "sleep_drain" { return make("合盖时每小时掉电 ", r, "，偏快") }
+            if v.reasonCode == "sleep_drain" { return make("睡眠时每小时掉电 ", r, "") }
             return BubbleText(main: "1 小时掉了 \(r) 电，有点快", emphasis: r, level: v.level)
         }
     }
@@ -278,6 +278,8 @@ enum BubbleCopy {
             i = main.index(after: i)
         }
         if let r = main.range(of: "一直占着 ") { cuts.append(main.index(before: r.upperBound)) }
+        // A cut must leave at least 3 em on each side, so no line holds a lone word like "偏快" (2026-10-13).
+        cuts = cuts.filter { em(String(main[..<$0])) >= 3 && em(String(main[$0...]).trimmingCharacters(in: .whitespaces)) >= 3 }
         let best = cuts.min { a, b in
             max(em(String(main[..<a])), em(String(main[a...]))) < max(em(String(main[..<b])), em(String(main[b...])))
         }

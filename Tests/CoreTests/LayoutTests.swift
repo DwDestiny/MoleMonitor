@@ -116,10 +116,15 @@ func runLayoutTests() {
     expect(col.dot == .collecting && col.status == .collecting, "collecting row")
     let st = PanelRows.row(.cpu, PanelRowsInput(verdicts: verdicts([]), current: c, dataState: .stale(now.addingTimeInterval(-3600)),
                                                 now: now, timeZone: TimeZone(identifier: "UTC")!))
-    expect(st.dot == .stale && st.valuePrefix == nil && st.note == "停在 11:00", "stale cpu row has the clock time in the note, got \(String(describing: st.valuePrefix)) \(st.note)")
+    expect(st.dot == .stale && st.valuePrefix == nil && st.note == "5 分钟均值 18%", "stale cpu row keeps its normal note, no clock time, got \(String(describing: st.valuePrefix)) \(st.note)")
     let stm = PanelRows.row(.memory, PanelRowsInput(verdicts: verdicts([]), current: c, dataState: .stale(now.addingTimeInterval(-3600)),
                                                     now: now, timeZone: TimeZone(identifier: "UTC")!))
-    expect(stm.valuePrefix == "11:00", "stale memory row carries the clock time, got \(String(describing: stm.valuePrefix))")
+    expect(stm.valuePrefix == "压力" && stm.dot == .stale, "stale memory row keeps its prefix, no clock time, got \(String(describing: stm.valuePrefix))")
+    for item in SidebarItem.fixedRows {
+        let r = PanelRows.row(item, PanelRowsInput(verdicts: verdicts([]), current: c, dataState: .stale(now.addingTimeInterval(-3600)),
+                                                   now: now, timeZone: TimeZone(identifier: "UTC")!))
+        expect(!r.note.contains("11:00") && !r.note.contains("停在") && r.valuePrefix != "11:00", "stale \(item) row says no time, got \(r.note)")
+    }
 
     section("PanelAnomalies: bars, reasons, start times")
     let utc = TimeZone(identifier: "UTC")!
@@ -257,6 +262,12 @@ func runSidebarTests() {
     expect(groups.count == 2 && groups[0].title == "今天" && groups[1].title == "昨天", "groups today and yesterday, got \(groups.map { $0.title })")
     expect(groups[0].rows[0].span.hasSuffix("进行中") && groups[0].rows[0].ongoing, "ongoing record")
     expect(groups[1].rows[0].duration.hasPrefix("约 ") && groups[1].rows[0].evidence.contains("Xcode"), "estimated end and app name")
+    let e3 = EventRecord(item: .power, first: .yellow, peak: .yellow, reasonCode: "awake_drain", start: now.addingTimeInterval(-600), end: nil,
+                         peakValue: 34, unit: "%/h", app: nil, endEstimated: false)
+    let e4 = EventRecord(item: .power, first: .yellow, peak: .yellow, reasonCode: "sleep_drain", start: now.addingTimeInterval(-600), end: nil,
+                         peakValue: 3.3, unit: "%/h", app: nil, endEstimated: false)
+    expect(SidebarRecords.row(e3, now: now, tz: utc).evidence == "每小时掉电 34%", "awake drain in the log, got \(SidebarRecords.row(e3, now: now, tz: utc).evidence)")
+    expect(SidebarRecords.row(e4, now: now, tz: utc).evidence == "睡眠时每小时掉电 3.3%", "sleep drain in the log, got \(SidebarRecords.row(e4, now: now, tz: utc).evidence)")
     expect(SidebarRecords.dayTitle(20000, today: 20010).contains("月") && SidebarRecords.dayTitle(20000, today: 20010).contains("周"), "older day title")
     let rstats = SidebarStats.make(SidebarInput(item: .anomalyLog, range: .d7, trend: .empty, rollups: [], diskSeries: [], diskTrigger: nil, sleeps: [],
                                                 current: CurrentReadings(), verdicts: [], status: nil, now: now, timeZone: utc), events: [e1, e2])

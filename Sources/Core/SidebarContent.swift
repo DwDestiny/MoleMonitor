@@ -831,7 +831,10 @@ enum SidebarRecords {
         if let v = e.peakValue, v.isFinite {
             let unit = e.unit ?? ""
             let number = String(format: "%.0f", v)
-            if unit == "%" {
+            if e.item == .power && unit == "%/h" {
+                // One wording for drain in the bubble, the row note and the log (2026-10-13): "每小时掉电 34%".
+                evidence = (e.reasonCode == "sleep_drain" ? "睡眠时每小时掉电 " : "每小时掉电 ") + BubbleCopy.rate(v)
+            } else if unit == "%" {
                 evidence += " " + number + "%"
             } else if unit.isEmpty {
                 evidence += " " + number

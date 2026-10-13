@@ -27,7 +27,7 @@ struct PanelRowState: Equatable, Identifiable {
     var name: String
     var dot: PanelDot
     var level: HealthLevel
-    /// 11 pt prefix of the value: "压力", "可用", "swap", or a clock time when the value is stale.
+    /// 11 pt prefix of the value: "压力", "可用", "swap". A stale row keeps it.
     var valuePrefix: String?
     /// 17 pt value: "23%", "+314 GB", "正常", "—", "采集中".
     var value: String
@@ -124,9 +124,8 @@ enum PanelRows {
             if state.value == "采集中" || state.note.hasSuffix(dash) { state.note = "正在采集" }
         case .stale(let since):
             state.status = .stale
-            // Only memory and disk show the clock time before the value. The other rows say it in the note.
-            if item == .memory || item == .disk { state.valuePrefix = TextFormat.clock(since, timeZone: input.timeZone) }
-            if item != .memory && item != .disk { state.note = "停在 " + TextFormat.clock(since, timeZone: input.timeZone) }
+            // The time of the stop is said twice only: in the bubble and in the footer. A row keeps its normal prefix and note;
+            // the dashed ring and the dashed curve show the stale state (2026-10-13, Fable round 2).
         case .fresh:
             if state.dot == .missing { state.status = .missing } else if state.dot == .collecting { state.status = .collecting }
         }

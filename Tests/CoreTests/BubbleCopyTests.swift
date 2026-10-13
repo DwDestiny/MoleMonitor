@@ -33,10 +33,12 @@ func runBubbleCopyTests() {
                "\(name): the break only replaces a space or adds nothing: \(text.wrapped)")
         for line in lines { expect(BubbleCopy.em(line) <= 12.4, "\(name): line '\(line)' is \(BubbleCopy.em(line)) em, a line holds about 12.6") }
         if BubbleCopy.em(text.main) <= BubbleCopy.oneLineEm { expect(lines.count == 1, "\(name): a short text stays on one line") }
+        if lines.count > 1 { for line in lines { expect(BubbleCopy.em(line) >= 3, "\(name): no lone word, line '\(line)'") } }
         if lines.count == 2 { expect(lines[0].hasSuffix("，") || lines[0].hasSuffix("一直占着"), "\(name): the break sits at the comma: \(lines[0])") }
     }
     expect(BubbleCopy.wrapped("磁盘 5 天胖了 314 GB，该让 Agent 看看了") == "磁盘 5 天胖了 314 GB，\n该让 Agent 看看了", "disk growth breaks at the comma")
     expect(BubbleCopy.wrapped("CPU 忙了 40 分钟，均值 74%") == "CPU 忙了 40 分钟，\n均值 74%", "CPU yellow breaks before 均值, not inside it")
+    expect(BubbleCopy.wrapped("睡眠时每小时掉电 3.3%，偏快") == "睡眠时每小时掉电 3.3%，偏快", "a 2 character tail is not cut off as its own line")
     expect(BubbleCopy.wrapped("一切正常，我先趴会儿") == "一切正常，我先趴会儿", "a short text is not broken")
     expect(BubbleCopy.wrapped("Orchard Browser 一直占着 412% CPU") == "Orchard Browser 一直占着\n412% CPU", "a text without comma breaks after 一直占着")
 
@@ -61,7 +63,7 @@ func runBubbleCopyTests() {
     expect(one(.cpu, .yellow, "app_saturated", number: 412, app: nil) == "有个 App 一直占着 412% CPU", "app names off")
     expect(one(.thermal, .red, "thermal_serious", seconds: 12 * 60) == "热到降速了，已持续 12 分钟", "thermal red example")
     expect(one(.thermal, .yellow, "thermal_fair", seconds: 8 * 60) == "有点热，已经 8 分钟了", "thermal yellow example")
-    expect(one(.power, .yellow, "sleep_drain", number: 3.3) == "合盖时每小时掉电 3.3%，偏快", "sleep drain example")
+    expect(one(.power, .yellow, "sleep_drain", number: 3.3) == "睡眠时每小时掉电 3.3%", "sleep drain example")
     expect(one(.power, .yellow, "awake_drain", number: 18) == "1 小时掉了 18% 电，有点快", "awake drain example")
     expect(BubbleCopy.duration(3 * 3600 + 5) == "3 小时" && BubbleCopy.duration(3 * 86400) == "3 天", "{D} hours and days")
     expect(BubbleCopy.size(1_300_000_000_000) == "1.3 TB" && BubbleCopy.size(512_000_000) == "512 MB", "{X} units")
