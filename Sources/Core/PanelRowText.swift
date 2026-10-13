@@ -195,11 +195,9 @@ enum PanelRows {
             case "growth_30d": growth = input.diskGrowth["30d"]?.bytes
             default: break
             }
-            // The free space stays out of the note while the value shows it ("可用 412 GB"). A growth value or a stale
-            // clock prefix replaces the "可用" label, so then the note carries it.
-            var staleValue = false
-            if case .stale = input.dataState { staleValue = true }
-            s.note = (growth != nil || staleValue) ? cap.usedOfTotalAvailable : cap.usedOfTotal
+            // The free space stays out of the note while the value shows it ("可用 412 GB", also stale). A growth value
+            // does not show it, so then the note carries it.
+            s.note = growth != nil ? cap.usedOfTotalAvailable : cap.usedOfTotal
             if let growth {
                 s.value = TextFormat.signedDiskGB(growth)
             } else {

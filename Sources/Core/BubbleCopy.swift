@@ -264,7 +264,7 @@ enum BubbleCopy {
     }
 
     /// One line of the bubble holds about 12.6 em (164 pt inside the padding, 13 pt font). A text up to this size stays on one line.
-    static let oneLineEm = 11.8
+    static let oneLineEm = 12.1
 
     /// Breaks a long text once, at the comma, so a word never splits across the lines ("该 / 让 Agent 看看了" is the bug this fixes).
     /// A text without a comma breaks after "一直占着". The comma stays at the end of line 1. A text that fits one line, or has

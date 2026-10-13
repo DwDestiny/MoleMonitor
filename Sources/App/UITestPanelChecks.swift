@@ -919,7 +919,7 @@ extension UITestRunner {
                     }
                     let cap = item == .disk ? CapacityFormat.disk(data.current) : CapacityFormat.memory(data.current)
                     // The free part is in the note unless the value on the right is the free space ("可用 412 GB").
-                    let valueIsAvailable = item == .disk && row.valuePrefix == "可用"
+                    let valueIsAvailable = item == .disk && !row.value.hasPrefix("+")
                     let expectedNote = (item == .memory || !valueIsAvailable) ? cap.usedOfTotalAvailable : cap.usedOfTotal
                     if row.note != expectedNote {
                         problems.append("\(c.rawValue) \(item.rawValue): note '\(row.note)' differs from '\(expectedNote)'")

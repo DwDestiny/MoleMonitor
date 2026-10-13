@@ -94,7 +94,7 @@ func runLayoutTests() {
     expect(dg.note == "已用 593 / 995 GB，可用 402 GB", "disk growth row: the value is no free space, so the note carries it, got \(dg.note)")
     expect(rows[2].note == "已用 593 / 995 GB", "healthy disk: the value is the free space, the note does not repeat it")
     let dstale = PanelRows.row(.disk, PanelRowsInput(verdicts: verdicts([]), current: c, dataState: .stale(now.addingTimeInterval(-3600)), now: now))
-    expect(dstale.note == "已用 593 / 995 GB，可用 402 GB", "stale disk: the clock replaces the 可用 label, so the note carries it, got \(dstale.note)")
+    expect(dstale.note == "已用 593 / 995 GB", "stale disk: the value still is the free space, so the note does not repeat it, got \(dstale.note)")
     var withMemory = c
     withMemory.memory = MemoryBreakdown(app: Int64(40.2 * Double(1 << 30)), wired: Int64(10.0 * Double(1 << 30)),
                                         compressed: Int64(8.0 * Double(1 << 30)), total: 64 << 30)
