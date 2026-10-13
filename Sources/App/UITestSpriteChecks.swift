@@ -23,6 +23,7 @@ enum UITestSpriteChecks {
         registry.add("W14", "main thread work per frame") { runner in await w14(runner) }
         registry.add("W15", "Reduce Motion") { runner in await w15(runner) }
         registry.add("W17", "CPU while open") { runner in await w17(runner) }
+        registry.add("W16", "closed panel costs nothing") { runner in await w16(runner) }
         registry.add("W12", "bubble and dog gap") { runner in await w12(runner) }
     }
 
@@ -498,6 +499,78 @@ enum UITestSpriteChecks {
         await feed(r, model, base: base, cpu: 95, seconds: 10, start: 135)
         lastCpu = ((r.cpuSeconds() - cpu0) / max(0.001, r.now() - wall0) * 100, DogSpriteProbe.currentAction?.rawValue ?? "nil")
         await r.closeFixture()
+    }
+
+    // MARK: W16
+
+    /// Closed panel costs nothing (DESIGN_V2.md 13.3, W16). The panel closes with sprites cached, then 3 s windows are measured.
+    /// Deterministic conditions hold in every window: live sampling off, one engine timer, no Core Animation animation, sprite cache
+    /// 0 bytes, live buffer empty. The process CPU (a load value) takes at most 3 windows and uses the best one (docs/CI.md).
+    @MainActor
+    static func w16(_ r: UITestRunner) async {
+        let t0 = r.now()
+        await r.closePanelQuietly()
+        motion(true)
+        defer { restore(); dump(r) }
+        let copyBox = UITestTextBox()
+        guard let model = await r.openFixture(.allGreen, copyBox: copyBox) else {
+            r.record("W16", "关闭零成本", false, since: t0, "the panel did not open")
+            return
+        }
+        let base = model.data
+        for k in 1...3 {
+            model.replace(point(base, cpu: 60, seconds: Double(k) * 45))
+            await r.sleepMs(300)
+        }
+        await r.sleepMs(600)
+        let openBytes = DogSpriteLibrary.shared.cachedBytes
+        let openAnimations = r.hostView.map { animationKeys($0).count } ?? -1
+        weak var panelWindow = r.hostView?.window
+        await r.closeFixture()
+        var attempts = [String]()
+        var best = Double.infinity
+        var failures = [String]()
+        for attempt in 1...3 {
+            let cpu0 = r.cpuSeconds(), wall0 = r.now()
+            await r.sleepMs(3000)
+            let share = (r.cpuSeconds() - cpu0) / max(0.001, r.now() - wall0) * 100
+            let live = r.engine.isLiveSampling
+            let timers = r.engine.activeTimerCount
+            let bytes = DogSpriteLibrary.shared.cachedBytes
+            let empty = r.engine.live == .empty
+            // The panel window is released after the close. If it is alive, its layer tree is walked; the other windows of the
+            // process (the status item window is left out) are walked as well.
+            var animations = 0
+            var windows = 0
+            for window in NSApp.windows where !window.className.contains("StatusBar") {
+                guard let root = window.contentView?.superview?.layer ?? window.contentView?.layer else { continue }
+                windows += 1
+                func walk(_ layer: CALayer, _ depth: Int) {
+                    guard depth < 40 else { return }
+                    animations += layer.animationKeys()?.count ?? 0
+                    for sub in layer.sublayers ?? [] { walk(sub, depth + 1) }
+                }
+                walk(root, 0)
+            }
+            if live { failures.append("attempt \(attempt): live sampling on") }
+            if timers != 1 { failures.append("attempt \(attempt): \(timers) timers") }
+            if animations != 0 { failures.append("attempt \(attempt): \(animations) animations") }
+            if bytes != 0 { failures.append("attempt \(attempt): sprite cache \(bytes) bytes") }
+            if !empty { failures.append("attempt \(attempt): live buffer not empty") }
+            attempts.append(String(format: "attempt %d cpu %.2f %%", attempt, share)
+                + " (live \(live ? "on" : "off"), timers \(timers), animations \(animations) in \(windows) windows, cache \(bytes) bytes, buffer empty \(empty ? "yes" : "no"))")
+            best = min(best, share)
+            if best < 5 { break }
+        }
+        let cpuOk = best < 5
+        if !cpuOk { failures.append(String(format: "best cpu %.2f %% (limit 5 %%)", best)) }
+        let ok = failures.isEmpty
+        r.record("W16", "关闭零成本", ok, since: t0,
+                 "3 s after close (before: sprite cache \(openBytes) bytes, \(openAnimations) animations in the panel, panel window released=\(panelWindow == nil)): "
+                     + attempts.joined(separator: "; ") + String(format: ". Best CPU %.2f %% of one core, limit 5 %%.", best)
+                     + (ok ? "" : " Failures: " + failures.joined(separator: ", ")),
+                 ["processCpuPercent": (best * 100).rounded() / 100, "attempts": Double(attempts.count),
+                  "spriteBytesOpen": Double(openBytes)])
     }
 
     // MARK: W15

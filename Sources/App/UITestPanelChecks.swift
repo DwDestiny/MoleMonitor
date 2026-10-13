@@ -1204,11 +1204,31 @@ extension UITestRunner {
             return
         }
         // Case 1: a stay of 200 ms does not open, a stay of 450 ms does.
-        model.pointerMoved(.row(.cpu), at: CGPoint(x: 100, y: 300))
-        await sleepMs(200)
-        if model.sidebarItem != nil { problems.append("the sidebar opened after 200 ms") }
-        await sleepMs(250)
-        if model.sidebarItem != .cpu { problems.append("the sidebar did not open after 450 ms") }
+        // The 200 ms check is a negative assertion, so no best of 3. A real-time guard decides: if the time from the move to the
+        // check is 300 ms or more (openDelay 350 ms minus 50 ms), a VM stall stretched the sleep and the sidebar may open correctly.
+        // That attempt is void: the sidebar closes and the attempt runs again, at most 3 times. An open in a valid attempt fails.
+        var restElapsed = [Double]()
+        var restValid = false
+        for _ in 0..<3 {
+            let tRest = now()
+            model.pointerMoved(.row(.cpu), at: CGPoint(x: 100, y: 300))
+            await sleepMs(200)
+            let early = model.sidebarItem != nil
+            let elapsed = (now() - tRest) * 1000
+            restElapsed.append(elapsed)
+            if elapsed < 300 {
+                restValid = true
+                if early { problems.append("the sidebar opened after 200 ms") }
+                await sleepMs(Swift.max(0, 450 - (now() - tRest) * 1000))
+                if model.sidebarItem != .cpu { problems.append("the sidebar did not open after 450 ms") }
+                break
+            }
+            model.pointerLeft()
+            _ = await waitFor(timeoutMs: 1500) { model.sidebarItem == nil }
+            await sleepMs(300)
+        }
+        let restText = restElapsed.map { String(Int($0.rounded())) }.joined(separator: "/")
+        if !restValid { problems.append("test environment too slow: the 200 ms rest check was never run within 300 ms (attempts \(restText) ms)") }
         // Case 2: with the sidebar open, a move to another row switches within 200 ms (the limit is 200 ms plus 20 ms of margin).
         // Latency gate: at most 3 attempts, one attempt within the limit passes, the numbers of all attempts are in the note
         // (docs/CI.md, "延迟类门禁的重复测量"). A real regression is slow in every attempt. Case 1 and case 3 are not repeated.
@@ -1244,7 +1264,7 @@ extension UITestRunner {
         if model.sidebarItem != nil { problems.append("a fast pass over 3 rows opened the sidebar") }
         model.panelDidClose()
         await closeFixture()
-        var note = "3 synthetic mouse cases on the fixture model: stay 200/450 ms, switch within 200 ms (attempts \(switchText) ms), close after leave \(String(format: "%.2f", closeSeconds)) s, fast pass"
+        var note = "3 synthetic mouse cases on the fixture model: stay 200/450 ms (rest attempts \(restText) ms), switch within 200 ms (attempts \(switchText) ms), close after leave \(String(format: "%.2f", closeSeconds)) s, fast pass"
         if !problems.isEmpty { note += ". failures: " + problems.joined(separator: "; ") }
         record("W06", "悬停意图（UI 部分）", problems.isEmpty, since: t0, note, ["closeSeconds": closeSeconds])
     }
