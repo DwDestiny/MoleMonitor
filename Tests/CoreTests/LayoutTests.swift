@@ -67,7 +67,7 @@ func runLayoutTests() {
     expect(rows[0].value == "18%" && rows[0].note == "5 分钟均值 18%" && rows[0].dot == .normal, "cpu row: \(rows[0])")
     expect(rows[1].valuePrefix == "压力" && rows[1].value == "23%", "memory pressure 23%, got \(rows[1].measurement)")
     expect(rows[2].valuePrefix == "可用" && rows[2].value == "402 GB" && rows[2].note == "已用 593 / 995 GB", "disk row: \(rows[2])")
-    expect(rows[3].dot == .neutralHollow, "network always a hollow neutral dot")
+    expect(rows[3].dot == .normal, "network has no health level: a quiet filled dot, not the hollow collecting dot")
     expect(rows[4].value == "82%" && rows[4].note == "电源适配器", "battery row: \(rows[4])")
     expect(rows[5].value == "正常" && rows[5].note.hasPrefix("CPU 51"), "thermal row: \(rows[5])")
     for r in rows { expect(!r.isProblem, "healthy row \(r.name) is not a problem") }
@@ -91,6 +91,26 @@ func runLayoutTests() {
     let dverdicts = [lv(.disk, .red, code: "growth_5d"), lv(.cpu, .green), lv(.memory, .green), lv(.thermal, .green), lv(.power, .green)]
     let dg = PanelRows.row(.disk, PanelRowsInput(verdicts: dverdicts, current: c, dataState: .fresh, diskGrowth: growth, now: now))
     expect(dg.value == "+314 GB" && dg.dot == .red && dg.isProblem, "disk growth row: \(dg)")
+    expect(dg.note == "已用 593 / 995 GB，可用 402 GB", "disk growth row: the value is no free space, so the note carries it, got \(dg.note)")
+    expect(rows[2].note == "已用 593 / 995 GB", "healthy disk: the value is the free space, the note does not repeat it")
+    let dstale = PanelRows.row(.disk, PanelRowsInput(verdicts: verdicts([]), current: c, dataState: .stale(now.addingTimeInterval(-3600)), now: now))
+    expect(dstale.note == "已用 593 / 995 GB", "stale disk: the value still is the free space, so the note does not repeat it, got \(dstale.note)")
+    var withMemory = c
+    withMemory.memory = MemoryBreakdown(app: Int64(40.2 * Double(1 << 30)), wired: Int64(10.0 * Double(1 << 30)),
+                                        compressed: Int64(8.0 * Double(1 << 30)), total: 64 << 30)
+    let mem = PanelRows.row(.memory, PanelRowsInput(verdicts: verdicts([]), current: withMemory, dataState: .fresh, now: now))
+    expect(mem.note == "已用 58.2 / 64 GB，可用 5.8 GB", "memory note shows used, total and available, got \(mem.note)")
+    var drain = c
+    drain.awakeDrainPerHour = 34
+    drain.lastSleep = SleepRecord(sleptAt: now.addingTimeInterval(-3 * 3600), wokeAt: now, batteryBefore: 80, batteryAfter: 70, onBatteryBeforeSleep: true)
+    let awakeRow = PanelRows.row(.battery, PanelRowsInput(verdicts: [lv(.power, .yellow, code: "awake_drain")], current: drain, dataState: .fresh, now: now))
+    expect(awakeRow.note == "每小时掉电 34%", "awake drain note, got \(awakeRow.note)")
+    let sleepRow = PanelRows.row(.battery, PanelRowsInput(verdicts: [lv(.power, .yellow, code: "sleep_drain")], current: drain, dataState: .fresh, now: now))
+    expect(sleepRow.note == "睡眠时每小时掉电 3.3%", "sleep drain note in the same sentence form, got \(sleepRow.note)")
+    func ago(_ minutes: Double) -> String { TextFormat.duration(since: now.addingTimeInterval(-minutes * 60), now: now) }
+    expect(ago(180) == "3 小时" && ago(200) == "3 小时 20 分" && ago(45) == "45 分" && ago(0.5) == "刚刚", "duration leaves out a zero remainder: \(ago(180)) \(ago(200)) \(ago(45))")
+    expect(ago(48 * 60) == "2 天" && ago(26 * 60) == "1 天 2 小时", "days: \(ago(48 * 60)) \(ago(26 * 60))")
+    expect(TextFormat.span(seconds: 3600) == "1 小时" && TextFormat.span(seconds: 3900) == "1 小时 5 分", "span leaves out a zero remainder")
 
     let col = PanelRows.row(.cpu, PanelRowsInput(verdicts: verdicts([]), current: CurrentReadings(), dataState: .collecting, now: now))
     expect(col.dot == .collecting && col.status == .collecting, "collecting row")
@@ -112,13 +132,13 @@ func runLayoutTests() {
         (.power, "sleep_drain", "睡眠掉电偏快"), (.power, "awake_drain", "掉电偏快")]
     for (item, code, word) in reasons { expect(PanelAnomalies.reasonWord(item: item, code: code) == word, "reason \(code)") }
     let sv = [lv(.disk, .red, code: "growth_5d", since: 192), lv(.memory, .yellow, code: "pressure_warning", since: 20)]
-    expect(PanelAnomalies.summary(items: [.disk, .memory], verdicts: sv, now: now) == "异常 2 项 \u{00B7} 最久已持续 3 小时 12 分", "summary: \(PanelAnomalies.summary(items: [.disk, .memory], verdicts: sv, now: now))")
-    expect(PanelAnomalies.episode(sv[0], now: now, timeZone: utc) == "已持续 3 小时 12 分 \u{00B7} 开始 08:48", "episode: \(String(describing: PanelAnomalies.episode(sv[0], now: now, timeZone: utc)))")
+    expect(PanelAnomalies.summary(items: [.disk, .memory], verdicts: sv, now: now) == "异常 2 项，最久已持续 3 小时 12 分", "summary: \(PanelAnomalies.summary(items: [.disk, .memory], verdicts: sv, now: now))")
+    expect(PanelAnomalies.episode(sv[0], now: now, timeZone: utc) == "已持续 3 小时 12 分，开始 08:48", "episode: \(String(describing: PanelAnomalies.episode(sv[0], now: now, timeZone: utc)))")
     expect(PanelAnomalies.episode(lv(.cpu, .green), now: now, timeZone: utc) == nil, "no episode for a normal item")
     let bars = PanelAnomalies.bars(shown: [.disk, .memory],
                                    verdicts: [lv(.disk, .red, code: "growth_5d", since: 192), lv(.memory, .yellow, code: "pressure_warning", since: 20)],
                                    now: now, timeZone: utc)
-    expect(bars.count == 2 && bars[0].title == "磁盘 · 异常" && bars[1].title == "内存 · 留意", "bar titles: \(bars.map { $0.title })")
+    expect(bars.count == 2 && bars[0].title == "磁盘异常" && bars[1].title == "内存留意", "bar titles: \(bars.map { $0.title })")
     expect(bars[0].duration == "3 小时 12 分", "duration, got \(bars[0].duration)")
     for b in bars {
         let digits = b.reason.contains(where: { $0.isNumber })

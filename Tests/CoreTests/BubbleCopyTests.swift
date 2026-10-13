@@ -24,7 +24,21 @@ func runBubbleCopyTests() {
             expect(text.level == .yellow || text.level == .red, "\(name): the emphasis has the level color")
         }
     }
-    expect(BubbleCopy.width("还有 4 项需要处理") <= 24, "second line fits")
+
+    // Line break: a long text breaks once at the comma (or after "一直占着"), so the system never splits a word.
+    for (name, text, _) in all {
+        let lines = text.wrapped.components(separatedBy: "\n")
+        expect(lines.count <= 2, "\(name): at most 2 lines, got \(lines.count)")
+        expect(text.wrapped.replacingOccurrences(of: "\n", with: "") == text.main || text.wrapped.replacingOccurrences(of: "\n", with: " ") == text.main,
+               "\(name): the break only replaces a space or adds nothing: \(text.wrapped)")
+        for line in lines { expect(BubbleCopy.em(line) <= 12.4, "\(name): line '\(line)' is \(BubbleCopy.em(line)) em, a line holds about 12.6") }
+        if BubbleCopy.em(text.main) <= BubbleCopy.oneLineEm { expect(lines.count == 1, "\(name): a short text stays on one line") }
+        if lines.count == 2 { expect(lines[0].hasSuffix("，") || lines[0].hasSuffix("一直占着"), "\(name): the break sits at the comma: \(lines[0])") }
+    }
+    expect(BubbleCopy.wrapped("磁盘 5 天胖了 314 GB，该让 Agent 看看了") == "磁盘 5 天胖了 314 GB，\n该让 Agent 看看了", "disk growth breaks at the comma")
+    expect(BubbleCopy.wrapped("CPU 忙了 40 分钟，均值 74%") == "CPU 忙了 40 分钟，\n均值 74%", "CPU yellow breaks before 均值, not inside it")
+    expect(BubbleCopy.wrapped("一切正常，我先趴会儿") == "一切正常，我先趴会儿", "a short text is not broken")
+    expect(BubbleCopy.wrapped("Orchard Browser 一直占着 412% CPU") == "Orchard Browser 一直占着\n412% CPU", "a text without comma breaks after 一直占着")
 
     // Examples of 4.11, exactly.
     func one(_ item: HealthItem, _ level: HealthLevel, _ code: String, number: Double? = nil, app: String? = nil,
@@ -70,7 +84,7 @@ func runBubbleCopyTests() {
     let p = BubbleProblem(item: .disk, level: .red, reasonCode: "low_space", number: nil, app: nil, bytes: 18 * GB)
     let q = BubbleProblem(item: .memory, level: .yellow, reasonCode: "pressure_warning", number: 64, app: nil)
     let two = BubbleCopy.text(for: BubbleInput(problems: [p, q]))
-    expect(two.main.contains("18") && two.sub == "还有 1 项需要处理", "the first problem leads, the second line counts the rest")
+    expect(two.main.contains("18") && two.main == "磁盘只剩 18 GB，快装不下了", "the first problem leads, the count lives only in the footer")
     expect(two.emphasis == "18 GB" && two.level == .red, "the evidence is emphasized in the level color")
     expect(BubbleCopy.text(for: BubbleInput(problems: [p], event: .petTap(0))).main == "磁盘只剩 18 GB，快装不下了", "no egg text during a problem")
     expect(BubbleCopy.text(for: BubbleInput(cpuPercent: 3, event: .petTap(5))).main == BubbleCopy.tapTexts[1], "tap texts rotate")

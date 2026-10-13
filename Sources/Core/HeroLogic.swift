@@ -140,9 +140,9 @@ struct HeroBrain {
         refreshText(force: true)
     }
 
-    /// The bubble as the view shows it: a copy text replaces the main line, the second line stays.
+    /// The bubble as the view shows it: a copy text replaces the main line.
     var display: BubbleText {
-        if let copyText { return BubbleText(main: copyText, sub: text.sub) }
+        if let copyText { return BubbleText(main: copyText) }
         return text
     }
 
@@ -281,7 +281,7 @@ struct HeroBrain {
         case .stale(let at): state = "stale \(at.timeIntervalSince1970)"
         }
         let key = [state, facts.problemKey.joined(separator: ","), director.gait.rawValue, input.isNight ? "night" : "day",
-                   "\(event)", next.sub ?? ""].joined(separator: "|")
+                   "\(event)"].joined(separator: "|")
         if force || key != textKey || facts.now.timeIntervalSince(textAt) >= HeroBrain.numberSeconds {
             text = next
             textKey = key

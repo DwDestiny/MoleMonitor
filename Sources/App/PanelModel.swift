@@ -110,7 +110,7 @@ struct SidebarContentState: Equatable {
     var ranking: RankTable?
     var footnotes: [String]
     var groups: [RecordGroup]
-    /// "已持续 3 小时 12 分 · 开始 06:20" for a problem item, nil otherwise.
+    /// "已持续 3 小时 12 分，开始 06:20" for a problem item, nil otherwise.
     var episode: String? = nil
 }
 
@@ -254,7 +254,7 @@ final class PanelModel: ObservableObject, PanelPinning {
     /// The breakdown rows in plan order.
     var rows: [PanelRowState] { PanelRows.make(order: layoutPlan.rows, input: rowsInput) }
 
-    /// The one line of the anomaly area when there are anomalies: "异常 4 项 · 最久已持续 3 小时".
+    /// The one line of the anomaly area when there are anomalies: "异常 4 项，最久已持续 3 小时".
     var anomalySummary: String {
         PanelAnomalies.summary(items: layoutPlan.anomalies, verdicts: data.verdicts, now: data.now)
     }
@@ -272,7 +272,8 @@ final class PanelModel: ObservableObject, PanelPinning {
     func spark(for item: SidebarItem) -> SparkSeries {
         // While collecting, a row without a value shows only the dashed baseline (DESIGN_V2.md 2.6). A row with a live value shows its curve.
         if case .collecting = data.dataState, PanelRows.row(item, rowsInput).value == "采集中" { return .empty(now: data.now) }
-        return SparkSeries.make(item, trend: data.trend, disk: data.diskSeries, now: data.now)
+        // A stale row ends its window at the stale time, so all six curves have the same length and end at the last reading.
+        return SparkSeries.make(item, trend: data.trend, disk: data.diskSeries, now: data.staleSince ?? data.now)
     }
 
     /// Apps sorted for one list. The minimum-use filter and the order come from `AppRanking.top`.

@@ -218,6 +218,11 @@ enum PanelType {
     static let allowedSizes: Set<Double> = [17, 13, 11, 10]
 }
 
+extension PanelMetrics {
+    /// The note line of a row spans the name column and the value column (line 2 of the row).
+    static let noteColumn = textColumn + valueColumn
+}
+
 // MARK: - Slots (the text boxes whose longest string must fit at 1.25 times the font size, check M6)
 
 struct PanelSlot {
@@ -239,10 +244,10 @@ struct PanelSlot {
 enum PanelSlots {
     static let all: [PanelSlot] = [
         PanelSlot(name: "row.name", size: 13, weight: .medium, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "磁盘"),
-        PanelSlot(name: "row.note", size: 11, weight: .regular, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "已用 593 / 995 GB"),
-        PanelSlot(name: "row.note.cpu", size: 11, weight: .regular, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "10 分钟均值 94%"),
-        PanelSlot(name: "row.note.battery", size: 11, weight: .regular, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "睡眠每小时 3.3%"),
-        PanelSlot(name: "row.note.network", size: 11, weight: .regular, rounded: false, width: PanelMetrics.textColumn, lines: 1, sample: "\u{2193}1.1 MB/s \u{2191}96 KB/s", minScale: 0.8),
+        PanelSlot(name: "row.note", size: 11, weight: .regular, rounded: false, width: PanelMetrics.noteColumn, lines: 1, sample: "已用 875 / 995 GB，可用 120 GB"),
+        PanelSlot(name: "row.note.cpu", size: 11, weight: .regular, rounded: false, width: PanelMetrics.noteColumn, lines: 1, sample: "10 分钟均值 94%"),
+        PanelSlot(name: "row.note.battery", size: 11, weight: .regular, rounded: false, width: PanelMetrics.noteColumn, lines: 1, sample: "睡眠时每小时掉电 10.5%"),
+        PanelSlot(name: "row.note.network", size: 11, weight: .regular, rounded: false, width: PanelMetrics.noteColumn, lines: 1, sample: "\u{2193}1.1 MB/s \u{2191}96 KB/s", minScale: 0.8),
         PanelSlot(name: "row.value", size: 17, weight: .semibold, rounded: false, width: PanelMetrics.valueColumn, lines: 1, sample: "+314 GB"),
         PanelSlot(name: "row.value.swap", size: 17, weight: .semibold, rounded: false, width: PanelMetrics.valueColumn, lines: 1, sample: "+3.1 GB",
                   prefix: "swap", minScale: 0.75),
@@ -252,7 +257,7 @@ enum PanelSlots {
                   prefix: "压力", minScale: 0.75),
         PanelSlot(name: "row.value.stale", size: 17, weight: .semibold, rounded: false, width: PanelMetrics.valueColumn, lines: 1, sample: "402 GB",
                   prefix: "11:00", minScale: 0.75),
-        PanelSlot(name: "anomaly.title", size: 13, weight: .medium, rounded: false, width: 188, lines: 1, sample: "内存 · 留意"),
+        PanelSlot(name: "anomaly.title", size: 13, weight: .medium, rounded: false, width: 188, lines: 1, sample: "内存留意"),
         PanelSlot(name: "anomaly.reason", size: 11, weight: .regular, rounded: false, width: 188, lines: 1, sample: "swap 30 分钟增长"),
         PanelSlot(name: "anomaly.duration", size: 13, weight: .medium, rounded: false, width: 120, lines: 1, sample: "1 天 3 小时"),
         PanelSlot(name: "anomaly.start", size: 11, weight: .regular, rounded: false, width: 120, lines: 1, sample: "开始 昨天 22:10"),

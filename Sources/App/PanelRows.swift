@@ -3,6 +3,8 @@
 // Input: PanelModel (row states, mini curves, hover and selection state) and the tokens.
 // Output: The six breakdown rows of the main column: state dot, name and note, right-aligned value, 80 x 24 mini curve.
 // Pos: Section 2 of the main column (docs/DESIGN_V2.md 5). A row is 40 pt high. Columns: 8 + 8 + 120 + 92 + 12 + 80 = 320.
+//      Line 1 holds the name (120 pt) and the value (92 pt, right-aligned, same baseline). Line 2 is the note over both columns (212 pt),
+//      so the capacity line "已用 875 / 995 GB，可用 120 GB" fits at 11 pt.
 //      Only these type sizes appear: 17, 13, 11 pt. The mini curve has no animation and no timer.
 
 import SwiftUI
@@ -34,7 +36,7 @@ struct StatusDotView: View {
                 TriangleShape().fill(tok.dotColor(.yellow)).frame(width: 8, height: 8)
             case .normal:
                 Circle().fill(tok.dotNeutral).frame(width: 6, height: 6)
-            case .neutralHollow, .collecting:
+            case .collecting:
                 Circle().strokeBorder(tok.dotNeutral, lineWidth: 1.5).frame(width: 6, height: 6)
             case .stale:
                 Circle().strokeBorder(tok.dotNeutral, style: StrokeStyle(lineWidth: 1.5, dash: [1.5, 1.5])).frame(width: 6, height: 6)
@@ -97,11 +99,27 @@ enum SparkGeometry {
     }
 }
 
-/// An 80 x 24 mini curve. `dashed` draws the dashed baseline of the collecting state. Stale rows pass a gray color.
+/// The end dot of a stale curve: a ring, so the line reads as "stopped here" and not as a live value.
+private struct SparkEndRingShape: Shape {
+    let series: SparkSeries
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        if let last = series.last {
+            let q = SparkGeometry.point(last, series, rect)
+            p.addEllipse(in: CGRect(x: q.x - 1.75, y: q.y - 1.75, width: 3.5, height: 3.5))
+        }
+        return p
+    }
+}
+
+/// An 80 x 24 mini curve. `dashed` draws the dashed baseline of the collecting state. A stale row draws every curve the same way:
+/// the third-level text color, dashed, with a hollow end dot (all six rows end at the stale time, so they have the same length).
 struct SparkView: View {
     let series: SparkSeries
     let color: Color
     var dashed = false
+    var stale = false
     @Environment(\.tok) private var tok
 
     var body: some View {
@@ -113,9 +131,15 @@ struct SparkView: View {
                 }
                 .stroke(tok.chartGrid, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
-            SparkLineShape(series: series)
-                .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-            SparkEndShape(series: series).fill(color)
+            if stale {
+                SparkLineShape(series: series)
+                    .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .butt, lineJoin: .round, dash: [3, 2.5]))
+                SparkEndRingShape(series: series).stroke(color, lineWidth: 1.25)
+            } else {
+                SparkLineShape(series: series)
+                    .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                SparkEndShape(series: series).fill(color)
+            }
         }
         .frame(width: PanelMetrics.sparkWidth, height: PanelMetrics.sparkHeight)
         .accessibilityHidden(true)
@@ -170,11 +194,16 @@ struct BreakdownRowView: View {
                 .frame(width: PanelMetrics.dotColumn, height: PanelMetrics.dotColumn)
                 .uiTestFrame("dot." + id)
             VStack(alignment: .leading, spacing: 1) {
-                Text(row.name)
-                    .font(PanelType.rowName)
-                    .foregroundStyle(tok.textPrimary)
-                    .lineLimit(1)
-                    .uiTestFrame("txt.row.name." + id)
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text(row.name)
+                        .font(PanelType.rowName)
+                        .foregroundStyle(tok.textPrimary)
+                        .lineLimit(1)
+                        .uiTestFrame("txt.row.name." + id)
+                        .frame(width: PanelMetrics.textColumn, alignment: .leading)
+                    valueView
+                        .frame(width: PanelMetrics.valueColumn, alignment: .trailing)
+                }
                 Text(row.note)
                     .font(PanelType.rowNote)
                     .foregroundStyle(tok.textSecondary)
@@ -182,12 +211,11 @@ struct BreakdownRowView: View {
                     .minimumScaleFactor(0.8)
                     .truncationMode(.tail)
                     .uiTestFrame("txt.row.note." + id)
+                    .frame(width: PanelMetrics.noteColumn, alignment: .leading)
             }
-            .frame(width: PanelMetrics.textColumn, alignment: .leading)
+            .frame(width: PanelMetrics.noteColumn, alignment: .leading)
             .padding(.leading, PanelMetrics.dotGap)
-            valueView
-                .frame(width: PanelMetrics.valueColumn, alignment: .trailing)
-            SparkView(series: spark, color: sparkColor, dashed: row.status == .collecting)
+            SparkView(series: spark, color: sparkColor, dashed: row.status == .collecting, stale: row.status == .stale)
                 .padding(.leading, PanelMetrics.sparkGap)
                 .uiTestFrame("row." + id + ".spark")
         }
