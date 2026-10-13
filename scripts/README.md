@@ -49,7 +49,7 @@ last_updated: 2026-10-13
 7. 发布二进制不含测试代码。`Panel*.swift` 的每个按钮有标识符和中文标签，且不含 `Timer` 与 `TimelineView`。
 8. 运行测试变体的 `--ui-test`，总时间预算 420 秒（原因见 [CI.md](../docs/CI.md) “UI 测试总时长”）。核对已激活的 `ui` 门禁：项 A 至 L，M4 至 M6、M11 至 M14、M19、M19V、M20、M21、N1、N2，以及 v2 门禁 W01 至 W12、W14、W15、W17、W18、W19、W22。M2、M3、M22 的结果取自 W02。脚本把每个 `GATE` 行立即打印到日志。项的含义见 CI.md。
 9. 核对 `Contents/Resources/DogArt` 内的 8 个文件与源文件逐字节相同，审计 `DogBitmapView.swift` 不含定时器与逐帧视图，运行比熊门禁（`--dog-gallery --dog-checks`：DA 至 DF、BA 至 BF）并检查 4 张联系表。
-10. 输出门禁汇总，例如 `GATE REGISTRY: 38 passed / 0 failed / 4 inactive (未激活)`。已激活的门禁没有结果算失败。未激活的门禁（W13、W16、W20、W21）列为“未激活”，不算通过，也不使 CI 失败。同一个编号报告两次时，失败不会被后一次通过覆盖。
+10. 输出门禁汇总，例如 `GATE REGISTRY: 56 passed / 0 failed / 4 inactive (未激活) / 1 skipped`。已激活的门禁没有结果算失败。未激活的门禁（W13、W16、W20、W21）列为“未激活”，不算通过，也不使 CI 失败。同一个编号报告两次时，失败不会被后一次通过覆盖。
 
 脚本不安装 App，不修改登录项。运行 `--ui-test` 时，状态卡会在屏幕上显示约 30 秒，使用临时数据目录。结果是回归门禁，不是真机验收。
 
