@@ -7,7 +7,7 @@
 #      `--self-test` checks the gate registry logic on any OS and exits. The registry GATES lists W01 to W22 and the old gates:
 #      pending gates are shown as inactive (未激活), never counted as passed (docs/CI.md, "v2 门禁登记表").
 # Pos: Runs in GitHub Actions and on a Mac. It installs nothing and changes no login item. The UI gate shows a popover on the
-#      runner for about 30 seconds, with temporary data; the gate needs `python3 scripts/build.py --ui-test` first.
+#      runner for a few minutes (time budget 420 s, docs/CI.md "UI 测试总时长"), with temporary data; the gate needs `python3 scripts/build.py --ui-test` first.
 from pathlib import Path
 import json
 import os
@@ -151,6 +151,41 @@ def run(cmd, env=None, timeout=120):
     merged = dict(os.environ)
     merged.update(env or {})
     return subprocess.run([str(c) for c in cmd], capture_output=True, text=True, env=merged, timeout=timeout)
+
+
+def run_streaming(cmd, env=None, timeout=120, echo=("GATE ", "registered check ")):
+    """Runs cmd and keeps its full stdout and stderr. Lines that start with an `echo` prefix are printed at once (flushed),
+    so the CI log shows the last gate that ended even when the run stops at the timeout. Returns (stdout, stderr, code);
+    code is None when the timeout killed the process."""
+    import threading
+    merged = dict(os.environ)
+    merged.update(env or {})
+    proc = subprocess.Popen([str(c) for c in cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=merged,
+                            errors="replace")
+    out, err = [], []
+
+    def read_out():
+        for line in proc.stdout:
+            out.append(line)
+            if line.startswith(echo):
+                print("ui-test: " + line.rstrip("\n"), flush=True)
+
+    def read_err():
+        for line in proc.stderr:
+            err.append(line)
+
+    readers = [threading.Thread(target=read_out, daemon=True), threading.Thread(target=read_err, daemon=True)]
+    for t in readers:
+        t.start()
+    try:
+        code = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        code = None
+    for t in readers:
+        t.join(timeout=5)
+    return "".join(out), "".join(err), code
 
 
 if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -406,18 +441,14 @@ else:
     ui_data.mkdir(mode=0o700)
     os.chmod(ui_data, 0o700)
     t0 = time.time()
-    ui_stdout, ui_stderr, ui_code = "", "", None
-    try:
-        ui = run([ui_bin, "--ui-test", "--ui-test-out", ui_out], env={"MOLEMONITOR_DATA_DIR": str(ui_data)}, timeout=170)
-        ui_stdout, ui_stderr, ui_code = ui.stdout, ui.stderr, ui.returncode
-    except subprocess.TimeoutExpired as e:
-        def text(x):
-            return x.decode("utf-8", "replace") if isinstance(x, bytes) else (x or "")
-        ui_stdout, ui_stderr = text(e.stdout), text(e.stderr)
+    # Time budget of the whole UI run, not a quality limit: v2 adds about 20 gates (docs/CI.md, "UI 测试总时长").
+    ui_budget = 420
+    ui_stdout, ui_stderr, ui_code = run_streaming([ui_bin, "--ui-test", "--ui-test-out", ui_out],
+                                                  env={"MOLEMONITOR_DATA_DIR": str(ui_data)}, timeout=ui_budget)
     print(f"ui-test wall time {time.time() - t0:.1f} s, exit code {ui_code}", flush=True)
     print("---- ui-test stdout ----\n" + ui_stdout[-6000:], flush=True)
     print("---- ui-test stderr (tail) ----\n" + ui_stderr[-1500:], flush=True)
-    check(ui_code is not None, "UI test finished within 170 s")
+    check(ui_code is not None, f"UI test finished within {ui_budget} s")
     report_path = ui_out / "ui-report.json"
     ui_report = json.loads(report_path.read_text()) if report_path.exists() else None
     check(ui_report is not None, "UI test wrote ui-report.json")

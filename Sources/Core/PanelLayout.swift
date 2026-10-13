@@ -22,8 +22,6 @@ enum PanelMetrics {
     static let dotColumn = 8.0, dotGap = 8.0, textColumn = 120.0, valueColumn = 92.0, sparkGap = 12.0
     static let sparkWidth = 80.0, sparkHeight = 24.0
     static let rowBackgroundWidth = 336.0
-    // COMPAT: PanelHero (v1, WP-D) still reads these two. Both give the v2 hero slot. TODO(WP-D): remove.
-    static let heroQuiet = hero, heroProblem = hero
     // Footer (DESIGN_V2.md 8.1)
     static let primaryButtonWidth = 276.0, moreButtonWidth = 36.0, footerGap = 8.0
 }
@@ -82,8 +80,8 @@ enum PanelSection: Equatable {
     case rows
     case anomaly
     case footer
-    // COMPAT: the v1 cases below are never produced. UITestBitmapChecks.swift (WP-D) still names them.
-    // TODO(WP-D): remove these two cases after UITestBitmapChecks.swift drops M21 and M22.
+    // COMPAT: the v1 cases below are never produced. Only PanelRoot.swift (WP-C) still names them.
+    // TODO(WP-C): remove these two cases and their PanelRoot switch arms.
     case problemCard(HealthItem, compact: Bool, evidenceHeight: Double)
     case problemRow(HealthItem, compact: Bool)
 }

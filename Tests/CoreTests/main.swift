@@ -584,6 +584,7 @@ runMemoryTests()
 runHoverIntentTests()
 runDogActionTests()
 runBubbleCopyTests()
+runHeroLogicTests()
 runMenuIconTests()
 runCapacityTests()
 
