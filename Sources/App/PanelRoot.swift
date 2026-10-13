@@ -101,8 +101,16 @@ struct PanelRoot: View {
     var entrance: PanelEntrance = .none
 
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var revealed: Bool
+
+    /// The window and the entrance read one Reduce Motion value. The UI regression can force it, as for the window (`PanelWindow.testReduceMotion`).
+    private var reduceMotion: Bool {
+#if UITEST
+        if let forced = PanelWindow.testReduceMotion { return forced }
+#endif
+        return systemReduceMotion
+    }
 
     init(model: PanelModel, entrance: PanelEntrance = .none) {
         self.model = model

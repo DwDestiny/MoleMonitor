@@ -934,14 +934,20 @@ final class UITestRunner {
         probe.busyWindows.append((cold.refTime - 0.05, cold.refTime + 1.6))
         await closePanelQuietly()
         // Open 2: the full entrance again, with frame captures.
+        // The CI VM can report Reduce Motion as on, and under Reduce Motion the full entrance is the same 150 ms fade as a reopen.
+        // C and I need the real full entrance (spring, 40 ms stagger, 8 pt rise), so the window and the entrance get motion here.
+        // The hero keeps the system answer (DogSpriteProbe.forceReduceMotion stays nil), so the dog loop does not hide the settle.
         PanelEntranceGate.resetForTest()
-        guard let second = await openPanel(offsets: [0, 60, 120, 200, 300, 450, 650], via: .sendAction, holdMs: 750, prefix: "open1") else {
+        PanelWindow.testReduceMotion = false
+        guard let second = await openPanel(offsets: [0, 60, 120, 200, 300, 450, 650, 900], via: .sendAction, holdMs: 1000, prefix: "open1") else {
+            PanelWindow.testReduceMotion = nil
             record("C", "入场动画在推进", false, since: now(), "The panel did not open the second time.")
             finish(abort: "The panel did not reopen for the frame captures.")
             return
         }
         stepC(second)
         await stepD(ref: second)
+        PanelWindow.testReduceMotion = nil
         await stepF()
         await stepG()
         await stepH()
@@ -1050,7 +1056,7 @@ final class UITestRunner {
         for i in 0..<Swift.max(0, shots.count - 1) {
             fractions.append(UITestPixels.compare(shots[i].shot, shots[i + 1].shot).fraction)
         }
-        // The last frame is 200 ms after the one before it, so a finished animation gives no change between them.
+        // The last frame is 250 ms after the one before it, so a finished animation gives no change between them.
         let enough = open.windowCapture && shots.count >= 5
         let moving = enough ? fractions.dropLast().filter { $0 > 0.005 }.count : 0
         let settledPixels = enough && (fractions.last ?? 1) < 0.001
@@ -1264,7 +1270,10 @@ final class UITestRunner {
     // I: reopen, J: appearance
     func stepIJ(first: OpenResult) async {
         let t0 = now()
-        guard let again = await openPanel(offsets: [0, 60, 120, 200, 300, 450, 650], via: .sendAction, holdMs: 750, prefix: "open2") else {
+        // Same motion state as the full entrance in C: the reopen plays the 150 ms fade against the full spring entrance.
+        PanelWindow.testReduceMotion = false
+        guard let again = await openPanel(offsets: [0, 60, 120, 200, 300, 450, 650, 900], via: .sendAction, holdMs: 1000, prefix: "open2") else {
+            PanelWindow.testReduceMotion = nil
             record("I", "再次打开", false, since: t0, "popover.isShown is false after the second click.")
             record("J", "深浅色", nil, since: now(), "The panel did not reopen.")
             return
@@ -1293,6 +1302,8 @@ final class UITestRunner {
                "open call \(String(format: "%.1f", again.clickMs)) ms (earlier open with the full entrance \(String(format: "%.1f", first.clickMs)) ms); settled at \(fmt(secondSettle)) ms (first open \(fmt(firstSettle)) ms); settled within 120 ms=\(settledBy120 == 1) (compared by \(usePixels ? "window pixels" : "layer values"), layer motion steps \(layerMotion(again).steps) after the reopen against \(layerMotion(first).steps) after the full entrance); longest main-thread gap after the show call \(String(format: "%.1f", gap)) ms; liveSampling at \(fmt(again.liveSeenMs)) ms",
                ["openCallMs": again.clickMs, "firstOpenCallMs": first.clickMs, "settledMs": secondSettle ?? -1,
                 "firstSettledMs": firstSettle ?? -1, "settledWithin120ms": settledBy120, "gapAfterOpenMs": gap])
+
+        PanelWindow.testReduceMotion = nil
 
         // J: light and dark
         let t1 = now()
