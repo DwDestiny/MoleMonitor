@@ -170,7 +170,10 @@ struct ChartMain: View, Equatable {
         HStack(spacing: 8) {
             ForEach(Array(data.legend.enumerated()), id: \.offset) { _, entry in
                 HStack(spacing: 4) {
-                    Capsule().fill(entry.quiet ? tok.textTertiary : lineColor).frame(width: 10, height: 2)
+                    HStack(spacing: entry.dashed ? 2 : 0) {
+                        Capsule().fill(entry.quiet ? tok.textTertiary : lineColor).frame(width: entry.dashed ? 4 : 10, height: 2)
+                        if entry.dashed { Capsule().fill(tok.textTertiary).frame(width: 4, height: 2) }
+                    }
                     Text(entry.text).font(PanelType.axis).foregroundStyle(tok.textSecondary).lineLimit(1)
                 }
             }
@@ -215,7 +218,8 @@ struct ChartMain: View, Equatable {
             ForEach(Array(data.lines.enumerated()), id: \.offset) { index, line in
                 if data.lineIsQuiet(index) {
                     ChartLineShape(data: data, line: line, style: .line, closed: false)
-                        .stroke(tok.textTertiary, style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+                        .stroke(tok.textTertiary, style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round,
+                                                                      dash: data.lineIsDashed(index) ? [4, 3] : []))
                 } else {
                     if data.style == .area {
                         ChartLineShape(data: data, line: line, style: .area, closed: true).fill(tok.chartFill)

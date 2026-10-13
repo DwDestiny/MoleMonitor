@@ -97,6 +97,8 @@ struct ChartLegendEntry: Equatable {
     var text: String
     /// True: the quiet gray line. False: the main line color.
     var quiet: Bool
+    /// True: draw the line dashed. Only the second line of a chart whose lines share one scale (upload under download).
+    var dashed: Bool = false
 }
 
 struct ChartData: Equatable {
@@ -140,6 +142,10 @@ struct ChartData: Equatable {
         return lines[index].secondary || index > 0
     }
 
+    func lineIsDashed(_ index: Int) -> Bool {
+        index > 0 && index < lines.count && !lines[index].secondary
+    }
+
     /// Legend of a chart with two lines: the text and the shade of each line. Empty for a chart with one line.
     var legend: [ChartLegendEntry] {
         let shown = lines.indices.filter { lines[$0].pointCount > 0 }
@@ -154,7 +160,7 @@ struct ChartData: Equatable {
             case "CPU": text = "CPU 占用 0\u{2013}100%"
             default: break
             }
-            return ChartLegendEntry(text: text, quiet: lineIsQuiet(index))
+            return ChartLegendEntry(text: text, quiet: lineIsQuiet(index), dashed: lineIsDashed(index))
         }
     }
 

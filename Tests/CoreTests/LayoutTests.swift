@@ -234,7 +234,7 @@ func runSidebarTests() {
     input.range = .h2
     input.trend = TrendSeries(segments: [(0..<10).map { TrendPoint(t: now.addingTimeInterval(-Double(9 - $0) * 30), rx: 2_000_000, tx: 100_000) }])
     let net2 = SidebarChart.make(input)
-    expect(net2.legend.map { $0.text } == ["\u{2193} 下行", "\u{2191} 上行"] && net2.legend.map { $0.quiet } == [false, true], "network legend with arrows, got \(net2.legend)")
+    expect(net2.legend.map { $0.text } == ["\u{2193} 下行", "\u{2191} 上行"] && net2.legend.map { $0.quiet } == [false, true] && net2.legend.map { $0.dashed } == [false, true], "network legend with arrows, got \(net2.legend)")
     input.item = .memory
     input.trend = TrendSeries(segments: [(0..<10).map { TrendPoint(t: now.addingTimeInterval(-Double(9 - $0) * 30), swapUsed: 9_800_000_000, pressurePercent: 80) }])
     let mem2 = SidebarChart.make(input)
