@@ -148,15 +148,45 @@ enum UITestWindowChecks {
 
     // MARK: W03 open speed and no white flash
 
+    /// One measurement of the open speed. `latencyOk` is the part that a VM stall can spoil (first visible frame <= 150 ms and
+    /// the dog region ready <= 150 ms). `otherOk` (no white flash, the dog in the first frame) must hold in every attempt.
+    private struct W03Attempt {
+        var latencyOk: Bool
+        var otherOk: Bool
+        var speedMs: Double
+        var note: String
+        var values: [String: Double]
+    }
+
+    /// W03 with at most 3 attempts for the latency (docs/CI.md, "延迟类门禁的重复测量"). The limit 150 ms is unchanged: one attempt
+    /// within the limit passes, 3 attempts above it fail. A real regression is slow every time. The flash and dog checks are not retried.
     @MainActor
     private static func w03(_ r: UITestRunner) async {
         let t0 = r.now()
+        var speeds: [String] = []
+        var last: W03Attempt?
+        for attempt in 1...3 {
+            if attempt > 1 { await r.sleepMs(300) }
+            let result = await w03Attempt(r)
+            speeds.append(fmt(result.speedMs))
+            last = result
+            if !result.otherOk { break }
+            if result.latencyOk { break }
+        }
+        guard let result = last else { return }
+        let ok = result.latencyOk && result.otherOk
+        var values = result.values
+        values["attempts"] = Double(speeds.count)
+        r.record("W03", "open speed and no white flash", ok, since: t0, "attempts \(speeds.joined(separator: "/")) ms (limit 150, best of 3; the flash and dog checks must pass in every attempt); last attempt: " + result.note, values)
+    }
+
+    @MainActor
+    private static func w03Attempt(_ r: UITestRunner) async -> W03Attempt {
         await ensureClosed(r)
         motionOn()
         let opened = openReal(r)
         guard let window = opened.window else {
-            r.record("W03", "open speed and no white flash", false, since: t0, "The panel did not open.")
-            return
+            return W03Attempt(latencyOk: false, otherOk: false, speedMs: -1, note: "The panel did not open.", values: [:])
         }
         let host = window.mainHost
         var firstVisibleMs: Double?
@@ -210,13 +240,13 @@ enum UITestWindowChecks {
         let speedMs = firstVisibleMs ?? opened.callMs
         let speedOk = speedMs <= 150
         let flashOk = (windowDiff ?? 0) <= 10 && (contentDiff ?? 0) <= 10 && (windowDiff != nil || contentDiff != nil)
-        let dogOk = (dogShare ?? 0) >= 0.01 && (dogReadyMs ?? .infinity) <= 150
-        let ok = speedOk && flashOk && dogOk
-        r.record("W03", "open speed and no white flash", ok, since: t0,
-                 "click to first visible frame \(fmt(firstVisibleMs)) ms at window alpha \(fmt(serverAlphaAtFirst, 2)) (limit 150; \(captureWorked ? "window server frame" : "window capture unavailable, call duration used")); call \(fmt(opened.callMs)) ms; window image at alpha 1 (\(fmt(fullAlphaMs)) ms) brightness \(fmt(firstLuma, 1)) (opaque share \(fmt(firstOpaqueShare * 100)) %), steady \(fmt(steadyWindow, 1)), difference \(fmt(windowDiff, 1)) (limit 10); content brightness first \(fmt(contentFirstLuma, 1)), steady \(fmt(steadyContent, 1)), difference \(fmt(contentDiff, 1)); dog region ready \(fmt(dogReadyMs)) ms, non-background share \(fmt((dogShare ?? 0) * 100, 1)) % (limit 1 %)",
-                 ["firstVisibleMs": firstVisibleMs ?? -1, "callMs": opened.callMs, "windowLumaDiff": windowDiff ?? -1,
-                  "contentLumaDiff": contentDiff ?? -1, "dogSharePercent": (dogShare ?? 0) * 100, "dogReadyMs": dogReadyMs ?? -1])
+        let dogShareOk = (dogShare ?? 0) >= 0.01
+        let dogReadyOk = (dogReadyMs ?? .infinity) <= 150
+        let note = "click to first visible frame \(fmt(firstVisibleMs)) ms at window alpha \(fmt(serverAlphaAtFirst, 2)) (limit 150; \(captureWorked ? "window server frame" : "window capture unavailable, call duration used")); call \(fmt(opened.callMs)) ms; window image at alpha 1 (\(fmt(fullAlphaMs)) ms) brightness \(fmt(firstLuma, 1)) (opaque share \(fmt(firstOpaqueShare * 100)) %), steady \(fmt(steadyWindow, 1)), difference \(fmt(windowDiff, 1)) (limit 10); content brightness first \(fmt(contentFirstLuma, 1)), steady \(fmt(steadyContent, 1)), difference \(fmt(contentDiff, 1)); dog region ready \(fmt(dogReadyMs)) ms, non-background share \(fmt((dogShare ?? 0) * 100, 1)) % (limit 1 %)"
+        let values: [String: Double] = ["firstVisibleMs": firstVisibleMs ?? -1, "callMs": opened.callMs, "windowLumaDiff": windowDiff ?? -1,
+                  "contentLumaDiff": contentDiff ?? -1, "dogSharePercent": (dogShare ?? 0) * 100, "dogReadyMs": dogReadyMs ?? -1]
         await r.closePanelQuietly()
+        return W03Attempt(latencyOk: speedOk && dogReadyOk, otherOk: flashOk && dogShareOk, speedMs: speedMs, note: note, values: values)
     }
 
     // MARK: W05 sidebar window motion
@@ -414,17 +444,40 @@ enum UITestWindowChecks {
         var problems = [String]()
         var parts = [String]()
         var steps = 0
-        func judge(_ name: String, _ t: Track, limit: Double) {
-            if let ms = t.reachedMs, ms <= limit {} else { problems.append("\(name) reached \(fmt(t.reachedMs)) ms (limit \(Int(limit)))") }
-            if t.heightDrift > 0.5 { problems.append("\(name): height changed \(fmt(t.heightDrift, 2)) pt") }
-            steps += t.steps
-            parts.append("\(name) \(fmt(t.reachedMs)) ms (\(t.steps) steps, \(t.fromServer ? "window server" : "model frame"))")
+        /// Latency of one window motion, at most 3 attempts (docs/CI.md, "延迟类门禁的重复测量"). One attempt within the limit passes.
+        /// A height change above 0.5 pt is not a latency: it fails if it happens in any attempt. `restore` brings the window back to
+        /// the state before the motion. The limit is never changed. Real regressions are slow in every attempt.
+        func measure(_ name: String, limit: Double, target: Double, timeoutMs: Double,
+                     start: () -> Void, restore: () async -> Void) async {
+            var tracks = [Track]()
+            for attempt in 1...3 {
+                let startedAt = r.now()
+                start()
+                if name == "click open" && w.pinnedSidebarItem != .memory { problems.append("click did not pin the memory sidebar") }
+                let t = await track(r, w, since: startedAt, target: target, timeoutMs: timeoutMs, h0: h0)
+                tracks.append(t)
+                if let ms = t.reachedMs, ms <= limit { break }
+                if attempt < 3 { await restore() }
+            }
+            let good = tracks.first { ($0.reachedMs ?? .infinity) <= limit } ?? tracks[tracks.count - 1]
+            if tracks.contains(where: { $0.heightDrift > 0.5 }) {
+                problems.append("\(name): height changed \(fmt(tracks.map { $0.heightDrift }.max() ?? 0, 2)) pt")
+            }
+            if let ms = good.reachedMs, ms <= limit {} else { problems.append("\(name) reached \(fmt(good.reachedMs)) ms (limit \(Int(limit)), best of \(tracks.count) attempts)") }
+            steps += good.steps
+            let attemptText = tracks.map { fmt($0.reachedMs) }.joined(separator: "/")
+            parts.append("\(name) attempts \(attemptText) ms (\(good.steps) steps, \(good.fromServer ? "window server" : "model frame"))")
         }
         let motionLimit = reduceMotion ? 150.0 : 250.0
         // Hover: 350 ms of rest, then the window grows. Judged 400 ms after the start plus the limit of the motion.
-        let hoverStart = r.now()
-        w.testPointer(.row(.cpu), at: NSPoint(x: 200, y: h0 / 2))
-        judge("hover open", await track(r, w, since: hoverStart, target: 672, timeoutMs: 1300, h0: h0), limit: 400 + motionLimit)
+        await measure("hover open", limit: 400 + motionLimit, target: 672, timeoutMs: 1300,
+                      start: { w.testPointer(.row(.cpu), at: NSPoint(x: 200, y: h0 / 2)) },
+                      restore: {
+                          w.reportCloseButton()
+                          await r.sleepMs(700)
+                          w.testPointerLeave()
+                          await r.sleepMs(300)
+                      })
         // Inside the visible frame and below the menu bar.
         if let visible, visible.width >= 672, let f = serverBounds(w) {
             let screenHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -436,17 +489,29 @@ enum UITestWindowChecks {
                 problems.append("expanded frame \(NSStringFromRect(f)) leaves the visible frame \(NSStringFromRect(visible))")
             }
         }
-        let closeStart = r.now()
-        w.reportCloseButton()
-        judge("close", await track(r, w, since: closeStart, target: 352, timeoutMs: 700, h0: h0), limit: motionLimit)
+        await measure("close", limit: motionLimit, target: 352, timeoutMs: 700,
+                      start: { w.reportCloseButton() },
+                      restore: {
+                          // Open it again by hover (the pointer left before), then wait for the full width.
+                          w.testPointerLeave()
+                          await r.sleepMs(300)
+                          w.testPointer(.row(.cpu), at: NSPoint(x: 200, y: h0 / 2))
+                          _ = await track(r, w, since: r.now(), target: 672, timeoutMs: 1300, h0: h0)
+                          await r.sleepMs(150)
+                      })
         await r.sleepMs(120)
-        let clickStart = r.now()
-        w.reportClick(.memory)
-        if w.pinnedSidebarItem != .memory { problems.append("click did not pin the memory sidebar") }
-        judge("click open", await track(r, w, since: clickStart, target: 672, timeoutMs: 700, h0: h0), limit: motionLimit)
-        let click2Start = r.now()
-        w.reportClick(.memory)
-        judge("click close", await track(r, w, since: click2Start, target: 352, timeoutMs: 700, h0: h0), limit: motionLimit)
+        await measure("click open", limit: motionLimit, target: 672, timeoutMs: 700,
+                      start: { w.reportClick(.memory) },
+                      restore: {
+                          w.reportClick(.memory)
+                          await r.sleepMs(700)
+                      })
+        await measure("click close", limit: motionLimit, target: 352, timeoutMs: 700,
+                      start: { w.reportClick(.memory) },
+                      restore: {
+                          w.reportClick(.memory)
+                          await r.sleepMs(700)
+                      })
         if !reduceMotion && steps < 4 { problems.append("the window server showed only \(steps) intermediate widths in four motions: the frame animation is not visible") }
         // Frame-by-frame drift of the main column.
         var visualNote = "visual drift not measured"
@@ -597,25 +662,56 @@ enum UITestWindowChecks {
         await r.sleepMs(350)
 
         // 4. A fast pointer across three rows never opens the sidebar (above 0.6 pt/ms).
-        w.testPointerEnter()
+        //    The step is 100 pt, so the nominal speed with a 10 ms sleep is 10 pt/ms. A VM stall or the row change render (about 100 ms on the CI VM) can stretch one step. The measured
+        //    time between two moves decides: if any step is slower than 0.9 pt/ms (the limit 0.6 plus 50 %), the pass is void and
+        //    is done again, at most 3 times. If all 3 passes are void, the check fails: the sweep was never fast.
         let rows: [SidebarItem] = [.cpu, .memory, .disk]
+        let stepPt = 100.0
+        let minSweepSpeed = 0.9
         var everOpen = false
-        var y = 120.0
-        for row in rows {
-            for _ in 0..<8 {
-                y += 25
-                w.testPointer(.row(row), at: NSPoint(x: 120, y: y))
-                if w.shownSidebarItem != nil { everOpen = true }
+        var validPasses = 0
+        var voidPasses = 0
+        var slowestStep = Double.infinity
+        for _ in 0..<3 {
+            var closeTries = 0
+            while w.shownSidebarItem != nil && closeTries < 10 { w.testPointerLeave(); await r.sleepMs(300); closeTries += 1 }
+            w.testPointerEnter()
+            var y = 120.0
+            var lastT: Double? = nil
+            var passSlowest = Double.infinity
+            var passOpen = false
+            for row in rows {
+                for _ in 0..<8 {
+                    y += stepPt
+                    let t = r.now()
+                    if let l = lastT { passSlowest = Swift.min(passSlowest, stepPt / Swift.max(0.001, (t - l) * 1000)) }
+                    lastT = t
+                    w.testPointer(.row(row), at: NSPoint(x: 120, y: y))
+                    if w.shownSidebarItem != nil { passOpen = true }
+                    await r.sleepMs(10)
+                }
+            }
+            w.testPointer(.neutral, at: NSPoint(x: 120, y: y + stepPt))
+            let sweepEnd = r.now()
+            while (r.now() - sweepEnd) * 1000 < 600 {
+                if w.shownSidebarItem != nil { passOpen = true }
                 await r.sleepMs(10)
             }
+            slowestStep = Swift.min(slowestStep, passSlowest)
+            if passSlowest < minSweepSpeed {
+                voidPasses += 1
+            } else {
+                validPasses += 1
+                everOpen = passOpen
+                w.testPointerLeave()
+                break
+            }
+            w.testPointerLeave()
         }
-        w.testPointer(.neutral, at: NSPoint(x: 120, y: y + 25))
-        let sweepEnd = r.now()
-        while (r.now() - sweepEnd) * 1000 < 600 {
-            if w.shownSidebarItem != nil { everOpen = true }
-            await r.sleepMs(10)
-        }
-        if everOpen { problems.append("a fast pass over three rows opened the sidebar") }
+        if validPasses == 0 { problems.append("test environment too slow: no fast sweep was produced in 3 passes (slowest step \(fmt(slowestStep, 2)) pt/ms, needs at least \(minSweepSpeed))") }
+        else if everOpen { problems.append("a fast pass over three rows opened the sidebar") }
+        values["fastPassVoid"] = Double(voidPasses)
+        values["fastPassSlowestStepSpeed"] = slowestStep.isFinite ? slowestStep : -1
         values["fastPassOpened"] = everOpen ? 1 : 0
         w.testPointerLeave()
         await r.sleepMs(200)
@@ -638,7 +734,7 @@ enum UITestWindowChecks {
 
         let ok = problems.isEmpty
         r.record("W06", "hover intent in the window", ok, since: t0,
-                 "rest: no open at 200 ms (\(!openedEarly)), open at \(fmt(openMs)) ms; switch \(fmt(switchMs)) ms; close after leaving \(fmt(leaveMs)) ms; fast pass over 3 rows opened=\(everOpen); pinned sidebar held 5 s=\(!pinLost)"
+                 "rest: no open at 200 ms (\(!openedEarly)), open at \(fmt(openMs)) ms; switch \(fmt(switchMs)) ms; close after leaving \(fmt(leaveMs)) ms; fast pass over 3 rows opened=\(everOpen) (valid \(validPasses), void \(voidPasses), slowest step \(fmt(slowestStep, 2)) pt/ms); pinned sidebar held 5 s=\(!pinLost)"
                  + (ok ? "" : " PROBLEMS: " + problems.joined(separator: " / ")), values)
         await r.closePanelQuietly()
     }

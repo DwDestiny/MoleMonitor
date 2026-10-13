@@ -1,7 +1,7 @@
 ---
 title: "MoleMonitor scripts"
 type: module
-last_updated: 2026-10-11
+last_updated: 2026-10-13
 ---
 
 # scripts
@@ -11,9 +11,10 @@ last_updated: 2026-10-11
 | 脚本 | 平台 | 用途 |
 |---|---|---|
 | `build.py` | 仅 Mac（arm64，macOS 14+） | 编译 App 与 CLI，组装并签名 `dist/MoleMonitor.app`。加 `--ui-test` 则构建 `dist-uitest/MoleMonitor.app` |
-| `ci_acceptance.py` | 仅 arm64 macOS | 回归门禁：对已构建的 App 做签名、自检、真实采样、CLI 读回、预览图和界面回归检查 |
-| `test_core.py` | Linux 与 Mac | 编译并运行 `Tests/CoreTests/`，共 4171 条断言 |
-| `test_cli.py` | Linux 与 Mac | 编译 `molemonitor-cli`，运行 116 项检查 |
+| `ci_acceptance.py` | 仅 arm64 macOS | 回归门禁：对已构建的 App 做签名、自检、真实采样、CLI 读回、预览图和界面回归检查，并按门禁登记表汇总 |
+| `test_core.py` | Linux 与 Mac | 编译并运行 `Tests/CoreTests/`，共 5127 条断言 |
+| `test_cli.py` | Linux 与 Mac | 编译 `molemonitor-cli`，运行 124 项检查 |
+| `check_sprites.py` | Linux 与 Mac（需要 Pillow 与 numpy） | 门禁 W11 的像素部分：检查 `Resources/DogSprites/` 的条带与 manifest。加 `--sheet-dir 目录` 输出联系表。不在 CI 里运行，开发者在本机运行 |
 
 ## build.py
 
@@ -35,7 +36,7 @@ last_updated: 2026-10-11
 
 ## ci_acceptance.py
 
-在 arm64 macOS 上，先运行 `python3 scripts/build.py` 和 `python3 scripts/build.py --ui-test`，再运行 `python3 scripts/ci_acceptance.py`。其他平台上脚本直接退出。例外：`python3 scripts/ci_acceptance.py --self-test` 在任何系统上检查门禁登记表（见 [CI.md](../docs/CI.md) 的“v2 门禁登记表”）。`build.py --ui-test` 还会生成 UI 检查登记文件，`build.py` 在 `Resources/DogSprites` 存在时把它复制进应用包。环境变量 `MOLEMONITOR_CI_OUT` 指定输出目录，默认是系统临时目录。
+在 arm64 macOS 上，先运行 `python3 scripts/build.py` 和 `python3 scripts/build.py --ui-test`，再运行 `python3 scripts/ci_acceptance.py`。其他平台上脚本直接退出。例外：`python3 scripts/ci_acceptance.py --self-test` 在任何系统上检查门禁登记表（见 [CI.md](../docs/CI.md) 的“v2 门禁登记表”）。`build.py --ui-test` 还会生成 UI 检查登记文件，`build.py` 在 `Resources/DogSprites` 存在时把它复制进应用包。环境变量 `MOLEMONITOR_CI_OUT` 指定输出目录，默认是系统临时目录。环境变量 `MOLEMONITOR_CORE_LOG` 指向 Core 测试日志，W13、W20、W21 读取它。
 
 脚本按以下顺序检查：
 
@@ -44,10 +45,12 @@ last_updated: 2026-10-11
 3. 22 秒真实无界面采样，以及实时采样探针（状态卡打开时开启，关闭后停止）。报告含引擎的 `diagnosticSnapshot`（打开、关闭、结束三个时刻）。脚本核对内存压力、热状态、swap、前台 App、覆盖率、芯片、提示词设置、定时器数与进程扫描周期。
 4. 数据文件权限（目录 0700，文件 0600）。
 5. CLI 读回与只读，CLI 耗时（30 次）。
-6. 28 张预览 PNG：7 个场景、浅深两种外观、满数据与空数据。宽 656 像素，高度对应三档（332、560、620 pt），文件两两不同（M1、M3）。
-7. 发布二进制不含测试代码。`Panel*.swift` 的每个按钮有标识符和中文标签，且不含 `Timer` 与 `TimelineView`。
-8. 运行测试变体的 `--ui-test`，核对项 A 至 L，以及状态卡门禁 M2、M3、M4、M5、M6、M11、M12、M13，以及真实引擎门禁 N1、N2，菜单栏图标 M14，比熊渲染 M19，矢量比熊 M19V，位图比熊 M20。项的含义见 [CI.md](../docs/CI.md)。
-9. 核对 `Contents/Resources/DogArt` 内的 8 个文件与源文件逐字节相同，审计 `DogBitmapView.swift` 不含定时器与逐帧视图，运行比熊门禁（`--dog-gallery --dog-checks`：DA 至 DF、BA 至 BE）并检查 4 张联系表。
+6. 28 张预览 PNG：7 个场景、浅深两种外观、满数据与空数据。宽 704 像素（352 pt），所有文件同高（524 pt 对应的像素），文件两两不同（M1、M3）。
+7. 发布二进制不含测试代码。`Panel*.swift` 的每个按钮有标识符和中文标签，`Panel*.swift` 与 `DogSpriteView.swift` 不含 `Timer` 与 `TimelineView`。
+8. 运行测试变体的 `--ui-test`，总时间预算 420 秒（原因见 [CI.md](../docs/CI.md) “UI 测试总时长”）。核对已激活的 `ui` 门禁（W06 的快速扫过测量实际间隔，作废的扫过重做，见 CI.md）：项 A 至 L，M4 至 M6、M11 至 M14、M19、M19V、M20、M21、N1、N2，以及 v2 门禁 W01 至 W12、W14、W15、W17、W18、W19、W22。M2、M3、M22 的结果取自 W02。脚本把每个 `GATE` 行立即打印到日志。项的含义见 CI.md。
+   然后读取 Core 测试日志（环境变量 `MOLEMONITOR_CORE_LOG`），评估 W13、W20、W21。
+9. 核对 `Contents/Resources/DogArt` 内的 8 个文件与源文件逐字节相同，审计 `DogBitmapView.swift` 不含定时器与逐帧视图，运行比熊门禁（`--dog-gallery --dog-checks`：DA 至 DF、BA 至 BF）并检查 4 张联系表。
+10. 输出门禁汇总，例如 `GATE REGISTRY: <通过> passed / 0 failed / 1 inactive (未激活) / 1 skipped`。已激活的门禁没有结果算失败。未激活的门禁（W16）列为“未激活”，不算通过，也不使 CI 失败。同一个编号报告两次时，失败不会被后一次通过覆盖。
 
 脚本不安装 App，不修改登录项。运行 `--ui-test` 时，状态卡会在屏幕上显示约 30 秒，使用临时数据目录。结果是回归门禁，不是真机验收。
 

@@ -1209,10 +1209,25 @@ extension UITestRunner {
         if model.sidebarItem != nil { problems.append("the sidebar opened after 200 ms") }
         await sleepMs(250)
         if model.sidebarItem != .cpu { problems.append("the sidebar did not open after 450 ms") }
-        // Case 2: with the sidebar open, a move to another row switches within 200 ms.
-        model.pointerMoved(.row(.memory), at: CGPoint(x: 100, y: 340))
-        let switched = await waitFor(timeoutMs: 400) { model.sidebarItem == .memory }
-        if switched == nil || (switched ?? 999) > 200 + 20 { problems.append("the switch took \(Int(switched ?? -1)) ms") }
+        // Case 2: with the sidebar open, a move to another row switches within 200 ms (the limit is 200 ms plus 20 ms of margin).
+        // Latency gate: at most 3 attempts, one attempt within the limit passes, the numbers of all attempts are in the note
+        // (docs/CI.md, "延迟类门禁的重复测量"). A real regression is slow in every attempt. Case 1 and case 3 are not repeated.
+        var switchAttempts = [Double]()
+        var switchPassed = false
+        for attempt in 1...3 {
+            model.pointerMoved(.row(.memory), at: CGPoint(x: 100, y: 340))
+            let switched = await waitFor(timeoutMs: 400) { model.sidebarItem == .memory }
+            switchAttempts.append(switched ?? -1)
+            if let ms = switched, ms <= 200 + 20 { switchPassed = true; break }
+            if attempt < 3 {
+                // Back to the first row and wait until its sidebar shows, then try again.
+                model.pointerMoved(.row(.cpu), at: CGPoint(x: 100, y: 300))
+                _ = await waitFor(timeoutMs: 600) { model.sidebarItem == .cpu }
+                await sleepMs(300)
+            }
+        }
+        let switchText = switchAttempts.map { $0 < 0 ? "none" : String(Int($0)) }.joined(separator: "/")
+        if !switchPassed { problems.append("the switch took \(switchText) ms in 3 attempts (limit 220)") }
         // Leaving the panel closes the sidebar after 1.0 +- 0.1 s.
         let tLeave = now()
         model.pointerLeft()
@@ -1229,7 +1244,7 @@ extension UITestRunner {
         if model.sidebarItem != nil { problems.append("a fast pass over 3 rows opened the sidebar") }
         model.panelDidClose()
         await closeFixture()
-        var note = "3 synthetic mouse cases on the fixture model: stay 200/450 ms, switch within 200 ms, close after leave \(String(format: "%.2f", closeSeconds)) s, fast pass"
+        var note = "3 synthetic mouse cases on the fixture model: stay 200/450 ms, switch within 200 ms (attempts \(switchText) ms), close after leave \(String(format: "%.2f", closeSeconds)) s, fast pass"
         if !problems.isEmpty { note += ". failures: " + problems.joined(separator: "; ") }
         record("W06", "悬停意图（UI 部分）", problems.isEmpty, since: t0, note, ["closeSeconds": closeSeconds])
     }

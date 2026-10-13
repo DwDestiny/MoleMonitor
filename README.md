@@ -1,14 +1,14 @@
 ---
 title: "MoleMonitor · 只读菜单栏监控"
 type: project
-last_updated: 2026-10-12
+last_updated: 2026-10-13
 ---
 
 # MoleMonitor
 
 MoleMonitor 是 macOS 菜单栏上的轻量状态监测与预警工具。它只检测和预警，不做清理。清理由用户的 agent 调用 [Mole](https://github.com/tw93/Mole) CLI 完成。
 
-> **注意**：功能代码已经写完。`Sources/Core/` 与 CLI 已在 Linux 上测试。`Sources/App/` 已在 GitHub Actions 的 macOS 虚拟机上通过回归门禁（见 [docs/CI.md](docs/CI.md)），但尚未在用户的 Mac 上人工验收。状态卡与比熊的设计见 [docs/DESIGN.md](docs/DESIGN.md)，产品范围见 [docs/PROJECT.md](docs/PROJECT.md)，验证范围见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
+> **注意**：功能代码已经写完。`Sources/Core/` 与 CLI 已在 Linux 上测试。`Sources/App/` 已在 GitHub Actions 的 macOS 虚拟机上通过回归门禁（见 [docs/CI.md](docs/CI.md)），但尚未在用户的 Mac 上人工验收。面板 v2（NSPanel 窗口、侧栏、序列帧比熊、菜单栏五态）已实现并合并到 `main`，设计见 [docs/DESIGN_V2.md](docs/DESIGN_V2.md)。旧设计见 [docs/DESIGN.md](docs/DESIGN.md)（被取代的章节有标记）。产品范围见 [docs/PROJECT.md](docs/PROJECT.md)，验证范围见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
 
 ## 功能
 
@@ -16,9 +16,9 @@ MoleMonitor 是只读的 macOS 14+ 菜单栏健康哨兵。它检查 CPU、内�
 
 | 位置 | 内容 |
 |---|---|
-| 菜单栏 | 比熊头像剪影加类别角标。状态变化时播放一次短动画 |
-| 状态卡 | 安静模式（没有问题）和问题模式（有问题）。问题卡带 2 小时曲线与已持续时间。占用 App 前 5 名。“复制给 Agent”按钮。尺寸与版面见 [docs/DESIGN.md](docs/DESIGN.md) 第 2 章 |
-| 比熊 | AI 生成的位图姿态，姿态切换时 0.22 秒淡入，没有连续动画。素材许可状态见 [docs/ASSETS.md](docs/ASSETS.md) |
+| 菜单栏 | 比熊头像剪影加类别角标，五个状态：正常、留意、异常、采集中、过期。状态变化时播放一次短动画 |
+| 状态卡 | 自定义窗口，主列四段：英雄区、六行分项、异常区、底栏。点击或悬停一行，右侧展开侧栏，显示 24 小时、7 天、30 天曲线、容量和排行。“复制给 Agent”按钮。版面见 [docs/DESIGN_V2.md](docs/DESIGN_V2.md) |
+| 比熊 | AI 生成的序列帧动画，10 个动作。CPU 越高跑得越快，温度、内存、磁盘、耗电各有表现。素材许可状态见 [docs/ASSETS.md](docs/ASSETS.md) |
 | 系统通知 | 磁盘、内存、CPU、温度、耗电的异常，带冷却时间与全局上限 |
 | CLI | `molemonitor-cli` 读取状态，输出 JSON 或一行中文。`prompt` 命令输出排查提示词 |
 
@@ -84,8 +84,8 @@ dist/MoleMonitor.app/Contents/Helpers/molemonitor-cli prompt --topic cpu
 
 | 范围 | 状态 |
 |---|---|
-| `Sources/Core/`、CLI | 在 Linux 上通过测试：Core 4171 条断言，CLI 116 项检查 |
-| `Sources/App/` | 在 CI 的 macOS 虚拟机上构建并通过回归门禁（最新绿色主分支运行见 [VERIFICATION.md](docs/VERIFICATION.md) 条目 6）。不是真机验收 |
+| `Sources/Core/`、CLI | 在 Linux 上通过测试：Core 5127 条断言，CLI 124 项检查 |
+| `Sources/App/` | 在 CI 的 macOS 虚拟机上构建并通过回归门禁（v2 的 CI 记录见 [VERIFICATION.md](docs/VERIFICATION.md) 条目 7）。不是真机验收 |
 | 动效手感、真机 CPU、观感、真实菜单栏位置、通知授权框、剪贴板、电池行、网卡计数器的特殊场景 | 未验证，需要用户在自己的 Mac 上确认。清单见 [docs/HANDOFF.md](docs/HANDOFF.md) |
 
 详情见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
@@ -98,7 +98,7 @@ dist/MoleMonitor.app/Contents/Helpers/molemonitor-cli prompt --topic cpu
 | [Tests/](Tests) | Core 与 CLI 的测试源码 |
 | [scripts/](scripts/README.md) | 本地构建、测试与 CI 回归门禁脚本 |
 | [.github/workflows/build-mac.yml](.github/workflows/build-mac.yml) | GitHub Actions 回归门禁，说明见 [docs/CI.md](docs/CI.md) |
-| [docs/ASSETS.md](docs/ASSETS.md) | 比熊位图素材来源与许可说明 |
+| [docs/ASSETS.md](docs/ASSETS.md) | 比熊素材来源与许可说明 |
 | [Vendor/NOTICE.md](Vendor/NOTICE.md) | 第三方许可与归属 |
 | [docs/](docs/README.md) | 产品设计、验证摘要、接手说明、CI 说明 |
 | [AGENTS.md](AGENTS.md) | 开发协作约定 |
