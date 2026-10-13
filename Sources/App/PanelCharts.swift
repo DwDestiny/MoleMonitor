@@ -55,9 +55,9 @@ enum ChartProbeHook {
 
 enum ChartMetrics {
     static let width: CGFloat = 287
-    static let height: CGFloat = 128
+    static let height: CGFloat = 118
     /// The plot area. The rest below holds the time axis (10 pt).
-    static let plotHeight: CGFloat = 110
+    static let plotHeight: CGFloat = 100
     static let axisHeight: CGFloat = 18
 }
 

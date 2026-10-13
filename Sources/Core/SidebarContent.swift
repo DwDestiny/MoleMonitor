@@ -787,7 +787,9 @@ enum SidebarFootnote {
         case .cpu:
             return ["单个 App 以单核满载为 100%，多核可超过 100%。"]
         case .memory:
-            return ["压力百分比是近似读数，颜色以系统压力档位为准。", "已用 = App 内存 + 联动内存 + 压缩内存，与活动监视器口径相近。"]
+            // The second line of the design ("已用 = App 内存 + 联动内存 + 压缩内存") was dropped: the legend under the bar names the same
+            // three parts, and the page must fit 524 pt (gate W23).
+            return ["压力百分比是近似读数，颜色以系统压力档位为准。"]
         case .disk:
             var out = [String]()
             let cap = CapacityFormat.disk(current)

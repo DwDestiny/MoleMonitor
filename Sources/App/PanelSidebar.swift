@@ -310,7 +310,7 @@ private struct CapacityArea: View {
             }
             legend
         }
-        .frame(width: PanelMetrics.sidebarContentWidth, height: 76, alignment: .topLeading)
+        .frame(width: PanelMetrics.sidebarContentWidth, height: 72, alignment: .topLeading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(cap.accessibilityText))
         .accessibilityIdentifier("cap.area")
@@ -353,7 +353,7 @@ private struct RankingView: View {
             Text(table.title)
                 .font(PanelType.section)
                 .foregroundStyle(tok.textSecondary)
-                .frame(height: 24, alignment: .leading)
+                .frame(height: 20, alignment: .leading)
                 .accessibilityIdentifier("rank.title")
             if let empty = table.emptyText {
                 Text(empty)
@@ -443,21 +443,14 @@ private struct RecordsView: View {
 
 // MARK: - Scroll state
 
-/// Height of the content and the distance scrolled, read inside the sidebar scroll view.
-struct SideScrollMetrics: Equatable {
-    var content: CGFloat
-    var offset: CGFloat
+/// The rule of the bottom fade of the sidebar scroll view.
+enum SideScrollMetrics {
     static let fadeHeight: CGFloat = 28
 
     /// True when content lies below the visible part: the content is taller than the room, and the end is not reached yet.
     static func hasMore(content: CGFloat, offset: CGFloat, room: CGFloat) -> Bool {
         content > room + 0.5 && offset + room < content - 1
     }
-}
-
-private struct SideScrollKey: PreferenceKey {
-    static var defaultValue = SideScrollMetrics(content: 0, offset: 0)
-    static func reduce(value: inout SideScrollMetrics, nextValue: () -> SideScrollMetrics) { value = nextValue() }
 }
 
 // MARK: - Sidebar
@@ -502,7 +495,7 @@ struct PanelSidebarView: View {
             }
         }
         .padding(.top, 8)
-        .padding(.bottom, 12)
+        .padding(.bottom, 8)
         .frame(width: PanelMetrics.sidebarContentWidth, alignment: .topLeading)
     }
 
@@ -514,15 +507,14 @@ struct PanelSidebarView: View {
                 content(state)
                     .uiTestFrame("side.content")
                     .background(GeometryReader { proxy in
-                        Color.clear.preference(key: SideScrollKey.self,
-                                               value: SideScrollMetrics(content: proxy.size.height, offset: -proxy.frame(in: .named("sideScroll")).minY))
+                        let frame = proxy.frame(in: .named("sideScroll"))
+                        Color.clear
+                            .onAppear { refreshFade(content: proxy.size.height, offset: -frame.minY, room: room.size.height) }
+                            .onChange(of: frame) { _, now in refreshFade(content: proxy.size.height, offset: -now.minY, room: room.size.height) }
+                            .onChange(of: room.size.height) { _, height in refreshFade(content: proxy.size.height, offset: -frame.minY, room: height) }
                     })
             }
             .coordinateSpace(name: "sideScroll")
-            .onPreferenceChange(SideScrollKey.self) { metrics in
-                let more = SideScrollMetrics.hasMore(content: metrics.content, offset: metrics.offset, room: room.size.height)
-                if more != moreBelow { moreBelow = more }
-            }
             .overlay(alignment: .bottom) {
                 if moreBelow {
                     LinearGradient(colors: [PanelTokens.surface(dark: tok.dark).opacity(0), PanelTokens.surface(dark: tok.dark)],
@@ -535,6 +527,12 @@ struct PanelSidebarView: View {
             }
         }
         .uiTestFrame("side.scroll")
+    }
+
+    /// Sets `moreBelow` from the measured sizes. The state changes only when the answer changes, so scrolling does not redraw the sidebar.
+    private func refreshFade(content: CGFloat, offset: CGFloat, room: CGFloat) {
+        let more = SideScrollMetrics.hasMore(content: content, offset: offset, room: room)
+        if more != moreBelow { moreBelow = more }
     }
 
     var body: some View {
