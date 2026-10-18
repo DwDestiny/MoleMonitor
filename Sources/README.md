@@ -89,13 +89,13 @@ last_updated: 2026-10-18
 | `PanelRoot.swift` | 面板根视图：主列（352 pt：标题块、分项区、记录行、底栏）和打开时的侧栏（320 pt）。按版面计划渲染，不排序。主列没有分隔线，只用间距。入场动画：每次启动一次完整入场，之后淡入 |
 | `PanelWindow.swift` | `PanelWindow`：自定义 `NSPanel`，取代 `NSPopover`。窗口放在菜单栏图标下，开关动效，点击与按键，事件监视器（只在显示时存在），侧栏窗口动画，侧栏悬停规则。无周期定时器，延迟调用是可取消的任务。实现 `PanelChrome`，调用 `PanelPinning` |
 | `PanelChrome.swift` | 窗口与内容之间的两个协议：`PanelChrome`（窗口服务内容）、`PanelPinning`（内容服务窗口）。只有协议，无 AppKit 类型 |
-| `PanelRows.swift` | 主列的分项区：最多 3 个问题行（72 pt，等级底色，17 pt 数值，一句人话原因，行内曲线），其下两列正常行（28 pt，✓、名称、数值，无曲线） |
+| `PanelRows.swift` | 主列的分项区：最多 3 个问题行（72 pt，等级底色，17 pt 数值，一句人话原因，行内曲线只有线和端点，没有面积填充），其下两列正常行（28 pt，✓、名称、数值，无曲线） |
 | `PanelAnomaly.swift` | 主列的记录行，28 pt：只有“近 7 天 N 条记录 ›”，点击打开侧栏的异常记录。采集中为空 |
 | `PanelSidebar.swift` | 侧栏列（320 pt）：标题、范围控件、图表、统计、容量区、排行、脚注、异常记录。只在侧栏打开时构建，关闭即释放 |
-| `PanelHero.swift` | 标题块 320 × 64 pt：一句话，`PanelType.lead`（17 pt），最多 2 行。背后是预渲染的状态光（352 × 96 pt，黄 10%、红 12%、深色 16%，正常无光，等级变化 400 ms 交叉淡变）。采集中超过 0.5 s 才显示标题。签名 `PanelHero(data:quiet:)` |
+| `PanelHero.swift` | 标题块 320 × 64 pt：一句话，`PanelType.lead`（17 pt），最多 2 行。没有背景，没有状态光（第 2 轮评审后删除，见 docs/CI.md）。采集中超过 0.5 s 才显示标题。签名 `PanelHero(data:quiet:)` |
 | `PanelCharts.swift` | 数字过渡修饰器和面板共用的小工具。侧栏图表用 `Path` 手绘，不用 Swift Charts（W07） |
 | `PanelFooter.swift` | 底栏：一个主按钮 `btn.copy`（复制提示词或巡检请求）和“…”按钮及其 `NSMenu`（菜单项标识符 `menu.*`）。按钮样式 |
-| `PanelTokens.swift` | 颜色、字号、动效、尺寸令牌（含 `rowFill`、`rowBackground`、`rowBar`），格式化函数，灯，流式布局 |
+| `PanelTokens.swift` | 颜色、字号（17、13、11、10 pt，没有调用方的令牌已删除）、动效、尺寸令牌（含 `rowFill`、`rowBackground`、`rowBar`），格式化函数，灯，流式布局 |
 | `PanelPreview.swift` | `--preview` 渲染静态图：主列 28 张（7 个场景，浅深两种外观，满数据与空数据，352 pt 宽，2 倍），侧栏各项加异常记录，在 `multi` 场景上 |
 | `UITestPanelChecks.swift` | 面板界面门禁 M4 至 M6、M11 至 M14、M19（无占位文本）、N1、N2，W16（关闭零成本，U10 起在本文件），以及 W01、W02（取代 M2、M3、M22）、W07、W09、W19、W22。整个文件在 `#if UITEST` 内 |
 | `UITestHarness.swift` | 界面回归测试代码（检查 A 至 L）和登记检查的运行器。整个文件在 `#if UITEST` 内，只存在于 `scripts/build.py --ui-test` 的变体 |

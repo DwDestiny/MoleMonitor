@@ -70,10 +70,6 @@ struct PanelTokens {
     /// The 3 pt bar at the left edge of the selected row. Neutral too.
     var selectedBar: Color { pick(Color(.sRGB, white: 0, opacity: 0.55), Color(.sRGB, white: 1, opacity: 0.65)) }
 
-    // v3 status light (DESIGN_V3.md 1.3): the level color of the lamp at 10 % (yellow) or 12 % (red) in light, 16 % in dark.
-    var heroGlowWarning: Color { pick(Self.rgb(0xC26400, 0.10), Self.rgb(0xFF9F0A, 0.16)) }
-    var heroGlowDanger: Color { pick(Self.rgb(0xE5302A, 0.12), Self.rgb(0xFF453A, 0.16)) }
-
     /// Value color of a row: level color for a problem, primary gray otherwise (DESIGN_V2.md 5.1).
     func valueColor(_ level: HealthLevel, problem: Bool) -> Color {
         guard problem else { return textPrimary }
@@ -177,14 +173,10 @@ extension EnvironmentValues {
 
 // MARK: - Type and motion
 
+/// The one v2 font token that still has a caller (the sidebar). The old display (28), title (20) and callout (12) sizes are deleted
+/// (docs/DESIGN_V3.md 2.1).
 enum PanelFont {
-    static let display = Font.system(size: 28, weight: .semibold, design: .rounded)
-    static let title = Font.system(size: 20, weight: .semibold, design: .rounded)
-    static let headline = Font.system(size: 13, weight: .semibold)
     static let body = Font.system(size: 13)
-    static let callout = Font.system(size: 12, weight: .medium)
-    static let footnote = Font.system(size: 11)
-    static let caption = Font.system(size: 10)
 }
 
 enum PanelMotion {
@@ -212,28 +204,19 @@ enum PanelRadius {
     static let control: CGFloat = 8
 }
 
-/// Type sizes of the v2 panel (DESIGN_V2.md 3.2). A screen of the main column uses only 17, 13, 11 and 10 pt.
+/// Type tokens of the panel (docs/DESIGN_V3.md 2.1). A screen uses only 17, 13, 11 and 10 pt. Tokens without a caller are deleted.
 enum PanelType {
-    /// v3 lead size (docs/DESIGN_V3.md 2.1): bubble text, problem-row value, sidebar title. On an all-green panel it appears only in the bubble.
+    /// v3 lead size (docs/DESIGN_V3.md 2.1): the headline block and the sidebar title. On an all-green panel it appears only in the headline.
     static let lead = Font.system(size: 17, weight: .semibold)
-    static let leadMono = Font.system(size: 17, weight: .semibold).monospacedDigit()
-    static let bubble = Font.system(size: 13, weight: .medium)
     static let rowName = Font.system(size: 13, weight: .medium)
     static let rowNote = Font.system(size: 11)
     static let rowValue = Font.system(size: 17, weight: .semibold).monospacedDigit()
-    /// Value of a normal row: same size, lighter weight (design check 2026-10-12).
-    static let rowValueQuiet = Font.system(size: 17, weight: .regular).monospacedDigit()
-    static let rowPrefix = Font.system(size: 11)
     static let section = Font.system(size: 11, weight: .semibold)
     static let anomalyTitle = Font.system(size: 13, weight: .medium)
     static let duration = Font.system(size: 13, weight: .medium).monospacedDigit()
-    static let sideTitle = Font.system(size: 17, weight: .semibold)
-    static let sideStat = Font.system(size: 17, weight: .semibold).monospacedDigit()
-    static let sideStatLabel = Font.system(size: 10)
     static let readout = Font.system(size: 11, weight: .semibold).monospacedDigit()
     static let axis = Font.system(size: 10).monospacedDigit()
     static let button = Font.system(size: 13, weight: .semibold)
-    static let buttonSub = Font.system(size: 11)
     /// The sizes in pt that the rows, the anomaly area and the footer may use (gate W02).
     static let allowedSizes: Set<Double> = [17, 13, 11, 10]
 }

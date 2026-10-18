@@ -85,7 +85,7 @@ dist/MoleMonitor.app/Contents/Helpers/molemonitor-cli prompt --topic cpu
 |---|---|
 | `Sources/Core/`、CLI | 在 Linux 上通过测试：Core 5074 条断言，CLI 124 项检查 |
 | `Sources/App/` | 在 CI 的 macOS 虚拟机上构建并通过回归门禁（v2 的 CI 记录见 [VERIFICATION.md](docs/VERIFICATION.md) 条目 7）。不是真机验收 |
-| 爪印章手感、菜单栏奔跑观感、状态光、侧栏动画、真机 CPU、观感、真实菜单栏位置、通知授权框、剪贴板、电池行、网卡计数器的特殊场景 | 未验证，需要用户在自己的 Mac 上确认。清单见 [docs/HANDOFF.md](docs/HANDOFF.md) |
+| 爪印章手感、菜单栏奔跑观感、侧栏动画、真机 CPU、观感、真实菜单栏位置、通知授权框、剪贴板、电池行、网卡计数器的特殊场景 | 未验证，需要用户在自己的 Mac 上确认。清单见 [docs/HANDOFF.md](docs/HANDOFF.md) |
 
 详情见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
 
