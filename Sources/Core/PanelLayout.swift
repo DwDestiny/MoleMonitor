@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Health verdicts and the battery flag (docs/DESIGN_V3.md 3.3, 5; docs/DESIGN_V2.md 2.2, 5.2).
-// Output: A PanelLayoutPlan: the row order, the anomaly items, the exact panel height (all green, 6 items: 332 pt with a 152 pt hero).
+// Output: A PanelLayoutPlan: the row order, the anomaly items, the exact panel height (all green, 6 items: 332 pt with a 132 pt hero, 352 pt with the 152 pt hero of this branch).
 // Pos: Pure layout planning of the panel; the SwiftUI views only render the plan. Foundation only.
 //      The height changes with the number of expanded problem rows (at most 3) and the battery flag. The hero height is read from PanelMetrics.hero.
 
@@ -15,8 +15,6 @@ enum PanelMetrics {
     static let windowRadius = 12.0
     // Heights (DESIGN_V3.md 3.3). `hero` and `heroGap` are owned by the hero package; the formula only reads them.
     static let topPadding = 12.0, hero = 152.0, heroGap = 8.0
-    /// How far the dog's feet reach into the list (DESIGN_V3.md 4). The hero view draws it as overflow above the rows.
-    static let heroOverlap = 6.0
     /// Problem row: 64 pt, 4 pt between two, at most 3 expanded (the fourth problem falls back to the quiet style).
     static let problemRow = 64.0, problemRowGap = 4.0, maxProblemRows = 3
     /// Quiet row: 28 pt, two columns.

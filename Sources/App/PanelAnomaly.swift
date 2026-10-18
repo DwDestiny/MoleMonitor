@@ -114,7 +114,7 @@ private struct EntryLink: View {
                 .contentShape(shape)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(label))
+        .accessibilityLabel(Text(label.isEmpty ? "异常记录" : label))
         .accessibilityIdentifier(identifier)
         .onHover { hovering = $0 }
         .animation(PanelMotion.hover, value: hovering)
