@@ -5,7 +5,8 @@
 //         (`labelColor`), solid (eye and drooping-ear gap cleared) or hollow (outer contour only, no ear gap), with the health mark (yellow triangle, red square) or the data mark (collecting,
 //         stale) bottom right; frame bitmaps cached by pose, kind, light or dark and scale; the NSImage of a frame.
 // Pos: The one renderer of the menu bar icon. StatusIconController shows its images; UITestIconChecks (W29) draws the
-//      contact sheet from it. Vector paths only, no bitmap assets. Owner P-icon (v3, U10).
+//      contact sheet from it. Vector paths only, no bitmap assets. Owner P-icon (v3, U10). Q4 moved `MenuIconInk` here
+//      from the deleted DogShapes.swift.
 //
 // All drawing here uses y-down coordinates (the bitmap context is flipped before drawing).
 
@@ -237,4 +238,56 @@ final class MenuRunnerFrameCache {
         image.cacheMode = .never
         return image
     }
+}
+
+/// Inks of one menu bar icon (DESIGN_V2.md 9.2 rule 2): `head` draws the head and the data mark (the menu bar text color,
+/// or black in a template image, where only alpha counts); `warning` and `danger` draw the yellow glyph and the red disc
+/// (tokens `dot.warning` and `dot.danger` of DESIGN_V2.md 3.3, light or dark by the menu bar appearance).
+struct MenuIconInk {
+    var head: CGColor
+    var warning: CGColor
+    var danger: CGColor
+
+    /// One color for everything (a template image, or a gallery cell in one ink).
+    static func mono(_ c: CGColor) -> MenuIconInk { MenuIconInk(head: c, warning: c, danger: c) }
+    static let template = mono(CGColor(gray: 0, alpha: 1))
+
+    static func hex(_ h: UInt32, alpha: CGFloat = 1) -> CGColor {
+        CGColor(srgbRed: CGFloat((h >> 16) & 0xFF) / 255, green: CGFloat((h >> 8) & 0xFF) / 255,
+                blue: CGFloat(h & 0xFF) / 255, alpha: alpha)
+    }
+
+    /// The badge colors of a light or dark menu bar, with the given head ink.
+    static func colored(dark: Bool, head: CGColor) -> MenuIconInk {
+        MenuIconInk(head: head, warning: hex(MenuIconPalette.hex(.warning, dark: dark)),
+                    danger: hex(MenuIconPalette.hex(.danger, dark: dark)))
+    }
+
+    /// Dark when the appearance is a dark one (dark aqua, vibrant dark, and their high contrast variants).
+    static func isDark(_ appearance: NSAppearance) -> Bool {
+        let match = appearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark,
+                                                .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua,
+                                                .accessibilityHighContrastVibrantLight, .accessibilityHighContrastVibrantDark])
+        return match == .darkAqua || match == .vibrantDark || match == .accessibilityHighContrastDarkAqua
+            || match == .accessibilityHighContrastVibrantDark
+    }
+
+    /// `labelColor` resolved for an appearance, in sRGB.
+    static func labelColor(_ appearance: NSAppearance) -> CGColor {
+        var c = CGColor(gray: isDark(appearance) ? 1 : 0, alpha: 0.85)
+        appearance.performAsCurrentDrawingAppearance {
+            if let srgb = NSColor.labelColor.usingColorSpace(.sRGB) { c = srgb.cgColor }
+        }
+        return c
+    }
+
+    /// The inks for an appearance: head in `labelColor`, badges in the tokens of that appearance.
+    static func resolved(_ appearance: NSAppearance) -> MenuIconInk {
+        colored(dark: isDark(appearance), head: labelColor(appearance))
+    }
+
+    /// The inks for the appearance AppKit draws with now (inside an NSImage drawing handler: the menu bar button's).
+    // UNVERIFIED-ON-MAC: the status bar button draws its image with its own effective appearance (light or dark menu
+    // bar, which follows the wallpaper on macOS 14). CI checks the drawing under forced aqua and darkAqua only.
+    static func current() -> MenuIconInk { resolved(NSAppearance.currentDrawing()) }
 }

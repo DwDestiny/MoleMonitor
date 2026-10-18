@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: None (hand-written art data, docs/DESIGN.md 4.2, 8.1).
-// Output: Bezier path data for the dog parts, the menu bar head and the corner badge glyphs.
+// Output: Bezier path data for the dog parts and the corner badge, data mark and alarm glyphs (the menu bar head art
+//         was deleted by Q4, 2026-10-18: MenuRunner.swift draws the menu bar icon).
 // Pos: Art assets: numbers, names and enums. No drawing code. Foundation only. Owner WP-E (menu bar art; the card art is
 //      shared with WP-D's vector fallback). DogRig never changes the shapes.
 //
 // Coordinates: the card dog uses a 120 x 90 u box, origin top left, y down, the dog faces right, ground y = 82.
-// The menu bar head uses a 24 x 18 pt box, y down: the head fills x 0 to 15 (raised: to 16, it tilts right).
 // Attention (yellow): the 8 x 8 pt outline glyph sits at x 16 to 24, y 9 to 17.
 // Alarm (red): a 9 x 9 pt solid disc at x 15 to 24, y 9 to 18, the glyph knocked out of it (round 3).
 // Data marks (v2, DESIGN_V2.md 9.2): collecting (three dots) and stale (clock) use the same 8 x 8 pt box as the yellow glyph.
@@ -77,20 +77,8 @@ enum DogArt {
     static let bubbleShrink = 0.86
     static let bubbleShrinkAnchor: (x: Double, y: Double) = (20, 84)
 
-    static let menuSize: (w: Double, h: Double) = (24, 18)
-    /// Right edge of the menu head (pt). The head stays inside x 0 to 15 with and without a badge.
-    static let menuHeadWidth = 15.0
-    /// Top-left corner of the 8 x 8 pt badge box in the menu head box (y down): x 16 to 24, y 9 to 17.
-    static let menuBadgeOrigin: (x: Double, y: Double) = (16, 9)
     static let badgeSize = 8.0
-    /// Right edge of the raised head (pt): the head tilts right 6 degrees and may reach x 16, still left of the badge.
-    static let menuRaisedWidth = 16.0
-    /// Alarm (red) badge: a 9 x 9 pt solid disc, the glyph knocked out (round 3). Box x 15 to 24, y 9 to 18.
-    /// Only the pant head goes with it; the pant head stays inside x 0 to 15.
-    static let alarmOrigin: (x: Double, y: Double) = (15, 9)
     static let alarmSize = 9.0
-    /// The menu tongue is drawn at this opacity, so it reads lighter than the face (round 3).
-    static let menuTongueAlpha = 0.55
 
     /// The 4 key poses of the card version: lie, stand, one trot frame, pant.
     static func parts(for base: DogBasePose) -> [DogPart] {
@@ -126,16 +114,6 @@ enum DogArt {
         switch o {
         case .bubble: return bubble
         case .sweat: return sweat
-        }
-    }
-
-    /// The menu bar head: relaxed, raised ears, tongue out. Design box 24 x 18 pt, y down.
-    /// `hollow` uses the relaxed art; the renderer draws it as a 1.5 pt inner ring of the silhouette.
-    static func menuHead(_ posture: MenuPosture) -> [DogPart] {
-        switch posture {
-        case .relaxed, .hollow: return menuRelaxed
-        case .raised: return menuRaised
-        case .pant: return menuPant
         }
     }
 
@@ -308,32 +286,6 @@ enum DogArt {
     static let sweat: [DogPart] = [
         DogPart(name: "fx.sweat1", ops: ops("M 62.5 16.13 C 63.16 17.46 64.4 18.79 64.4 20.5 C 64.4 21.55 63.55 22.4 62.5 22.4 C 61.45 22.4 60.6 21.55 60.6 20.5 C 60.6 18.79 61.84 17.46 62.5 16.13 Z"), pivot: (62.5, 20.5), role: .effect, layer: 130),
         DogPart(name: "fx.sweat2", ops: ops("M 58 24.78 C 58.49 25.76 59.4 26.74 59.4 28 C 59.4 28.77 58.77 29.4 58 29.4 C 57.23 29.4 56.6 28.77 56.6 28 C 56.6 26.74 57.51 25.76 58 24.78 Z"), pivot: (58, 28), role: .effect, layer: 130),
-    ]
-
-    /// Menu bar head, relaxed: one union silhouette in x 0..16, face cutouts. 24 x 18 pt box, y down.
-    static let menuRelaxed: [DogPart] = [
-        DogPart(name: "head", ops: ops("M 7.5 2.1 C 7.77 1.09 10.52 1.83 10.25 2.84 C 10.93 2.13 12.84 3.98 12.16 4.69 C 12.41 4.66 12.54 5.87 12.3 5.9 C 12.48 5.58 14.38 6.68 14.2 7 C 14.92 6.94 15.22 10.54 14.5 10.6 C 15.35 10.81 14.55 14.01 13.7 13.8 C 13.76 14.28 12.16 14.48 12.1 14 C 12.15 13.85 11.05 13.45 11 13.6 C 11.18 13.92 9.58 14.82 9.4 14.5 C 9.44 14.88 7.54 15.08 7.5 14.7 C 7.46 15.08 5.56 14.88 5.6 14.5 C 5.42 14.82 3.82 13.92 4 13.6 C 3.95 13.45 2.85 13.85 2.9 14 C 2.84 14.48 1.24 14.28 1.3 13.8 C 0.45 14.01 -0.35 10.81 0.5 10.6 C -0.22 10.54 0.08 6.94 0.8 7 C 0.62 6.68 2.52 5.58 2.7 5.9 C 2.46 5.87 2.59 4.66 2.84 4.69 C 2.16 3.98 4.07 2.13 4.75 2.84 C 4.48 1.83 7.23 1.09 7.5 2.1 Z"), pivot: (7.5, 8.5), role: .fur, layer: 0),
-        DogPart(name: "cut.eyeLeft", ops: ops("M 6.45 8.5 C 6.45 9.02 6.02 9.45 5.5 9.45 C 4.98 9.45 4.55 9.02 4.55 8.5 C 4.55 7.98 4.98 7.55 5.5 7.55 C 6.02 7.55 6.45 7.98 6.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.eyeRight", ops: ops("M 10.45 8.5 C 10.45 9.02 10.02 9.45 9.5 9.45 C 8.98 9.45 8.55 9.02 8.55 8.5 C 8.55 7.98 8.98 7.55 9.5 7.55 C 10.02 7.55 10.45 7.98 10.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.nose", ops: ops("M 8.65 11.4 C 8.65 11.9 8.14 12.3 7.5 12.3 C 6.86 12.3 6.35 11.9 6.35 11.4 C 6.35 10.9 6.86 10.5 7.5 10.5 C 8.14 10.5 8.65 10.9 8.65 11.4 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-    ]
-
-    /// Menu bar head, raised: one union silhouette in x 0..16, face cutouts. 24 x 18 pt box, y down.
-    static let menuRaised: [DogPart] = [
-        DogPart(name: "head", ops: ops("M 8.72 2.14 C 9.1 1.16 11.75 2.18 11.38 3.16 C 12.13 2.53 13.84 4.57 13.08 5.2 C 13.28 5.17 13.41 6.1 13.23 6.13 C 13.39 5.83 15.2 6.82 15.03 7.13 C 15.47 7.01 16.05 9.18 15.61 9.3 C 16.14 9.47 15.55 11.22 15.02 11.05 C 14.88 11.38 13.63 10.85 13.77 10.51 C 13.85 10.7 12.91 11.1 12.83 10.91 C 12.37 10.67 10.87 13.42 11.33 13.67 C 11.53 14.08 9.51 15.07 9.31 14.67 C 9.31 15.05 7.4 15.05 7.4 14.67 C 7.32 15.04 5.46 14.65 5.54 14.27 C 5.26 14.62 3.49 13.23 3.77 12.88 C 4.27 12.73 3.38 9.72 2.88 9.87 C 2.76 10.04 1.92 9.45 2.04 9.28 C 2.11 9.64 0.78 9.9 0.7 9.54 C 0.15 9.6 -0.06 7.77 0.49 7.71 C 0.09 7.51 1.11 5.5 1.51 5.7 C 1.41 5.37 3.39 4.77 3.48 5.11 C 3.31 5.04 3.63 4.16 3.82 4.23 C 3.21 3.45 5.31 1.81 5.91 2.59 C 5.75 1.55 8.56 1.11 8.72 2.14 Z"), pivot: (7.5, 8.5), role: .fur, layer: 0),
-        DogPart(name: "cut.eyeLeft", ops: ops("M 7.45 8.29 C 7.45 8.81 7.02 9.24 6.5 9.24 C 5.98 9.24 5.55 8.81 5.55 8.29 C 5.55 7.77 5.98 7.34 6.5 7.34 C 7.02 7.34 7.45 7.77 7.45 8.29 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.eyeRight", ops: ops("M 11.45 8.71 C 11.45 9.23 11.02 9.66 10.5 9.66 C 9.98 9.66 9.55 9.23 9.55 8.71 C 9.55 8.19 9.98 7.76 10.5 7.76 C 11.02 7.76 11.45 8.19 11.45 8.71 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.nose", ops: ops("M 9.65 11.39 C 9.65 11.89 9.14 12.29 8.5 12.29 C 7.86 12.29 7.35 11.89 7.35 11.39 C 7.35 10.89 7.86 10.49 8.5 10.49 C 9.14 10.49 9.65 10.89 9.65 11.39 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-    ]
-
-    /// Menu bar head, pant: one union silhouette in x 0..16, face cutouts. 24 x 18 pt box, y down.
-    static let menuPant: [DogPart] = [
-        DogPart(name: "head", ops: ops("M 7.5 2.1 C 7.77 1.09 10.52 1.83 10.25 2.84 C 10.87 2.17 12.68 3.86 12.06 4.52 C 12.15 4.44 12.6 4.91 12.5 5 C 12.5 4.56 14.15 4.56 14.15 5 C 14.93 4.91 15.23 7.51 14.45 7.6 C 14.98 7.8 14.23 9.8 13.7 9.6 C 13.74 9.8 12.74 10 12.7 9.8 C 12.54 9.81 12.64 11.41 12.8 11.4 C 13.18 11.68 11.78 13.58 11.4 13.3 C 11.64 13.7 9.64 14.9 9.4 14.5 C 9.44 14.88 7.54 15.08 7.5 14.7 C 7.46 15.08 5.56 14.88 5.6 14.5 C 5.36 14.9 3.36 13.7 3.6 13.3 C 3.22 13.58 1.82 11.68 2.2 11.4 C 2.36 11.41 2.46 9.81 2.3 9.8 C 2.26 10 1.26 9.8 1.3 9.6 C 0.77 9.8 0.02 7.8 0.55 7.6 C -0.23 7.51 0.07 4.91 0.85 5 C 0.85 4.56 2.5 4.56 2.5 5 C 2.4 4.91 2.85 4.44 2.94 4.52 C 2.32 3.86 4.13 2.17 4.75 2.84 C 4.48 1.83 7.23 1.09 7.5 2.1 Z"), pivot: (7.5, 8.5), role: .fur, layer: 0),
-        DogPart(name: "cut.eyeLeft", ops: ops("M 6.45 8.5 C 6.45 9.02 6.02 9.45 5.5 9.45 C 4.98 9.45 4.55 9.02 4.55 8.5 C 4.55 7.98 4.98 7.55 5.5 7.55 C 6.02 7.55 6.45 7.98 6.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.eyeRight", ops: ops("M 10.45 8.5 C 10.45 9.02 10.02 9.45 9.5 9.45 C 8.98 9.45 8.55 9.02 8.55 8.5 C 8.55 7.98 8.98 7.55 9.5 7.55 C 10.02 7.55 10.45 7.98 10.45 8.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.nose", ops: ops("M 8.65 10.5 C 8.65 11 8.14 11.4 7.5 11.4 C 6.86 11.4 6.35 11 6.35 10.5 C 6.35 10 6.86 9.6 7.5 9.6 C 8.14 9.6 8.65 10 8.65 10.5 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "cut.mouth", ops: ops("M 5.4 12.4 C 5.7 12.2 6.8 12.8 7.5 12.8 C 8.2 12.8 9.3 12.2 9.6 12.4 C 9.9 12.6 9.65 13.63 9.3 14 C 8.95 14.37 8.1 14.6 7.5 14.6 C 6.9 14.6 6.05 14.37 5.7 14 C 5.35 13.63 5.1 12.6 5.4 12.4 Z"), pivot: (0, 0), role: .cutout, layer: 0),
-        DogPart(name: "tongue", ops: ops("M 6 14.3 C 6.27 14.03 7 14 7.5 14 C 8 14 8.73 14.03 9 14.3 C 9.27 14.57 9.35 15.23 9.1 15.6 C 8.85 15.97 8.03 16.5 7.5 16.5 C 6.97 16.5 6.15 15.97 5.9 15.6 C 5.65 15.23 5.73 14.57 6 14.3 Z"), pivot: (0, 0), role: .tongue, layer: 0),
     ]
 
     /// Badge glyph: cpu. 8 x 8 pt box, y down, on the 1x pixel grid.

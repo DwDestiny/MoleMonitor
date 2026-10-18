@@ -63,9 +63,8 @@ last_updated: 2026-10-13
 | `NotificationPlanner.swift` | 通知规则：按送达顺序决定要发的通知 |
 | `MenuIconModel.swift` | 健康状态到菜单栏图标状态（姿态与角标）及无障碍文字的映射，不含绘制 |
 | `MenuRunner.swift` | 菜单栏奔跑图标（v3）：姿态（站立、奔跑 4 帧）、侧视比熊剪影的基本图形、奔跑迟滞（≥35% 开始，连续 2 个 tick <25% 停止）、三档速度、动效条件、提示文字后缀 |
-| `DogArt.swift` | 比熊各部件、菜单栏头部和角标图形的贝塞尔路径数据，不含绘制 |
-| `DogRig.swift` | 比熊动画数学：每帧的部件变换参数与变换后的图层列表。`DogRig.bubbleLayers` 单独给出关注气泡的图层（位图比熊用） |
-| `DogArtPose.swift` | 位图比熊的选图：`DogArtPose`（8 个姿态）与 `DogArtSelector`（平滑、迟滞、最短保持 4 秒，无定时器，由调用方逐个数据点推进）。规则见 [DESIGN.md 4.9](../docs/DESIGN.md#49-位图阶段) |
+| `DogArt.swift` | 旧比熊部件与角标、数据标记、告警字形的贝塞尔路径数据，不含绘制。菜单栏头部已删除（Q4）；`GlyphPaths.swift` 仍用角标与标记 |
+| `DogRig.swift` | 旧比熊动画数学与 `DogInput`（`PanelModel`、`PreviewScenario` 仍用 `DogInput`）。菜单栏切换动画 `MenuMotion` 已删除（Q4） |
 | `BubbleCopy.swift` | 面板标题文案的唯一来源：`BubbleInput` 到 `BubbleText`（主行、证据、等级）。标题 17 pt、内容宽 320 pt，每行不超过 18.4 em，最多 2 行，长句在逗号处换行。采集中写“正在检查，已完成 N/6 项”。类型名沿用 Bubble*，气泡本身已删除（U10） |
 | `HeroLogic.swift` | 标题块的纯逻辑：`HeroFacts`（从判定与读数取文案输入和证据）、`HeroProgress`（6 项读数到齐几项）、`HeroBrain`（标题文本，数字 30 秒内不变）。比熊动作、点按、彩蛋已删除（U10） |
 
@@ -81,9 +80,7 @@ last_updated: 2026-10-13
 | `Clipboard.swift` | 把文本写入通用剪贴板，触控板上给一次轻触反馈 |
 | `ProcessSampler.swift` | 用 libproc 读进程列表，输出 `ProcessSample` 与覆盖率。排名在 Core 的 `AppRanking` |
 | `SystemSampler.swift` | 读每核 CPU tick、网卡计数器、内存压力和机器信息。取代旧的 `LiveSampler` |
-| `DogShapes.swift` | 用 Core Graphics 绘制状态卡比熊和菜单栏模板图标，路径只建一次并缓存 |
 | `GlyphPaths.swift` | 类别角标路径，菜单栏角标、气泡和卡片类别图标共用 |
-| `GlyphGrids.swift` | 菜单栏图标的角标、数据标记和告警字形在 1x 下的 alpha 栅格（`UITestIconChecks.swift` 用它们做异或矩阵）。从已删除的 `DogGallery.swift` 保留下来 |
 | `UITestIconChecks.swift` | 菜单栏图标门禁 W08（9 个场景对手写期望表，浅深色头部墨迹与角标颜色，五态两两异或）和门禁 A 的辅助函数 `headInkCheck`。整个文件在 `#if UITEST` 内 |
 | `UITestWindowChecks.swift` | 窗口门禁 W03（打开速度、无白闪）、W05（侧栏窗口动效）、W06（窗口内悬停意图）、W10（Esc 层级与关闭）。整个文件在 `#if UITEST` 内 |
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
@@ -115,4 +112,4 @@ last_updated: 2026-10-13
 
 比熊的序列帧与位图素材（`Resources/DogSprites/`、`Resources/DogArt/`）已于 2026-10-18 删除（U10）。`scripts/build.py` 不再复制资源，包内没有 `Contents/Resources/DogArt`。
 
-测试源码在 [Tests/](../Tests)：`CoreTests/` 测 Core（含 `DogArtPoseTests.swift`、`BubbleCopyTests.swift`、`HeroLogicTests.swift`、`HoverIntentTests.swift`），`CliTests/make_status/` 生成 CLI 测试数据。
+测试源码在 [Tests/](../Tests)：`CoreTests/` 测 Core（含 `BubbleCopyTests.swift`、`HeroLogicTests.swift`、`HoverIntentTests.swift`），`CliTests/make_status/` 生成 CLI 测试数据。
