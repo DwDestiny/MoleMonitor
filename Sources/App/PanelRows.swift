@@ -77,7 +77,7 @@ private struct SparkLineShape: Shape {
     }
 }
 
-/// The area under each run, down to the bottom of the rect (10 % of the line color, DESIGN_V3.md 5.1).
+/// The area under each run, down to the bottom of the rect (a 14 % to 0 fade of the line color, DESIGN_V3.md 5.1).
 private struct SparkAreaShape: Shape {
     let series: SparkSeries
 
@@ -136,7 +136,7 @@ private struct SparkEndRingShape: Shape {
     }
 }
 
-/// The curve inside a problem row: 304 x 16 pt, a 1.5 pt line, a 10 % area and a solid end dot. The series arrives fitted (SparkFit).
+/// The curve inside a problem row: 304 x 16 pt, a 1.5 pt line, a fading area and a solid end dot. The series arrives fitted (SparkFit).
 /// A stale series draws dashed in the third-level text color with a hollow end dot.
 struct SparkView: View {
     let series: SparkSeries
@@ -159,7 +159,9 @@ struct SparkView: View {
                     .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .butt, lineJoin: .round, dash: [3, 2.5]))
                 SparkEndRingShape(series: series).stroke(color, lineWidth: 1.25)
             } else {
-                SparkAreaShape(series: series).fill(color.opacity(0.10))
+                // The area fades from 14 % under the line to 0 at the band bottom, so it has no hard box edge inside the tint.
+                SparkAreaShape(series: series)
+                    .fill(LinearGradient(colors: [color.opacity(0.14), color.opacity(0)], startPoint: .top, endPoint: .bottom))
                 SparkLineShape(series: series)
                     .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                 SparkEndShape(series: series).fill(color)
