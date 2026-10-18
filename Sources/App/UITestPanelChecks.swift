@@ -1092,15 +1092,12 @@ extension UITestRunner {
                 }
                 let state = model.sidebarContent(for: item)
                 guard let cap = state.capacity else { problems.append("\(c.rawValue) \(item.rawValue): no capacity area"); continue }
-                let totalRect = sideRect("cap.total"), usedRect = sideRect("cap.used"), availableRect = sideRect("cap.available")
-                guard let totalRect, let usedRect, let availableRect else {
+                // v3 (docs/DESIGN_V3.md 6, docs/CI.md W19 v3 entry): one bar and one line of numbers, no three-column stat block.
+                guard let barRect = sideRect("cap.bar"), let lineRect = sideRect("cap.line") else {
                     problems.append("\(c.rawValue) \(item.rawValue): capacity frames missing")
                     continue
                 }
-                // The three columns are 95 pt wide and right aligned: the text boxes end at the column edge (tolerance 0.5 pt).
-                let edges = [totalRect.maxX, usedRect.maxX, availableRect.maxX]
-                let gap1 = abs((edges[1] - edges[0]) - 96), gap2 = abs((edges[2] - edges[1]) - 96)
-                if gap1 > 0.5 || gap2 > 0.5 { problems.append("\(c.rawValue) \(item.rawValue): column edges \(edges) are not 96 pt apart") }
+                if lineRect.maxX > barRect.maxX + 0.5 { problems.append("\(c.rawValue) \(item.rawValue): capacity line wider than the bar") }
                 let units = [cap.total, cap.used, cap.available].map { $0.split(separator: " ").last.map(String.init) ?? "" }
                 if Set(units).count != 1 { problems.append("\(c.rawValue) \(item.rawValue): units differ \(units)") }
                 let n = [cap.total, cap.used, cap.available].map { Double($0.split(separator: " ").first ?? "") ?? -1 }
