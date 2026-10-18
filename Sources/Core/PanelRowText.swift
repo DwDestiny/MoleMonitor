@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: Health verdicts, current readings, the data state, the trend and the disk series (docs/DESIGN_V2.md 2.8, 5.3, 5.5, 7.2, 7.3, 8.1).
-// Output: PanelRowState (one breakdown row as plain texts and a dot), AnomalyBar (one anomaly row), PanelFooterState,
-//         PanelAreaState (the line of the anomaly area when it is not a list) and the mini curve data.
-// Pos: All texts of the main column in one pure place, so Linux tests check them (gates W02, W19, W21). Foundation only. Owner WP-C.
+// Input: Health verdicts, current readings, the data state, the trend and the disk series (docs/DESIGN_V3.md 5; docs/DESIGN_V2.md 2.8, 5.3, 5.5, 7.3, 8.1).
+// Output: PanelRowState (one breakdown row as plain texts and a dot, with the plain-words problem note), AnomalyBar (sidebar header data),
+//         PanelFooterState, PanelAreaState (the record row of the main column) and the mini curve data.
+// Pos: All texts of the main column in one pure place, so Linux tests check them (gates W02, W19, W21). Foundation only.
 //      A measured zero, a missing value, a collecting value and a stale value look different (DESIGN_V2.md 2.8, 5.3).
 //      A number with a unit appears in a row and never in an anomaly bar (7.3).
 
@@ -33,9 +33,17 @@ struct PanelRowState: Equatable, Identifiable {
     var value: String
     var note: String
     var status: PanelStatusKind
+    /// Line 2 of a problem row (DESIGN_V3.md 5.1): "5 天胖了 314 GB，已持续 3 小时". Nil for a row that is not a problem.
+    var problemNote: String? = nil
     var id: String { item.rawValue }
 
     var isProblem: Bool { dot == .red || dot == .yellow }
+
+    /// The value of a quiet row (DESIGN_V3.md 5.2). The pressure prefix is left out: the row name says "内存".
+    var quietValue: String {
+        if valuePrefix == "压力" { return value }
+        return measurement
+    }
 
     /// The measurement as one string, prefix included: "压力 64%". Used by the duplicate check of gate W02.
     var measurement: String {
@@ -55,7 +63,7 @@ struct PanelRowState: Equatable, Identifiable {
         case .missing: state = "无数据"
         case .failed: state = "读取失败"
         }
-        return name + "，" + state + "，" + measurement + "，" + note
+        return name + "，" + state + "，" + measurement + "，" + (problemNote ?? note)
     }
 }
 
@@ -130,7 +138,71 @@ enum PanelRows {
         case .fresh:
             if state.dot == .missing { state.status = .missing } else if state.dot == .collecting { state.status = .collecting }
         }
+        if state.isProblem && state.status == .measured {
+            state.problemNote = problemNote(item, state, code: verdict?.reasonCode ?? "", since: verdict?.since, input)
+        }
         return state
+    }
+
+    // MARK: Problem note (DESIGN_V3.md 5.1)
+
+    /// Longest app name in a problem note, in width units. A longer name is cut and ends with an ellipsis.
+    static let noteAppNameWidth = 6.0
+
+    /// "人话原因，已持续 N". The plain word is 胖了 (disk), 喘不过气 (memory), 掉电太快 (battery), 跑太久 (CPU) or 发烫 (temperature).
+    /// The measured number stays in the text.
+    static func problemNote(_ item: SidebarItem, _ state: PanelRowState, code: String, since: Date?, _ input: PanelRowsInput) -> String {
+        reason(item, state, code: code, input) + lasting(since: since, now: input.now)
+    }
+
+    /// "，已持续 3 小时", "，刚刚开始" below one minute, empty without a start time.
+    static func lasting(since: Date?, now: Date) -> String {
+        guard let since else { return "" }
+        let text = TextFormat.duration(since: since, now: now)
+        return text == "刚刚" ? "，刚刚开始" : "，已持续 " + text
+    }
+
+    private static func clipped(_ name: String) -> String {
+        var out = ""
+        for ch in name {
+            if BubbleCopy.width(out + String(ch)) > noteAppNameWidth { return out + "\u{2026}" }
+            out.append(ch)
+        }
+        return out
+    }
+
+    private static func reason(_ item: SidebarItem, _ state: PanelRowState, code: String, _ input: PanelRowsInput) -> String {
+        let c = input.current
+        switch item {
+        case .disk:
+            switch code {
+            case "growth_1d", "growth_5d", "growth_30d":
+                let days = code == "growth_1d" ? "1" : (code == "growth_5d" ? "5" : "30")
+                let amount = state.value.hasPrefix("+") ? String(state.value.dropFirst()) : state.value
+                return state.value == dash ? days + " 天胖了" : days + " 天胖了 " + amount
+            default: return "快满了，可用空间不足"
+            }
+        case .memory:
+            return code == "swap_growth" ? "喘不过气，swap 在涨" : "喘不过气"
+        case .battery:
+            if code == "sleep_drain", let rate = sleepRate(c.lastSleep) { return "掉电太快，睡眠每小时 " + String(format: "%.1f%%", rate) }
+            if code == "awake_drain", let rate = c.awakeDrainPerHour { return "掉电太快，每小时 " + String(format: "%.0f%%", rate) }
+            return "掉电太快"
+        case .cpu:
+            if code == "app_saturated" {
+                let full = state.note
+                let pct = full.split(separator: " ").last.map(String.init) ?? ""
+                let name = String(full.dropLast(pct.count)).trimmingCharacters(in: .whitespaces)
+                if name.isEmpty || pct.isEmpty || !pct.hasSuffix("%") { return "跑太久" }
+                return clipped(name) + " 跑太久 " + pct
+            }
+            return "跑太久，" + state.note
+        case .thermal:
+            if let t = c.smcCPUTemperature { return "发烫，CPU " + String(format: "%.0f", t) + " \u{00B0}C" }
+            return "发烫，热状态" + state.value
+        case .network, .anomalyLog:
+            return state.note
+        }
     }
 
     private static func dot(_ item: SidebarItem, _ v: ItemVerdict?, hasValue: Bool, _ data: DataState) -> PanelDot {
@@ -348,13 +420,14 @@ enum PanelAreaState: Equatable {
     case quiet(records: Int?)
     case collecting
     case stale(minutes: Int)
-    case anomalies
+    /// A problem row is shown. The record row then holds only the entry "近 7 天 N 条记录 ›".
+    case anomalies(records: Int?)
 
     static func make(dataState: DataState, anomalyCount: Int, records: Int?, now: Date) -> PanelAreaState {
         switch dataState {
         case .collecting: return .collecting
         case .stale(let since): return .stale(minutes: max(1, Int(now.timeIntervalSince(since) / 60)))
-        case .fresh: return anomalyCount > 0 ? .anomalies : .quiet(records: records)
+        case .fresh: return anomalyCount > 0 ? .anomalies(records: records) : .quiet(records: records)
         }
     }
 
@@ -383,25 +456,27 @@ enum PanelFooterMode: Equatable {
 struct PanelFooterState: Equatable {
     var mode: PanelFooterMode
     var title: String
-    var subtitle: String?
     var enabled: Bool
     var copiedTitle: String
     /// The bubble text after a successful copy (DESIGN_V2.md 8.1).
     var copiedBubble: String
     var failedBubble: String
 
+    /// The primary button is hidden, not disabled, while the first data is collected (DESIGN_V3.md 5.4).
+    var hidden: Bool { mode == .inspectDisabled }
+
     static func make(dataState: DataState, anomalyCount: Int) -> PanelFooterState {
         if case .collecting = dataState {
-            return PanelFooterState(mode: .inspectDisabled, title: "让 Agent 做一次日常巡检", subtitle: nil, enabled: false,
+            return PanelFooterState(mode: .inspectDisabled, title: "复制日常巡检提示词", enabled: false,
                                     copiedTitle: "\u{2713} 已复制", copiedBubble: "巡检单已复制，交给 Agent 吧",
                                     failedBubble: "没复制上，再点一次试试")
         }
         if anomalyCount > 0 {
-            return PanelFooterState(mode: .copyProblems, title: "复制排查提示词", subtitle: "粘贴给你的 Agent", enabled: true,
+            return PanelFooterState(mode: .copyProblems, title: "复制排查提示词", enabled: true,
                                     copiedTitle: "\u{2713} 已复制", copiedBubble: "已复制，去问你的 Agent 吧",
                                     failedBubble: "没复制上，再点一次试试")
         }
-        return PanelFooterState(mode: .inspect, title: "让 Agent 做一次日常巡检", subtitle: nil, enabled: true,
+        return PanelFooterState(mode: .inspect, title: "复制日常巡检提示词", enabled: true,
                                 copiedTitle: "\u{2713} 已复制", copiedBubble: "巡检单已复制，交给 Agent 吧",
                                 failedBubble: "没复制上，再点一次试试")
     }

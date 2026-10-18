@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: PanelModel (its layout plan, data and UI state) and the entrance kind.
-// Output: The whole panel: the main column (352 pt: hero, six rows, anomaly area, footer) and, when open, the sidebar (320 pt).
-// Pos: Root of the SwiftUI tree (docs/DESIGN_V2.md 2, 14.3). It renders the plan in order and never sorts.
+// Output: The whole panel: the main column (352 pt: hero, rows section, record row, footer) and, when open, the sidebar (320 pt).
+// Pos: Root of the SwiftUI tree (docs/DESIGN_V3.md 3.3; DESIGN_V2.md 2, 14.3). It renders the plan in order and never sorts.
+//      The main column has no divider: sections are separated by space only.
 //      The window (WP-B) sets the size. The content sticks to the main column side and the window clips the rest.
 //      No Timer and no TimelineView here. The view tree is destroyed when the panel closes.
 
@@ -172,9 +173,9 @@ struct PanelRoot: View {
             }
             Color.clear.frame(height: PanelMetrics.heroGap)
             staged(.rows) { PanelRowsSection(model: model) }
-            Color.clear.frame(height: PanelMetrics.rowsToAnomalyGap)
+            Color.clear.frame(height: PanelMetrics.rowsToRecordGap)
             staged(.anomaly) { PanelAnomalySection(model: model) }
-            Color.clear.frame(height: PanelMetrics.anomalyToFooterGap)
+            Color.clear.frame(height: PanelMetrics.recordToFooterGap)
             staged(.footer) { PanelFooter(model: model) }
             Color.clear.frame(height: PanelMetrics.bottomPadding)
         }

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: PanelModel (footer state, copy state, authorization, action callbacks).
-// Output: The footer: one primary button (copy the prompt or the inspection request) and the "…" button with its NSMenu.
-// Pos: Section 4 of the main column (docs/DESIGN_V2.md 8). The primary button is the only primary action of the panel: id `btn.copy`.
-//      After a copy the button shows "✓ 已复制" for 1.5 seconds. The "…" menu lists the CLI commands, the prompt option and the app items.
+// Output: The footer, one 32 pt line: with problems a solid accent button "复制排查提示词", without problems the text button
+//         "复制日常巡检提示词", hidden while collecting. Then the icon button "…" (32 x 32) with its NSMenu.
+// Pos: Section 4 of the main column (docs/DESIGN_V3.md 5.4; DESIGN_V2.md 8). The copy button is the only primary action: id `btn.copy`.
+//      After a copy the button shows "✓ 已复制" for 1.5 seconds (the paw stamp of 5.6 belongs to another package). The "…" menu lists the CLI commands, the prompt option and the app items.
 //      Menu items carry identifiers `menu.*`. The menu is an NSMenu, so the system draws it and VoiceOver reads it.
 
 import AppKit
@@ -11,29 +12,28 @@ import SwiftUI
 
 // MARK: - Button styles
 
-/// The 276 x 40 primary button. Accent fill and white text. A press scales to 0.97 in 0.1 seconds (not under Reduce Motion).
+/// The solid primary button (DESIGN_V3.md 5.4): 32 pt high, 8 pt radius, accent fill, white text. It takes the width it is given.
+/// A press scales to 0.97 (not under Reduce Motion). This is the only place that uses the accent as a fill.
 struct PanelPrimaryButtonStyle: ButtonStyle {
-    var secondary = false
-
     func makeBody(configuration: Configuration) -> some View {
-        PrimaryButtonBody(configuration: configuration, secondary: secondary)
+        PrimaryButtonBody(configuration: configuration)
     }
 }
 
 private struct PrimaryButtonBody: View {
     let configuration: ButtonStyleConfiguration
-    let secondary: Bool
     @Environment(\.tok) private var tok
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: PanelRadius.control, style: .continuous)
         configuration.label
-            .foregroundStyle(secondary ? tok.textPrimary : tok.onAccent)
-            .frame(width: PanelMetrics.primaryButtonWidth, height: PanelMetrics.footer)
-            .background(shape.fill(secondary ? tok.chartFill : tok.accentFill))
-            .overlay(shape.fill(Color.white.opacity(configuration.isPressed || secondary ? 0.0 : (hovering ? 0.10 : 0))))
+            .foregroundStyle(tok.onAccent)
+            .frame(maxWidth: .infinity)
+            .frame(height: PanelMetrics.footer)
+            .background(shape.fill(tok.accentFill))
+            .overlay(shape.fill(configuration.isPressed ? Color.clear : (hovering ? tok.veilHover : Color.clear)))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .contentShape(shape)
             .onHover { hovering = $0 }
@@ -42,7 +42,32 @@ private struct PrimaryButtonBody: View {
     }
 }
 
-/// The 36 x 40 "…" button.
+/// The text button of the all-green panel (DESIGN_V3.md 5.4): primary text, no fill, `fillHover` on hover. It is as wide as its text.
+struct PanelTextButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        TextButtonBody(configuration: configuration)
+    }
+}
+
+private struct TextButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.tok) private var tok
+    @State private var hovering = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: PanelRadius.control, style: .continuous)
+        configuration.label
+            .foregroundStyle(tok.textPrimary)
+            .padding(.horizontal, PanelMetrics.rowInset)
+            .frame(height: PanelMetrics.footer)
+            .background(shape.fill(hovering || configuration.isPressed ? tok.fillHover : Color.clear))
+            .contentShape(shape)
+            .onHover { hovering = $0 }
+            .animation(PanelMotion.hover, value: hovering)
+    }
+}
+
+/// The 32 x 32 "..." button: an icon with no fill, `fillHover` on hover.
 struct PanelMoreButtonStyle: ButtonStyle {
     var focused = false
 
@@ -58,11 +83,11 @@ private struct MoreButtonBody: View {
     @State private var hovering = false
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: PanelRadius.control, style: .continuous)
         configuration.label
             .foregroundStyle(tok.textSecondary)
             .frame(width: PanelMetrics.moreButtonWidth, height: PanelMetrics.footer)
-            .background(shape.fill(hovering || configuration.isPressed ? tok.fillHover : tok.chartFill))
+            .background(shape.fill(hovering || configuration.isPressed ? tok.fillHover : Color.clear))
             .overlay(shape.strokeBorder(tok.accent, lineWidth: 1.5).opacity(focused ? 1 : 0))
             .contentShape(shape)
             .onHover { hovering = $0 }
@@ -207,10 +232,17 @@ struct PanelFooter: View {
         let state = model.footerState
         let copied = !model.copied.isEmpty
         HStack(spacing: PanelMetrics.footerGap) {
-            primary(state, copied: copied)
+            if state.hidden {
+                Spacer(minLength: 0)
+            } else if state.mode == .copyProblems {
+                primary(state, copied: copied)
+            } else {
+                primary(state, copied: copied)
+                Spacer(minLength: 0)
+            }
             moreButton
         }
-        .frame(width: PanelMetrics.contentWidth, height: PanelMetrics.footer)
+        .frame(width: PanelMetrics.rowBackgroundWidth, height: PanelMetrics.footer)
         .overlay(hiddenQuit)
         .hoverRegion(.neutral, model: model)
         .accessibilityElement(children: .contain)
@@ -224,46 +256,47 @@ struct PanelFooter: View {
         }
     }
 
+    /// The label of the primary button. The three texts stack in one place, so the button keeps its size when the text changes.
+    private func label(_ state: PanelFooterState, copied: Bool, failed: Bool) -> some View {
+        ZStack(alignment: state.mode == .copyProblems ? .center : .leading) {
+            Text(state.title)
+                .font(PanelType.button)
+                .lineLimit(1)
+                .opacity(copied || failed ? 0 : 1)
+                .uiTestFrame("txt.btn.title")
+            Text(state.copiedTitle)
+                .font(PanelType.button)
+                .lineLimit(1)
+                .opacity(copied ? 1 : 0)
+                .uiTestFrame("txt.btn.copied")
+            Text("没复制上，再点一次试试")
+                .font(PanelType.button)
+                .lineLimit(1)
+                .opacity(failed ? 1 : 0)
+        }
+        .animation(PanelMotion.fadeShort, value: copied)
+    }
+
+    @ViewBuilder
     private func primary(_ state: PanelFooterState, copied: Bool) -> some View {
         let failed = model.copyFailed
-        return Button(action: { model.copy(.primary) }) {
-            ZStack {
-                VStack(spacing: 1) {
-                    Text(state.title)
-                        .font(PanelType.button)
-                        .lineLimit(1)
-                        .uiTestFrame("txt.btn.title")
-                    if let sub = state.subtitle {
-                        Text(sub)
-                            .font(PanelType.buttonSub)
-                            .opacity(0.85)
-                            .lineLimit(1)
-                    }
-                }
-                .opacity(copied || failed ? 0 : 1)
-                Text(state.copiedTitle)
-                    .font(PanelType.button)
-                    .lineLimit(1)
-                    .opacity(copied ? 1 : 0)
-                    .uiTestFrame("txt.btn.copied")
-                Text("没复制上，再点一次试试")
-                    .font(PanelType.button)
-                    .lineLimit(1)
-                    .opacity(failed ? 1 : 0)
-            }
-            .animation(PanelMotion.fadeShort, value: copied)
+        let button = Button(action: { model.copy(.primary) }) {
+            label(state, copied: copied, failed: failed)
         }
-        .buttonStyle(PanelPrimaryButtonStyle(secondary: state.mode == .inspectDisabled))
         .focusEffectDisabled()
         .disabled(!state.enabled)
-        .opacity(state.enabled ? 1 : 0.4)
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .overlay(RoundedRectangle(cornerRadius: PanelRadius.control, style: .continuous)
             .strokeBorder(tok.accent, lineWidth: 1.5).padding(-2)
             .opacity(model.keyFocus == .primary ? 1 : 0))
         .keyboardShortcut("c")
         .accessibilityIdentifier("btn.copy")
-        .accessibilityLabel(Text(copied ? "已复制" : state.title + (state.subtitle.map { "，" + $0 } ?? "")))
+        .accessibilityLabel(Text(copied ? "已复制" : state.title))
         .uiTestFrame("btn.copy")
+        if state.mode == .copyProblems {
+            button.buttonStyle(PanelPrimaryButtonStyle())
+        } else {
+            button.buttonStyle(PanelTextButtonStyle())
+        }
     }
 
     @ViewBuilder
