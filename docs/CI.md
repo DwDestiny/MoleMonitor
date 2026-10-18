@@ -15,13 +15,13 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 | 步骤 | 内容 |
 |---|---|
 | 1. Toolchain | 输出系统版本、芯片、Xcode 和 `swiftc` 版本 |
-| 2. Core and CLI tests | `scripts/test_core.py`（5127 条断言，输出同时写入 `$RUNNER_TEMP/core-tests.log`）与 `scripts/test_cli.py`（124 项检查） |
+| 2. Core and CLI tests | `scripts/test_core.py`（4968 条断言，输出同时写入 `$RUNNER_TEMP/core-tests.log`）与 `scripts/test_cli.py`（124 项检查） |
 | 3. Build app | `python3 scripts/build.py`，输出 `dist/` |
 | 4. Build UI test variant | `python3 scripts/build.py --ui-test`，输出 `dist-uitest/` |
 | 5. Acceptance and UI regression gate | `python3 scripts/ci_acceptance.py`，检查项见 [scripts/README.md](../scripts/README.md) |
 | 6. Upload | 上传 artifact `molemonitor-ci`，保留 3 天，即使前面步骤失败也上传 |
 
-触发条件：推送到任意分支（`branches: ["**"]`）且改动了 `Sources/`、`Tests/`、`scripts/`、`Vendor/`、`Resources/`（含 `Resources/DogSprites/`）或工作流文件，或手动触发（`workflow_dispatch`）。
+触发条件：推送到任意分支（`branches: ["**"]`）且改动了 `Sources/`、`Tests/`、`scripts/`、`Vendor/` 或工作流文件（`Resources/` 路径已随比熊素材删除，U10），或手动触发（`workflow_dispatch`）。
 
 ## 成本与免费额度
 
@@ -101,32 +101,47 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 | N1 | 真实引擎复制 | 引擎驱动的面板，复制文字等于 `PromptBuilder` 对引擎输入的结果，长度不超过 3000，不含家目录与用户名，含“磁盘” |
 | N2 | 打开即有历史 | 用 `trendSeed` 模拟重启后恢复的 2 小时趋势，面板打开的同一刻模型已有不少于一半的种子点 |
 | M14 | 菜单栏图标状态 | 7 个场景下，`MenuIconModel` 与 `AppDelegate` 交给 `StatusIconController` 的姿态和角标等于手写期望表。图标是 24 pt 宽的模板图像，提示文字等于无障碍文字，问题项顺序等于 `ProblemOrder`，不同状态的图像互不相同 |
-| M19 | 面板里比熊真实渲染（默认路径，现为位图比熊） | 7 个场景的浅色与深色截图里，比熊区域的非背景像素，动态比熊不少于区域的 1%，静态灰比熊（统计中、数据过期）不少于 1.5%，且都至少 12 种颜色。无障碍树不含占位文字。源码与发布二进制不含 `SKELETON` 字符串 |
-| M19V | 面板里矢量比熊真实渲染 | 关闭位图开关（`DogView.useBitmapArt = false`），对 7 个场景的浅色与深色测矢量比熊，门槛与 M19 相同 |
-| M20 | 位图比熊随数据点变化 | 真实面板内，空闲 3 秒位图视图的 body 评估为 0。测试注入 5 个数据点（CPU 95、热状态 serious、磁盘红、清除问题加 CPU 20、统计中），姿态依次为冲刺、喘气、关注、走、灰化，且每步狗区域像素有变化 |
-| M21 | 问题模式比熊（G2 第 1 轮） | diskRed 与 multi，浅色与深色。比熊框宽 ≥ 64 pt，框顶距面板顶 ≥ 6 pt。气泡包围框与比熊身体（alpha ≥ 8）包围框不相交，相距 ≥ 2 pt。最高墨迹距面板顶 ≥ 6 pt。姿态为关注 |
+| M19 | 面板无占位文本 | 无障碍树（allGreen 与 diskRed 两个场景）不含骨架占位文本。原 M19 的比熊像素检查已删除，见“已删除的门禁” |
 | M22 | 浅深色折叠问题卡（G2 第 1、2 轮。v2：由 W02 取代，见下文） | multi，浅色与深色各验。3 张折叠问题行的底与面板底色相差 ≤ 20，色相（通道最大差）≤ 4，左缘 3 pt 色条与本级灯色相差 ≤ 30 并比另一级更近。第一张问题卡有淡底（色相 ≥ 6） |
 
-## 比熊门禁（`--dog-gallery <目录> --dog-checks`）
+## 已删除的门禁（U10，2026-10-18）
 
-比熊块的各项写入 `dog-report.json`。矢量路径的项（`DogView.useBitmapArt = false`）门槛不变，位图项是新增的。含义与位图阶段的取舍见 [DESIGN.md 4.9.4](DESIGN.md#494-门禁变化)。
+用户原话 U10：“还有这个比熊，动画的效果始终达不到我想要的效果，实在不好弄，我觉得可以删除，另外，关于状态栏，可以做成简单的静态、奔跑，以这种简单的帧动画来体现系统的状态”。面板里没有比熊，序列帧、位图静帧、图库和道具随之删除。下表列出每条被删除的门禁，写明旧数值和去向。没有一条门禁靠放宽阈值删除。
 
-| 项 | 检查内容 |
-|---|---|
-| DA、DB、DC、DE | 矢量路径：卡片打开的帧数与成本、关闭后无回调、步态切换腿速、Reduce Motion 无帧。位图路径不适用 DC（没有腿部动画）与 DA 的 60 至 80 帧（没有时间线） |
-| DD | 菜单栏切换帧数与时长，与比熊无关 |
-| DF | 发布二进制不含测试代码，含 `DogBitmapProbe` 与 `UITestBitmapChecks` 的检查，UI 变体含探针（正控） |
-| BA | 位图卡片打开 3 秒与关闭 3 秒，body 评估与矢量帧都为 0 |
-| BB | Reduce Motion 下 4 次姿态切换都不附加淡变，对照组都附加 |
-| BC | 8 个文件加载，320 × 240，缺目录无崩溃并回退矢量，开关路由正确 |
-| BD | 72 × 54 pt 下 7 个姿态两两异或比例，21 对，门槛 0.20 |
-| BE | 非背景像素占比，灰化不少于 1.5%，其余不少于 1%，至少 12 种颜色 |
-| BF | 8 个姿态的地面阴影：中心 y 与脚底线相差 ≤ 2 px（72 × 54 下），中心 x 与比熊中心相差 ≤ 2 px，宽度比 0.68 至 0.82，冲刺更窄（< 0.65）更淡 |
-| BS | 4 张联系表（`bitmap-sheet-light.png`、`bitmap-sheet-dark.png` 与带阴影的两张）已写出 |
+> **注意**：`--dog-gallery`、`--dog-checks`、`dog-report.json`、工作流步骤 “Dog gallery” 和 artifact 路径 `molemonitor-dog/` 全部删除。`Resources/DogArt`、`Resources/DogSprites` 与 `scripts/check_sprites.py` 删除，`scripts/build.py` 不再复制它们，也不再检查“8 个文件”。
 
-另外，`ci_acceptance.py` 检查 `Contents/Resources/DogArt` 内 8 个文件与源文件逐字节相同，并审计 `DogBitmapView.swift` 的非注释代码不含 `Timer`、`TimelineView`、`Canvas`、`CADisplayLink`、`DispatchSource`、`asyncAfter`。
+| 编号 | 旧检查与旧数值 | 去向 |
+|---|---|---|
+| M19 | 7 个场景浅深截图里比熊区域非背景像素：动态不少于 1%，静态灰不少于 1.5%，至少 12 种颜色。另含无障碍树无占位文本 | 比熊像素部分删除。占位文本部分保留，编号 M19 不变，名称改为“面板无占位文本” |
+| M19V | 关闭位图开关后，矢量比熊门槛同 M19 | 删除，矢量比熊不再出现在面板 |
+| M20 | 空闲 3 秒位图视图 body 评估 0。注入 5 个数据点，姿态依次为冲刺、喘气、关注、走、灰化 | 删除 |
+| M21 | 气泡包围框与比熊身体包围框相距 ≥2 pt，比熊框宽 ≥64 pt，框顶距面板顶 ≥6 pt | 删除，没有气泡和比熊 |
+| DA | 卡片打开 3 秒内 60 至 80 帧 | 删除 |
+| DB | 关闭后 3 秒内 0 个帧回调 | 删除。“关闭后无动画和计时器”由 W16 继续检查 |
+| DC | 步态切换时腿速不超过 `DogGaitRules.maxLegRate` | 删除 |
+| DD | 菜单栏切换最多 8 帧、最多 600 ms，之后无计时器 | 删除。菜单栏图标改为静态与奔跑，新检查由 P3 登记 W29、W30 |
+| DE | Reduce Motion 下无帧、无计时器 | 删除。新检查由 P3 登记 W30 |
+| DF | 发布二进制不含 `DogFrameProbe`、`UITestDogChecks`、`--dog-checks`、`DogBitmapProbe`、`UITestBitmapChecks`，UI 变体含探针 | 保留并改写：标记换成 `DogFrameProbe`、`UITestPanelChecks`、`UITestIconChecks`，UI 变体含 `DogFrameProbe`（正控）。输出文字改为 “RELEASE BINARY AUDIT” |
+| BA | 位图卡片打开与关闭各 3 秒，body 评估与矢量帧为 0 | 删除 |
+| BB | Reduce Motion 下 4 次姿态切换无淡变 | 删除 |
+| BC | 8 个位图文件加载，每张 320 × 240 | 删除，`ci_acceptance.py` 改为检查包内没有 `DogArt` 与 `DogSprites`，源码树没有 `Resources/` |
+| BD | 72 × 54 pt 下 7 个姿态两两异或比例 ≥0.20 | 删除 |
+| BE | 非背景像素占比：灰化 ≥1.5%，其余 ≥1% | 删除 |
+| BF | 地面阴影中心与脚底线相差 ≤2 px | 删除 |
+| BS | 4 张联系表已写出（体积 >8000 字节） | 删除 |
+| W04 | 注入 10 个数据点，300 ms 内动作与变体等于期望。CPU 从 5% 升到 95% 时步频单调、相差 ≤2%、倍率变化 ≤0.25 | 删除，没有动作。Core 测试 `DogActionTests` 一并删除 |
+| W08 | 菜单栏五态。UI 部分（9 个场景、五态 XOR ≥0.20、字形 XOR ≥0.35、红圆盘 ≥0.30、角标对比 ≥3:1、宽 24 pt） | UI 部分保留，仍在 `UITestIconChecks.swift`，直到 P-icon 用 W29 替换。图库部分（`--dog-gallery` 导出的 `menu-metrics.json`、五态联系表）删除。辅助函数移到 `GlyphGrids.swift` |
+| W11 | 条带：10 个动作 57 帧，每帧 320 × 240 px，条带 9 张，静止帧两两异或，缺文件降级 | 删除，素材与 `scripts/check_sprites.py` 一并删除 |
+| W12 | 气泡与比熊不透明像素距离 ≥4 pt，气泡宽 ≤192 pt，≤2 行 | 删除。文案行宽改由 Core 单测 `BubbleCopyTests` 检查：17 pt、320 pt 内容宽，每行 ≤18.4 em，≤2 行（W13 的一部分） |
+| W14 | 主线程每帧工作：打开 10 s 稳态 body 评估 ≤每 2 s 一次，比熊视图 draw 0，无 `CADisplayLink`。源码审计不含 `Timer`、`TimelineView` | 运行时部分删除。源码审计保留，范围是 `Panel*.swift`，不再含 `DogSpriteView.swift` |
+| W15 | Reduce Motion：稳态 CA 动画数 0，侧栏展开无尺寸动画，气泡无缩放，对照组动画数 >0 | 删除（原检查依赖比熊图层）。动效退路的新检查由 P3 登记 |
+| W17 | 打开 10 s 稳态进程 CPU 均值 ≤3% | 检查代码在已删除的精灵检查文件里，随之删除。**限值 3% 不变**，DESIGN_V3.md 第 8 章仍要求它，由 P3 在新文件里恢复 |
+| W18 | 播放全部 10 个动作后精灵缓存 ≤8 MB，资源包 ≤4 MB | 删除，没有精灵。包体减少约 2.9 MB（`DogSprites` 2.5 MB 加 `DogArt` 0.4 MB） |
+| W16（部分） | 关闭 3 s 后：精灵缓存 0 字节 | 只删这一条。其余不变：实时采样关、1 个引擎计时器、0 个 CA 动画、实时缓冲清空、进程 CPU <5%（最好的一个窗口）。检查代码移到 `UITestPanelChecks.swift`，输出值 `spriteBytesOpen` 删除 |
+| W03（探针） | 点击到比熊区域就绪 ≤150 ms，首帧比熊墨迹 ≥1% | 探针对象由比熊区域改为标题块文字区域（`txt.hero.title`），门槛 ≤150 ms 与 ≥1% 不变，输出值改名为 `headlineReadyMs`、`headlineSharePercent` |
+| W05（探针） | 侧栏漂移测量使用比熊区域做图块 | 图块改为标题块文字区域，门槛不变 |
 
-最新全绿运行（run 38115054435）的实测数字见 [VERIFICATION.md](VERIFICATION.md) 条目 3。位图阶段的运行见条目 4。G2 第 1 轮修订（M21、M22、BF）的运行见条目 5。
+P3 负责新门禁。W16 在 P3 处还要加一条：CPU 不忙时 0 个图标计时器。
 
 ## v2 门禁登记表
 
@@ -140,11 +155,10 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 | 来源 | 结果读取位置 |
 |---|---|
 | `ui` | `ui-report.json` 中编号相同的项 |
-| `dog` | `dog-report.json` 中编号相同的项 |
 | `core` | 工作流步骤 “Core and CLI tests” 的日志，由环境变量 `MOLEMONITOR_CORE_LOG` 指向。映射见下文 |
 | `script` | 后续步骤的脚本。没有读取器，因此不能设为 `active` |
 
-旧门禁（A 至 L、M2 至 M22、N1、N2、DA 至 DE、BA 至 BF）全部登记为 `active`，行为不变。M2、M3、M22 的结果由 W02 提供：脚本把 W02 的报告复制成这三个编号。W02 检查三件事：每个场景的行顺序与高度，只有最严重的一行有淡底色，其他行没有底色（浅色与深色各检查一次）。因此 W02 同时承担旧 M22 的语义。
+旧门禁（A 至 L、M2 至 M22、N1、N2）全部登记为 `active`，行为不变。DA 至 DE、BA 至 BF、M19V、M20、M21 已删除（U10，见“已删除的门禁”）。M2、M3、M22 的结果由 W02 提供：脚本把 W02 的报告复制成这三个编号。W02 检查三件事：每个场景的行顺序与高度，只有最严重的一行有淡底色，其他行没有底色（浅色与深色各检查一次）。因此 W02 同时承担旧 M22 的语义。
 一个编号可以报告两次（W06 有模型部分和窗口部分）。登记表只保留失败：后一次通过不会覆盖前一次失败。
 
 输出末尾的汇总行格式如下：
@@ -154,7 +168,7 @@ GATE REGISTRY: <通过> passed / <失败> failed / <未激活> inactive (未激�
 INACTIVE gates (未激活, not passed, not failed): W01 ...; W02 ...
 ```
 
-`ACCEPTANCE PASSED` 前出现一次 `ui` 来源的汇总。`DOG ANIMATION CHECKS PASSED` 前出现一次全部来源的汇总。
+`ACCEPTANCE PASSED` 前出现一次 `ui` 来源的汇总。`RELEASE BINARY AUDIT PASSED` 前出现一次全部来源的汇总。
 
 ### v2 门禁的激活状态（2026-10-13，WP-F2）
 
@@ -162,11 +176,11 @@ INACTIVE gates (未激活, not passed, not failed): W01 ...; W02 ...
 
 | 状态 | 门禁 |
 |---|---|
-| `active`，来源 `ui`（19 项） | W01、W02、W03、W04、W05、W06、W07、W08、W09、W10、W11（运行时部分）、W12、W14、W15、W16、W17、W18、W19、W22 |
+| `active`，来源 `ui`（12 项，U10 后） | W01、W02、W03、W05、W06、W07、W08、W09、W10、W16、W19、W22。W04、W11、W12、W14、W15、W17、W18 已删除 |
 | `active`，来源 `core`（3 项） | W13、W20、W21 |
 | `pending`（0 项） | 无 |
 
-W08 的检查在 UI 测试变体里运行，因此来源从 `dog` 改为 `ui`。W11 的来源从 `script` 改为 `ui`，名称改为 “dog strips at run time”。
+W08 的检查在 UI 测试变体里运行，因此来源从 `dog` 改为 `ui`。（W11 曾在这里登记，U10 删除。）
 
 #### Core 门禁 W13、W20、W21
 
@@ -182,14 +196,13 @@ W08 的检查在 UI 测试变体里运行，因此来源从 `dog` 改为 `ui`。
 
 #### W16 关闭零成本
 
-检查在 `Sources/App/UITestSpriteChecks.swift`。它打开夹具面板，送入 3 个数据点，然后关闭面板，并连续测量 3 s 窗口。下列条件在每个窗口里都必须成立，不重试取最好：
+检查在 `Sources/App/UITestPanelChecks.swift`（U10 前在已删除的 `UITestSpriteChecks.swift`）。它打开夹具面板，送入 3 个数据点，然后关闭面板，并连续测量 3 s 窗口。下列条件在每个窗口里都必须成立，不重试取最好：
 
 | 条件 | 值 |
 |---|---|
 | 实时采样定时器 | 关 |
 | 引擎定时器 | 1 个（30 秒 tick） |
 | Core Animation 动画 | 0 个（进程内除状态栏窗口外的全部窗口图层树） |
-| 精灵缓存 | 0 字节 |
 | 实时曲线缓冲 | 空 |
 
 进程 CPU 是负载值，限值 5%（单核）。第一个窗口达标即停，否则最多测 3 个窗口，取最好一个。每个窗口的数值都写进 note。旧门禁 L 保留。
@@ -212,13 +225,12 @@ run 38365358267 的第一次运行里，W06 窗口部分失败：“opened befor
 
 #### 源码审计
 
-审计 `Panel*.swift`（包括 `PanelWindow.swift` 和其中 `#if UITEST` 的钩子）与 `DogSpriteView.swift`，内容是不含 `Timer`、`TimelineView`。钩子不含这些词，因此不需要排除。
+审计 `Panel*.swift`（包括 `PanelWindow.swift` 和其中 `#if UITEST` 的钩子；`DogSpriteView.swift` 已随 U10 删除），内容是不含 `Timer`、`TimelineView`。钩子不含这些词，因此不需要排除。
 
 #### 已知未覆盖
 
 | 内容 | 说明 |
 |---|---|
-| `scripts/check_sprites.py` | W11 的像素部分需要 Pillow 与 numpy，不在 CI 里运行。新增或改动条带后，开发者在本机运行 |
 | 真机项 | 帧率、观感、系统授权框等，见 [HANDOFF.md](HANDOFF.md) |
 
 ### 接入新门禁
@@ -237,7 +249,7 @@ run 38365358267 的第一次运行里，W06 窗口部分失败：“opened befor
 
 ### 激活门禁
 
-1. 工作包的检查已合并，并在 CI 的 `ui-report.json` 或 `dog-report.json` 中报告该编号为 `pass`。
+1. 工作包的检查已合并，并在 CI 的 `ui-report.json` 中报告该编号为 `pass`。
 2. WP-F 把 `GATES` 中该条的 `status` 改为 `active`。
 3. 运行 `python3 scripts/ci_acceptance.py --self-test`。该命令在任何系统上都能运行，检查登记表本身。
 4. 推送并确认 CI 全绿。
