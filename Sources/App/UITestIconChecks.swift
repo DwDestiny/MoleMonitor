@@ -2,9 +2,10 @@
 // Copyright (c) 2026 DwDestiny
 // Input: The UI regression runner (UITestHarness.swift), the fixtures of PanelModel.fixtureData, AppDelegate's status item,
 //        MenuRunnerRenderer and StatusIconController.
-// Output: Gate W08 (the five states: model table, applied state, text, not template, width, body ink and mark color under
-//         forced light and dark), gate W29 (stand 1 frame and run 4 frames on one canvas, light and dark not empty, marks
-//         present, run frames differ, mark box clear; writes the contact sheet ui-icon-sheet.png) and gate W30 (run start
+// Output: Gate W08 (the five states: model table, applied state, text, not template, image width 24 pt, the same status
+//         item width in every state (R3), body ink and mark color under forced light and dark), gate W29 (stand 1 frame
+//         and run 4 frames on one canvas, light and dark not empty, marks present, collecting with an empty mark box and
+//         stale with the ring (R3), run frames differ, mark box clear; writes the contact sheet ui-icon-sheet.png) and gate W30 (run start
 //         and stop by CPU ticks with hysteresis, speed tiers, one timer while running, 0 icon timers under Reduce Motion,
 //         locked screen, sleeping display, hidden icon, Low Power Mode, collecting). Helper of gate A: `headInkCheck`.
 // Pos: Test code. It exists only in the UITEST build (`#if UITEST`). scripts/build.py finds the marker line below and
@@ -236,6 +237,7 @@ extension UITestRunner {
         var values = [String: Double]()
         let button = delegate.statusItem?.button
         var worstHead = 0.0, worstMark = 0.0
+        var itemWidths = [Double]()
         let scenarios = UITestIconChecks.scenarios(now: Date())
         for s in scenarios {
             // (1) The model gives the expected state.
@@ -267,6 +269,8 @@ extension UITestRunner {
             // (3) Not a template (v3), width 24 pt.
             if image.isTemplate { problems.append("\(s.name): the image is a template") }
             if abs(Double(image.size.width) - 24) > 0.01 { problems.append("\(s.name): width \(image.size.width) pt") }
+            // The status item width does not depend on the mark (R3): the button's fitted width is the same in every state.
+            if let button { itemWidths.append(Double(button.fittingSize.width)) }
             // (4) Body ink and mark color under forced light and dark.
             var line = "\(s.name)=\(s.kind.rawValue)"
             if s.mark == nil {
@@ -291,6 +295,10 @@ extension UITestRunner {
             }
         }
         if minContrast < IconMetrics.badgeContrastPass { problems.append("mark contrast \(String(format: "%.2f", minContrast)) < 3") }
+        if let lo = itemWidths.min(), let hi = itemWidths.max() {
+            values["itemWidth"] = lo
+            if hi - lo > 0.01 { problems.append(String(format: "status item width changes with the state: %.2f to %.2f pt", lo, hi)) }
+        }
 
         delegate.suspendIconUpdates = false
         delegate.applyMenuIcon(verdicts: engine.verdicts, dataState: engine.dataState)
@@ -340,11 +348,13 @@ extension UITestRunner {
                 }
             }
         }
-        // Data states: hollow stand frame with its mark, both appearances.
+        // Data states: hollow stand frame, both appearances. Collecting has an empty mark box, stale the hollow ring (R3).
         for kind in [MenuIconKind.collecting, .stale] {
             for appearance in [UITestIconChecks.light, UITestIconChecks.dark] {
                 guard let r = UITestIconChecks.render(img(.stand, kind), appearance: appearance, scale: 2) else { continue }
-                if UITestIconChecks.markPixels(r, scale: 2) < 10 { problems.append("\(kind.rawValue): no data mark") }
+                let inBox = UITestIconChecks.markPixels(r, scale: 2)
+                if kind == .collecting, inBox > 0 { problems.append("collecting: \(inBox) px in the mark box (no mark)") }
+                if kind == .stale, inBox < 40 { problems.append("stale: ring has \(inBox) px") }
                 if r.solidCount < 150 { problems.append("\(kind.rawValue): hollow outline has \(r.solidCount) px") }
             }
         }

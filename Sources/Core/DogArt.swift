@@ -9,7 +9,7 @@
 // Coordinates: the card dog uses a 120 x 90 u box, origin top left, y down, the dog faces right, ground y = 82.
 // Attention (yellow): the 8 x 8 pt outline glyph sits at x 16 to 24, y 9 to 17.
 // Alarm (red): a 9 x 9 pt solid disc at x 15 to 24, y 9 to 18, the glyph knocked out of it (round 3).
-// Data marks (v2, DESIGN_V2.md 9.2): collecting (three dots) and stale (clock) use the same 8 x 8 pt box as the yellow glyph.
+// Data marks: the v2 three dots and clock were deleted by R3 (2026-10-18); MenuRunnerArt.staleRing draws the stale mark.
 // The head and the badge never overlap, so no cutout gap is needed.
 // GlyphPaths and the menu renderer flip y for AppKit.
 //
@@ -125,16 +125,6 @@ enum DogArt {
         case .thermal: return badgeThermal
         case .disk: return badgeDisk
         case .power: return badgePower
-        }
-    }
-
-    /// Data mark in the 8 x 8 pt badge box, y down (DESIGN_V2.md 9.2): three dots for collecting, a clock for stale.
-    /// One fill per mark (nonzero winding): the clock ring is an outer circle and a reversed inner circle, the hands
-    /// one L-shaped polygon inside the hole.
-    static func mark(_ m: MenuMark) -> [DogPart] {
-        switch m {
-        case .collecting: return markCollecting
-        case .stale: return markStale
         }
     }
 
@@ -343,19 +333,6 @@ enum DogArt {
     /// Alarm badge knockouts: power. Cut out of the 9 x 9 pt disc, y down, on the 1x pixel grid.
     static let alarmPower: [DogPart] = [
         DogPart(name: "power.bolt", ops: ops("M 5 0 L 7 0 L 7 1 L 5 1 Z M 4 1 L 7 1 L 7 2 L 4 2 Z M 3 2 L 6 2 L 6 3 L 3 3 Z M 2 3 L 7 3 L 7 4 L 2 4 Z M 4 4 L 6 4 L 6 5 L 4 5 Z M 3 5 L 5 5 L 5 6 L 3 6 Z M 3 6 L 5 6 L 5 7 L 3 7 Z M 2 7 L 4 7 L 4 8 L 2 8 Z"), pivot: (4.5, 4.5), role: .cutout, layer: 0),
-    ]
-
-    /// Data mark: collecting. Three 2 x 2 pt dots with 1 pt gaps on the bottom line of the box (like a typed ellipsis),
-    /// whole pixels at 1x. 8 x 8 pt box, y down.
-    static let markCollecting: [DogPart] = [
-        DogPart(name: "collecting.dots", ops: ops("M 0.6 6 L 1.4 6 C 1.73 6 2 6.27 2 6.6 L 2 7.4 C 2 7.73 1.73 8 1.4 8 L 0.6 8 C 0.27 8 0 7.73 0 7.4 L 0 6.6 C 0 6.27 0.27 6 0.6 6 Z M 3.6 6 L 4.4 6 C 4.73 6 5 6.27 5 6.6 L 5 7.4 C 5 7.73 4.73 8 4.4 8 L 3.6 8 C 3.27 8 3 7.73 3 7.4 L 3 6.6 C 3 6.27 3.27 6 3.6 6 Z M 6.6 6 L 7.4 6 C 7.73 6 8 6.27 8 6.6 L 8 7.4 C 8 7.73 7.73 8 7.4 8 L 6.6 8 C 6.27 8 6 7.73 6 7.4 L 6 6.6 C 6 6.27 6.27 6 6.6 6 Z"), pivot: (4, 7), role: .ink, layer: 0),
-    ]
-
-    /// Data mark: stale. A 7 pt clock face (x 1 to 8, y 1 to 8, ring 1.3 pt) with the hands at ten past twelve on the
-    /// pixel column x 4 to 5, so the hands are crisp at 1x. 8 x 8 pt box, y down.
-    static let markStale: [DogPart] = [
-        DogPart(name: "stale.ring", ops: ops("M 8 4.5 C 8 6.43 6.43 8 4.5 8 C 2.57 8 1 6.43 1 4.5 C 1 2.57 2.57 1 4.5 1 C 6.43 1 8 2.57 8 4.5 Z M 6.7 4.5 C 6.7 3.29 5.71 2.3 4.5 2.3 C 3.29 2.3 2.3 3.29 2.3 4.5 C 2.3 5.71 3.29 6.7 4.5 6.7 C 5.71 6.7 6.7 5.71 6.7 4.5 Z"), pivot: (4.5, 4.5), role: .ink, layer: 0),
-        DogPart(name: "stale.hands", ops: ops("M 4 3 L 5 3 L 5 4 L 6 4 L 6 5 L 4 5 Z"), pivot: (4.5, 4.5), role: .ink, layer: 0),
     ]
 
     /// Alarm badge disc: 9 x 9 pt, y down. The glyph is knocked out of it.

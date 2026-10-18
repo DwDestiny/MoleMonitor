@@ -3,7 +3,8 @@
 // Input: Helpers (expect, section) defined in main.swift; MenuRunner.swift.
 // Output: Assertions for the menu bar runner (docs/DESIGN_V3.md 4.2, gates W29 and W30 on the Core side): the hysteresis
 //         (start >= 35 %, stop after 2 ticks < 25 %), the speed tiers, the motion conditions, the busy text, and the
-//         silhouette (inside the canvas, mark box clear, bob <= 1 pt, the 4 run frames differ in the leg band).
+//         silhouette (inside the canvas, mark box clear, bob <= 1 pt, the 4 run frames differ in the leg band, the
+//         flight frame is a level bound, R3).
 // Pos: Called from main.swift via runMenuRunnerTests(); no top-level code in this file. Owner P-icon (v3).
 
 import Foundation
@@ -133,6 +134,15 @@ func runMenuRunnerTests() {
     // Standing feet are on the ground line (bottom of the round end at y 17.6 to 18).
     let standFeet = MenuRunnerArt.figure(.stand).legs.map { $0.bounds.3 }
     expect(standFeet.allSatisfy { $0 >= 17.6 && $0 <= 18 }, "stand: both leg columns on the ground")
+    // The flight frame is a bound (R3): body level and raised, front column forward, hind column back, so the legs
+    // spread apart and never cross (the old frame read as tumbling).
+    let flight = MenuRunnerArt.pose(.run(3))
+    expect(flight.bob < 0, "flight: body raised")
+    expect(flight.front.angle >= 40 && flight.hind.angle <= -35, "flight: front forward \(flight.front.angle), hind back \(flight.hind.angle)")
+    if case let .capsule(fx0, _, fx1, _, _) = MenuRunnerArt.figure(.run(3)).legs[0],
+       case let .capsule(hx0, _, hx1, _, _) = MenuRunnerArt.figure(.run(3)).legs[1] {
+        expect(fx1 < fx0 - 2.5 && hx1 > hx0 + 1.5 && hx1 - fx1 > hx0 - fx0, "flight: feet spread apart, legs do not cross")
+    }
 
     // The 4 run frames differ pairwise in the leg band (rows below the belly, 2x) by at least 30 % (the W29 gate). The
     // Q4 redraw reaches about 0.8; the Core floor below is 0.6 so a later edit cannot silently flatten the gait.
