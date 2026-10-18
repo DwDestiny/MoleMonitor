@@ -70,6 +70,10 @@ struct PanelTokens {
     /// The 3 pt bar at the left edge of the selected row. Neutral too.
     var selectedBar: Color { pick(Color(.sRGB, white: 0, opacity: 0.55), Color(.sRGB, white: 1, opacity: 0.65)) }
 
+    // v3 status light (DESIGN_V3.md 1.3): the level color of the lamp at 10 % (yellow) or 12 % (red) in light, 16 % in dark.
+    var heroGlowWarning: Color { pick(Self.rgb(0xC26400, 0.10), Self.rgb(0xFF9F0A, 0.16)) }
+    var heroGlowDanger: Color { pick(Self.rgb(0xE5302A, 0.12), Self.rgb(0xFF453A, 0.16)) }
+
     /// Value color of a row: level color for a problem, primary gray otherwise (DESIGN_V2.md 5.1).
     func valueColor(_ level: HealthLevel, problem: Bool) -> Color {
         guard problem else { return textPrimary }

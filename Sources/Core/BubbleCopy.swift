@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: BubbleInput: data state, CPU, the gait on screen, the problems in order, the night flag and the event (docs/DESIGN_V2.md 4.10, 4.11).
-// Output: BubbleText: the main line, the evidence part to emphasize, its level, and the optional second line. BubbleCopy.text(for:) builds them.
+// Input: BubbleInput: data state, CPU, the number of readings collected, and the problems in order (docs/DESIGN_V3.md 4.1, DESIGN_V2.md 4.11).
+// Output: BubbleText: the headline sentence, the evidence part, and its level. BubbleCopy.text(for:) builds them.
 //         BubbleCopy.width(_:) counts width units (0.4: full-width 1, half-width 0.5). BubbleCopy.allTemplates lists every template at its worst value (W13).
-//         BubbleText.wrapped is the text the view draws: a long text breaks at its comma, so the system never splits a word (W12).
-// Pos: The one source of the bubble texts. Foundation only. A1 created the signature; WP-D owns the file.
-//      Copy rules: the dog says "我", the owner is "你", never "您"; plain words; a problem text has an evidence number.
+//         BubbleText.wrapped is the text the view draws: a text longer than one line breaks once at its comma, so the system never splits a word.
+// Pos: The one source of the panel headline texts (the type name stays Bubble* from v2; the bubble itself was deleted by U10, 2026-10-18).
+//      Foundation only. Line budget (v3): 17 pt type in a 320 pt content width holds 18.8 em, `lineEm` keeps a margin below that.
+//      Copy rules: plain words; a problem text has an evidence number.
 
 import Foundation
 
-/// One problem as the bubble needs it.
+/// One problem as the headline needs it.
 struct BubbleProblem: Equatable {
     var item: HealthItem
     var level: HealthLevel
@@ -35,48 +36,22 @@ struct BubbleProblem: Equatable {
     }
 }
 
-/// A one-time event that replaces the state text for 2.5 s (DESIGN_V2.md 4.8, 4.11).
-enum BubbleEvent: Equatable {
-    case none
-    case petTap(Int)            // Index of the rotating tap texts
-    case longPress
-    case tooManyTaps
-    case petCount(Int)          // Session count, 10 or more
-    case copySucceeded(inspection: Bool)
-    case copyFailed
-    case morning
-    case friday
-    case noBattery
-
-    /// Easter eggs never show while there is a problem (4.8 rule 2). Copy feedback always shows.
-    var isEgg: Bool {
-        switch self {
-        case .none, .copySucceeded, .copyFailed: return false
-        default: return true
-        }
-    }
-}
-
 struct BubbleInput: Equatable {
     var dataState: DataState
     var cpuPercent: Double?
-    var isNight: Bool
     /// Problems in `ProblemOrder`. The first one is the headline.
     var problems: [BubbleProblem]
-    var event: BubbleEvent
-    /// The gait that the dog shows (DogDirector). The quiet texts follow it, so text and picture agree. Nil: chosen from the CPU.
-    var gait: DogAction? = nil
+    /// How many of the 6 readings (CPU, memory, disk, network, battery, temperature) have arrived. Used only while collecting.
+    var collected: Int
     /// The calendar for {HH:mm}.
     var calendar: Calendar = .current
 
-    init(dataState: DataState = .fresh, cpuPercent: Double? = nil, isNight: Bool = false,
-         problems: [BubbleProblem] = [], event: BubbleEvent = .none, gait: DogAction? = nil, calendar: Calendar = .current) {
+    init(dataState: DataState = .fresh, cpuPercent: Double? = nil, problems: [BubbleProblem] = [], collected: Int = 0,
+         calendar: Calendar = .current) {
         self.dataState = dataState
         self.cpuPercent = cpuPercent
-        self.isNight = isNight
         self.problems = problems
-        self.event = event
-        self.gait = gait
+        self.collected = collected
         self.calendar = calendar
     }
 }
@@ -84,7 +59,7 @@ struct BubbleInput: Equatable {
 struct BubbleText: Equatable {
     /// At most 24 width units (DESIGN_V2.md 0.4). A problem text holds at least one digit.
     var main: String
-    /// The part of `main` that shows the evidence ("314 GB", "87%"). The view sets it in semibold and the level color.
+    /// The part of `main` that shows the evidence ("314 GB", "87%"). The v3 headline does not color it (DESIGN_V3.md 4.1 rule 4).
     var emphasis: String? = nil
     /// Level of the emphasized part. Nil for texts without a problem.
     var level: HealthLevel? = nil
@@ -103,67 +78,37 @@ enum BubbleCopy {
     static let maxWidth = 24.0
     static let appNameMaxWidth = 8.0
 
-    /// The four rotating tap texts (4.11 摸狗 1 to 4).
-    static let tapTexts = ["汪！今天也辛苦了", "嘿嘿，再摸一下", "摸摸头，我精神多了", "你也来看看电脑？"]
+    /// Number of readings the collecting title counts (CPU, memory, disk, network, battery, temperature).
+    static let readingCount = 6
 
     static func text(for input: BubbleInput) -> BubbleText {
-        let problems = input.problems
-        switch input.event {
-        case .copySucceeded(let inspection):
-            return BubbleText(main: inspection ? "巡检单已复制，交给 Agent 吧" : "已复制，去问你的 Agent 吧")
-        case .copyFailed:
-            return BubbleText(main: "没复制上，再点一次试试")
-        default:
-            break
-        }
         if case .stale(let at) = input.dataState {
             let c = input.calendar.dateComponents([.hour, .minute], from: at)
             let hhmm = String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
-            return BubbleText(main: "数据停在 \(hhmm)，我有点懵")
+            return BubbleText(main: "数据停在 \(hhmm)，不是最新的")
         }
-        if case .collecting = input.dataState { return BubbleText(main: "我先闻闻看，30 秒后告诉你") }
-        if let first = problems.first {
+        if case .collecting = input.dataState { return BubbleText(main: collectingText(done: input.collected)) }
+        if let first = input.problems.first {
             return problemText(first)
         }
-        if input.event.isEgg, let egg = eggText(input.event) { return BubbleText(main: egg) }
         return quietText(input)
+    }
+
+    /// The title while the first readings arrive (DESIGN_V3.md 4.1 rule 6).
+    static func collectingText(done: Int) -> String {
+        "正在检查，已完成 \(max(0, min(done, readingCount)))/\(readingCount) 项"
     }
 
     // MARK: Quiet texts
 
+    /// No problem. CPU steps follow the old gait steps (10, 40, 80).
     static func quietText(_ input: BubbleInput) -> BubbleText {
-        let p = input.cpuPercent.map { percent($0) }
-        if input.isNight {
-            if let cpu = input.cpuPercent, cpu >= 20, let p { return BubbleText(main: "这么晚还在忙，CPU \(p)", emphasis: nil) }
-            return BubbleText(main: "夜深了，一切正常，晚安")
-        }
-        let gait: DogAction
-        if let g = input.gait {
-            gait = g
-        } else if let s = input.cpuPercent {
-            gait = DogAction.from(DogGaitRules.plainGait(s))
-        } else {
-            gait = .lieIdle
-        }
-        switch gait {
-        case .walk: return BubbleText(main: "电脑在干活，我陪着溜达")
-        case .trot: return BubbleText(main: "CPU \(p ?? "—")，我跟着小跑")
-        case .sprint: return BubbleText(main: "CPU 冲到 \(p ?? "—")，全力奔跑中")
-        default: return BubbleText(main: "一切正常，我先趴会儿")
-        }
-    }
-
-    static func eggText(_ event: BubbleEvent) -> String? {
-        switch event {
-        case .petTap(let i): return tapTexts[((i % tapTexts.count) + tapTexts.count) % tapTexts.count]
-        case .longPress: return "嘿嘿，好舒服"
-        case .tooManyTaps: return "别摸啦，我在站岗"
-        case .petCount(let n): return "今天第 \(n) 次摸我啦"
-        case .morning: return "早上好，昨晚没有异常"
-        case .friday: return "周五了，电脑也想下班"
-        case .noBattery: return "这台 Mac 没有电池，我少操一份心"
-        default: return nil
-        }
+        guard let cpu = input.cpuPercent else { return BubbleText(main: "一切正常") }
+        let p = percent(cpu)
+        if cpu >= 80 { return BubbleText(main: "一切正常，CPU 冲到 \(p)") }
+        if cpu >= 40 { return BubbleText(main: "一切正常，CPU \(p)") }
+        if cpu >= 10 { return BubbleText(main: "一切正常，电脑在干活") }
+        return BubbleText(main: "一切正常")
     }
 
     // MARK: Problem texts
@@ -247,7 +192,7 @@ enum BubbleCopy {
 
     // MARK: Line break
 
-    /// Text width in em at the bubble font. Digits are tabular (0.62 em), so the estimate is above the 0.5 units of `width`.
+    /// Text width in em at the headline font. Digits are tabular (0.62 em), so the estimate is above the 0.5 units of `width`.
     static func em(_ text: String) -> Double {
         text.unicodeScalars.reduce(0) { sum, u in
             guard u.isASCII else { return sum + 1 }
@@ -263,8 +208,11 @@ enum BubbleCopy {
         }
     }
 
-    /// One line of the bubble holds about 12.6 em (164 pt inside the padding, 13 pt font). A text up to this size stays on one line.
-    static let oneLineEm = 12.1
+    /// One line of the headline holds 18.8 em (320 pt content width, 17 pt type). `lineEm` keeps a margin below that, for the
+    /// semibold digits and Latin letters. A text up to this size stays on one line. A broken line may reach `maxLineEm`.
+    static let lineEm = 17.5
+    static let maxLineEm = 18.4
+    static let oneLineEm = lineEm
 
     /// Breaks a long text once, at the comma, so a word never splits across the lines ("该 / 让 Agent 看看了" is the bug this fixes).
     /// A text without a comma breaks after "一直占着". The comma stays at the end of line 1. A text that fits one line, or has
@@ -307,13 +255,9 @@ enum BubbleCopy {
         let worstBytes: Int64 = 999_400_000_000      // "999 GB"
         let worstD = 59.0 * 60                          // "59 分钟"
         add("空闲", BubbleInput(cpuPercent: 3))
-        add("走", BubbleInput(cpuPercent: 25))
-        add("小跑", BubbleInput(cpuPercent: 79))
-        add("冲刺", BubbleInput(cpuPercent: 100))
-        add("夜间睡", BubbleInput(cpuPercent: 5, isNight: true))
-        add("夜间忙", BubbleInput(cpuPercent: 100, isNight: true))
-        add("早晨", BubbleInput(event: .morning))
-        add("无电池", BubbleInput(event: .noBattery))
+        add("忙", BubbleInput(cpuPercent: 25))
+        add("很忙", BubbleInput(cpuPercent: 79))
+        add("满载", BubbleInput(cpuPercent: 100))
         add("磁盘增长", p(.disk, .red, "growth_5d", bytes: worstBytes), problem: true)
         add("磁盘红", p(.disk, .red, "low_space", bytes: worstBytes), problem: true)
         add("磁盘黄", p(.disk, .yellow, "low_space", bytes: worstBytes), problem: true)
@@ -330,16 +274,8 @@ enum BubbleCopy {
         add("温度黄", p(.thermal, .yellow, "thermal_fair", seconds: worstD), problem: true)
         add("睡眠掉电", p(.power, .red, "sleep_drain", number: 10.5), problem: true)
         add("使用掉电", p(.power, .yellow, "awake_drain", number: 10.5), problem: true)
-        add("采集中", BubbleInput(dataState: .collecting))
+        add("采集中", BubbleInput(dataState: .collecting, collected: 6))
         add("过期", BubbleInput(dataState: .stale(Date(timeIntervalSince1970: 86340))))
-        add("复制成功", BubbleInput(event: .copySucceeded(inspection: false)))
-        add("巡检复制成功", BubbleInput(event: .copySucceeded(inspection: true)))
-        add("复制失败", BubbleInput(event: .copyFailed))
-        for i in 0..<tapTexts.count { add("摸狗 \(i + 1)", BubbleInput(event: .petTap(i))) }
-        add("长按", BubbleInput(event: .longPress))
-        add("摸太多", BubbleInput(event: .tooManyTaps))
-        add("计数", BubbleInput(event: .petCount(30)))
-        add("周五", BubbleInput(event: .friday))
         return out
     }
 }

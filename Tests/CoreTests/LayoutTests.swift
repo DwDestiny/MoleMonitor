@@ -50,18 +50,16 @@ func runLayoutTests() {
         expect(p.height == want, "desktop \(count) anomalies: \(want), got \(p.height)")
         expect(p.rows.count == 5 && !p.rows.contains(.battery), "desktop has 5 rows, no battery")
     }
-    // All green with 6 items is at most 340 pt, for the hero of this branch and for the 132 pt hero of DESIGN_V3.md 3.3.
-    for hero in [PanelMetrics.hero, 132.0, 64.0] {
+    // All green with 6 items is at most 290 pt with the 64 pt headline block (DESIGN_V3.md 3.3, 4.1).
+    for hero in [PanelMetrics.hero, 64.0] {
         let green = PanelLayout.height(hasBattery: true, problems: 0, hero: hero)
         expect(green == expected(items: 6, problems: 0, hero: hero), "all green with hero \(hero): \(green)")
-        expect(hero > 132 || green <= 340, "all green with hero \(hero) is at most 340, got \(green)")
         expect(hero > 64 || green <= 290, "all green with hero \(hero) is at most 290, got \(green)")
         let top = PanelLayout.height(hasBattery: true, problems: 3, hero: hero)
         expect(top == expected(items: 6, problems: 3, hero: hero), "three problem rows with hero \(hero): \(top)")
     }
-    expect(PanelLayout.height(hasBattery: true, problems: 0, hero: 132) == 332, "all green with the 132 pt hero is 332 pt")
     expect(PanelLayout.height(hasBattery: true, problems: 0, hero: 64) == 264, "all green with a 64 pt hero is 264 pt")
-    expect(PanelLayout.height(hasBattery: true, problems: 3, hero: 132) == 504, "three problem rows with the 132 pt hero is 504 pt")
+    expect(PanelLayout.height(hasBattery: true, problems: 3, hero: 64) == 436, "three problem rows with a 64 pt hero is 436 pt")
     expect(plan(Array(all.prefix(4))).height == plan(Array(all.prefix(3))).height, "the fourth problem does not add height")
     expect(PanelMetrics.width == 352 && PanelMetrics.widthWithSidebar == 672, "widths 352 and 672")
     expect(PanelMetrics.problemRow == 64 && PanelMetrics.quietRow == 28 && PanelMetrics.recordRow == 28 && PanelMetrics.footer == 32, "row heights")

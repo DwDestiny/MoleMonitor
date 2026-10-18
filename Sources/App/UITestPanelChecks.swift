@@ -2,8 +2,9 @@
 // Copyright (c) 2026 DwDestiny
 // Input: The UI regression runner (UITestHarness.swift), the fixtures of PreviewScenario and the real popover of AppDelegate.
 // Output: The panel gates of docs/DESIGN_V2.md 13.2.1 and 13.3: M4 stable size, M5 contrast, M6 large type, M11 no focus ring, M12 first frame
-//         with a curve, M13 copy, M19 dog, M14 icon, N1, N2, and the registered W01 (preview matrix), W02 (layout and problem-first),
-//         W09 (copy), W19 (capacity, main column part), W22 (value column). M2 and M3 moved into W02.
+//         with a curve, M13 copy, M19 no placeholder text, M14 icon, N1, N2, and the registered W01 (preview matrix), W02 (layout and problem-first),
+//         W09 (copy), W16 (closed panel costs nothing, moved here from UITestSpriteChecks.swift when the sprite checks were deleted, U10), W19 (capacity,
+//         main column part), W22 (value column). M2 and M3 moved into W02.
 // Pos: Test code. It exists only in the UITEST build. The release binary has none of it (checked by scripts/ci_acceptance.py).
 //      The M gates open the real popover with a fixture model (engine not attached, invented data). The N gates attach the real engine.
 //      The W gates register through `UITestPanelChecks.register(into:)` and run after step M.
@@ -82,7 +83,8 @@ enum UITestContrast {
     }
 }
 
-/// The pixels of the dog region: how many pixels differ from the dominant color, and how many distinct colors the region has.
+/// The pixels of a region: how many pixels differ from the dominant color, and how many distinct colors the region has.
+/// (The name is from the dog checks; W03 now measures the headline with it.)
 struct UITestDogStats {
     var ink: Int
     var area: Int
@@ -197,8 +199,8 @@ extension UITestRunner {
         var stableProblems = [String]()
         var stableNotes = [String]()
         let copyBox = UITestTextBox()
-        var dogProblems = [String]()
-        var dogNotes = [String]()
+        var placeholderProblems = [String]()
+        var placeholderChecked = 0
 
         for c in PreviewCase.allCases {
             guard let model = await openFixture(c, copyBox: copyBox), let hv = hostView else {
@@ -207,17 +209,13 @@ extension UITestRunner {
             }
             let name = c.rawValue
 
-            // M19: no placeholder text in the accessibility tree, and a dog element with a Chinese label (when the tree is readable)
+            // M19: no placeholder text in the accessibility tree (when the tree is readable)
             if c == .allGreen || c == .diskRed {
-                let nodes = axNodes()
                 let placeholder = "SKEL" + "ETON"
-                if nodes.contains(where: { $0.label.contains(placeholder) || $0.value.contains(placeholder) }) {
-                    dogProblems.append("\(name): the accessibility tree contains the placeholder text")
+                if axNodes().contains(where: { $0.label.contains(placeholder) || $0.value.contains(placeholder) }) {
+                    placeholderProblems.append("\(name): the accessibility tree contains the placeholder text")
                 }
-                if let dogNode = nodes.first(where: { $0.id == "dog" }) {
-                    if !dogNode.label.hasPrefix("比熊") { dogProblems.append("\(name): dog label '\(dogNode.label)'") }
-                    dogNotes.append("\(name) dog label '\(dogNode.label)'")
-                }
+                placeholderChecked += 1
             }
 
             // M11 and Q9: the first responder is no control, and no focus ring pixels around the button, the more button and the first row
@@ -243,21 +241,6 @@ extension UITestRunner {
                     frameFiles.append("ui-m-\(name)-\(dark ? "dark" : "light").png")
                 }
                 let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
-                let dogKey = name + (dark ? " dark" : " light")
-                if let rect = panelRect("dog"), let stats = UITestDogStats.measure(shot, region: rect, surface: surface) {
-                    let share = Double(stats.ink) / Double(Swift.max(1, stats.area))
-                    dogNotes.append("\(dogKey) \(Int(rect.width))x\(Int(rect.height)) ink \(stats.ink) (\(String(format: "%.1f", share * 100)) %), \(stats.colors) colors")
-                    // The static gray dog (collecting, stale) is drawn at 85 % alpha (I2, stage 2), so it needs 1.5 % of the region.
-                    // The live dog needs 1 %.
-                    let staticDog = (c == .collecting || c == .stale)
-                    let minShare = staticDog ? 0.015 : 0.01
-                    if share < minShare {
-                        dogProblems.append("\(dogKey): ink share \(String(format: "%.3f", share)) < \(minShare)")
-                    }
-                    if stats.colors < 12 { dogProblems.append("\(dogKey): only \(stats.colors) colors, not a drawn dog") }
-                } else {
-                    dogProblems.append("\(dogKey): no dog region or no ink")
-                }
                 for target in contrastTargets(model) {
                     guard var rect = panelRect(target.id), rect.width > 2, rect.height > 2 else { continue }
                     // A dot fills its own frame, so the region needs a margin of row background around it.
@@ -335,17 +318,13 @@ extension UITestRunner {
         if !ringProblems.isEmpty { note11 += "; failures: " + ringProblems.joined(separator: "; ") }
         let values11: [String: Double] = ["problems": Double(ringProblems.count)]
         record("M11", "无焦点环（Q9）", ringProblems.isEmpty && !ringNotes.isEmpty, since: t0, note11, values11)
-        var note19 = dogNotes.joined(separator: "; ")
-        if !dogProblems.isEmpty { note19 += "; failures: " + dogProblems.joined(separator: "; ") }
-        let values19: [String: Double] = ["problems": Double(dogProblems.count), "measured": Double(dogNotes.count)]
-        record("M19", "面板里比熊真实渲染", dogProblems.isEmpty && dogNotes.count >= 14, since: t0, note19, values19)
+        var note19 = "accessibility tree checked in \(placeholderChecked) scenarios"
+        if !placeholderProblems.isEmpty { note19 += "; failures: " + placeholderProblems.joined(separator: "; ") }
+        let values19: [String: Double] = ["problems": Double(placeholderProblems.count), "checked": Double(placeholderChecked)]
+        record("M19", "面板无占位文本", placeholderProblems.isEmpty && placeholderChecked >= 2, since: t0, note19, values19)
         stepLargeType()
         await stepColdFirstFrame(copyBox: copyBox)
         await stepIcon()
-        await stepVectorDog()
-        await stepBitmapPanel()
-        await stepHeroDog()
-        await stepCollapsedRows()
     }
 
     /// Pixels near the system focus ring color in the ring zone around a frame (`margin` points outside the frame, plus the frame).
@@ -648,6 +627,7 @@ enum UITestPanelChecks {
         registry.add("W07", "drag readout") { runner in await runner.stepW07() }
         registry.add("M10b", "sidebar controls and chart descriptor") { runner in await runner.stepSidebarControls() }
         registry.add("W09", "copy") { runner in await runner.stepW09() }
+        registry.add("W16", "closed panel costs nothing") { runner in await runner.stepW16() }
         registry.add("W19", "capacity text") { runner in await runner.stepW19() }
         registry.add("W22", "value column alignment") { runner in await runner.stepW22() }
     }
@@ -675,6 +655,78 @@ extension UITestRunner {
 
     func hexOf(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    // MARK: W16
+
+    /// W16: a closed panel costs nothing. 3 s after the close: live sampling off, one engine timer, no Core Animation animation in any
+    /// window, the live buffer empty, and the process CPU below 5 % (best of 3 windows). The sprite-cache assertion was removed with
+    /// the sprites (U10, 2026-10-18). The icon timer rule (0 timers when the CPU is not busy) is P3's to add.
+    func stepW16() async {
+        let t0 = now()
+        await closePanelQuietly()
+        PanelWindow.testReduceMotion = false
+        defer { PanelWindow.testReduceMotion = nil }
+        let copyBox = UITestTextBox()
+        guard let model = await openFixture(.allGreen, copyBox: copyBox) else {
+            record("W16", "关闭零成本", false, since: t0, "the panel did not open")
+            return
+        }
+        var openAnimations = 0
+        func walkAnimations(_ layer: CALayer, _ depth: Int, _ count: inout Int) {
+            guard depth < 40 else { return }
+            count += layer.animationKeys()?.count ?? 0
+            for sub in layer.sublayers ?? [] { walkAnimations(sub, depth + 1, &count) }
+        }
+        let base = model.data
+        for k in 1...3 {
+            var d = base
+            d.current.cpuPercent = 60
+            d.current.cpuMean5m = 60
+            d.now = base.now.addingTimeInterval(Double(k) * 45)
+            model.replace(d)
+            await sleepMs(300)
+        }
+        await sleepMs(600)
+        if let root = hostView?.window?.contentView?.superview?.layer ?? hostView?.layer { walkAnimations(root, 0, &openAnimations) }
+        weak var panelWindow = hostView?.window
+        await closeFixture()
+        var attempts = [String]()
+        var best = Double.infinity
+        var failures = [String]()
+        for attempt in 1...3 {
+            let cpu0 = cpuSeconds(), wall0 = now()
+            await sleepMs(3000)
+            let share = (cpuSeconds() - cpu0) / max(0.001, now() - wall0) * 100
+            let live = engine.isLiveSampling
+            let timers = engine.activeTimerCount
+            let empty = engine.live == .empty
+            // The panel window is released after the close. If it is alive, its layer tree is walked, and so are the other windows
+            // of the process (the status item window is left out).
+            var animations = 0
+            var windows = 0
+            for window in NSApp.windows where !window.className.contains("StatusBar") {
+                guard let root = window.contentView?.superview?.layer ?? window.contentView?.layer else { continue }
+                windows += 1
+                walkAnimations(root, 0, &animations)
+            }
+            if live { failures.append("attempt \(attempt): live sampling on") }
+            if timers != 1 { failures.append("attempt \(attempt): \(timers) timers") }
+            if animations != 0 { failures.append("attempt \(attempt): \(animations) animations") }
+            if !empty { failures.append("attempt \(attempt): live buffer not empty") }
+            attempts.append(String(format: "attempt %d cpu %.2f %%", attempt, share)
+                + " (live \(live ? "on" : "off"), timers \(timers), animations \(animations) in \(windows) windows, buffer empty \(empty ? "yes" : "no"))")
+            best = Swift.min(best, share)
+            if best < 5 { break }
+        }
+        let cpuOk = best < 5
+        if !cpuOk { failures.append(String(format: "best cpu %.2f %% (limit 5 %%)", best)) }
+        let ok = failures.isEmpty
+        record("W16", "关闭零成本", ok, since: t0,
+               "3 s after close (before: \(openAnimations) animations in the panel, panel window released=\(panelWindow == nil)): "
+                   + attempts.joined(separator: "; ") + String(format: ". Best CPU %.2f %% of one core, limit 5 %%.", best)
+                   + (ok ? "" : " Failures: " + failures.joined(separator: ", ")),
+               ["processCpuPercent": (best * 100).rounded() / 100, "attempts": Double(attempts.count)])
     }
 
     // MARK: W01
@@ -766,7 +818,7 @@ extension UITestRunner {
             let rowCount = data.hasBattery ? 6 : 5
             // The anomaly area is one 36 pt line, so the height changes with the battery row only (design change 2026-10-12).
             let anomalyArea = 36.0
-            let formula = 12.0 + 152.0 + 8.0 + Double(rowCount) * 40.0 + 12.0 + anomalyArea + 12.0 + 40.0 + 12.0
+            let formula = 12.0 + 64.0 + 8.0 + Double(rowCount) * 40.0 + 12.0 + anomalyArea + 12.0 + 40.0 + 12.0
             let height = Double(hv.bounds.height)
             if abs(height - formula) > 1 { problems.append("\(name): height \(height) pt, formula \(formula) pt") }
             if abs(plan.height - formula) > 0.01 { problems.append("\(name): plan height \(plan.height), formula \(formula)") }

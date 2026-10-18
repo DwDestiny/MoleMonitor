@@ -48,15 +48,6 @@ struct PanelData {
     /// Problem items in `ProblemOrder` order.
     var problems: [ItemVerdict] { ProblemOrder.problems(verdicts) }
 
-    /// Lamp items for PanelHero (v1, WP-D): every problem item, then thermal, memory and CPU.
-    var lamps: [ItemVerdict] {
-        let always: Set<HealthItem> = [.thermal, .memory, .cpu]
-        return ProblemOrder.all(verdicts).filter { v in
-            if v.level == .notApplicable { return false }
-            return v.level == .yellow || v.level == .red || always.contains(v.item)
-        }
-    }
-
     var isFresh: Bool {
         if case .fresh = dataState { return true }
         return false

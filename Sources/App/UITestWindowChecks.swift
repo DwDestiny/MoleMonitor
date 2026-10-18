@@ -149,7 +149,7 @@ enum UITestWindowChecks {
     // MARK: W03 open speed and no white flash
 
     /// One measurement of the open speed. `latencyOk` is the part that a VM stall can spoil (first visible frame <= 150 ms and
-    /// the dog region ready <= 150 ms). `otherOk` (no white flash, the dog in the first frame) must hold in every attempt.
+    /// the headline region ready <= 150 ms). `otherOk` (no white flash, the headline in the first frame) must hold in every attempt.
     private struct W03Attempt {
         var latencyOk: Bool
         var otherOk: Bool
@@ -159,7 +159,7 @@ enum UITestWindowChecks {
     }
 
     /// W03 with at most 3 attempts for the latency (docs/CI.md, "延迟类门禁的重复测量"). The limit 150 ms is unchanged: one attempt
-    /// within the limit passes, 3 attempts above it fail. A real regression is slow every time. The flash and dog checks are not retried.
+    /// within the limit passes, 3 attempts above it fail. A real regression is slow every time. The flash and headline checks are not retried.
     @MainActor
     private static func w03(_ r: UITestRunner) async {
         let t0 = r.now()
@@ -177,7 +177,7 @@ enum UITestWindowChecks {
         let ok = result.latencyOk && result.otherOk
         var values = result.values
         values["attempts"] = Double(speeds.count)
-        r.record("W03", "open speed and no white flash", ok, since: t0, "attempts \(speeds.joined(separator: "/")) ms (limit 150, best of 3; the flash and dog checks must pass in every attempt); last attempt: " + result.note, values)
+        r.record("W03", "open speed and no white flash", ok, since: t0, "attempts \(speeds.joined(separator: "/")) ms (limit 150, best of 3; the flash and headline checks must pass in every attempt); last attempt: " + result.note, values)
     }
 
     @MainActor
@@ -192,8 +192,8 @@ enum UITestWindowChecks {
         var firstVisibleMs: Double?
         var firstLuma: Double?
         var firstOpaqueShare = 0.0
-        var dogReadyMs: Double?
-        var dogShare: Double?
+        var headlineReadyMs: Double?
+        var headlineShare: Double?
         var contentFirstLuma: Double?
         let surface = window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? UITestContrast.darkSurface : UITestContrast.lightSurface
@@ -202,17 +202,17 @@ enum UITestWindowChecks {
         var fullAlphaMs = 0.0
         while (r.now() - opened.before) * 1000 < 500 {
             let elapsed = (r.now() - opened.before) * 1000
-            // The place of the dog is known (cheap check, no capture).
-            if dogReadyMs == nil, let dog = r.panelRect("dog"), dog.width > 1 { dogReadyMs = elapsed }
+            // The place of the headline is known (cheap check, no capture). Before U10 (2026-10-18) this probe watched the dog.
+            if headlineReadyMs == nil, let title = r.panelRect("txt.hero.title"), title.width > 1 { headlineReadyMs = elapsed }
             // The first visible frame: the window server shows the window with an alpha above 0.02.
             if firstVisibleMs == nil, let server = serverAlpha(window), server.onscreen, server.alpha > 0.02 {
                 firstVisibleMs = elapsed
                 serverAlphaAtFirst = server.alpha
-                // The dog must be in the content of that frame (the content image has no window alpha).
+                // The headline must be in the content of that frame (the content image has no window alpha).
                 if let shot = r.capture(host) {
                     contentFirstLuma = luma(shot).mean
-                    if let dog = r.panelRect("dog"), let stats = UITestDogStats.measure(shot, region: dog, surface: surface), stats.area > 0 {
-                        dogShare = Double(stats.ink) / Double(stats.area)
+                    if let title = r.panelRect("txt.hero.title"), let stats = UITestDogStats.measure(shot, region: title, surface: surface), stats.area > 0 {
+                        headlineShare = Double(stats.ink) / Double(stats.area)
                     }
                 }
             }
@@ -240,13 +240,13 @@ enum UITestWindowChecks {
         let speedMs = firstVisibleMs ?? opened.callMs
         let speedOk = speedMs <= 150
         let flashOk = (windowDiff ?? 0) <= 10 && (contentDiff ?? 0) <= 10 && (windowDiff != nil || contentDiff != nil)
-        let dogShareOk = (dogShare ?? 0) >= 0.01
-        let dogReadyOk = (dogReadyMs ?? .infinity) <= 150
-        let note = "click to first visible frame \(fmt(firstVisibleMs)) ms at window alpha \(fmt(serverAlphaAtFirst, 2)) (limit 150; \(captureWorked ? "window server frame" : "window capture unavailable, call duration used")); call \(fmt(opened.callMs)) ms; window image at alpha 1 (\(fmt(fullAlphaMs)) ms) brightness \(fmt(firstLuma, 1)) (opaque share \(fmt(firstOpaqueShare * 100)) %), steady \(fmt(steadyWindow, 1)), difference \(fmt(windowDiff, 1)) (limit 10); content brightness first \(fmt(contentFirstLuma, 1)), steady \(fmt(steadyContent, 1)), difference \(fmt(contentDiff, 1)); dog region ready \(fmt(dogReadyMs)) ms, non-background share \(fmt((dogShare ?? 0) * 100, 1)) % (limit 1 %)"
+        let headlineShareOk = (headlineShare ?? 0) >= 0.01
+        let headlineReadyOk = (headlineReadyMs ?? .infinity) <= 150
+        let note = "click to first visible frame \(fmt(firstVisibleMs)) ms at window alpha \(fmt(serverAlphaAtFirst, 2)) (limit 150; \(captureWorked ? "window server frame" : "window capture unavailable, call duration used")); call \(fmt(opened.callMs)) ms; window image at alpha 1 (\(fmt(fullAlphaMs)) ms) brightness \(fmt(firstLuma, 1)) (opaque share \(fmt(firstOpaqueShare * 100)) %), steady \(fmt(steadyWindow, 1)), difference \(fmt(windowDiff, 1)) (limit 10); content brightness first \(fmt(contentFirstLuma, 1)), steady \(fmt(steadyContent, 1)), difference \(fmt(contentDiff, 1)); dog region ready \(fmt(headlineReadyMs)) ms, non-background share \(fmt((headlineShare ?? 0) * 100, 1)) % (limit 1 %)"
         let values: [String: Double] = ["firstVisibleMs": firstVisibleMs ?? -1, "callMs": opened.callMs, "windowLumaDiff": windowDiff ?? -1,
-                  "contentLumaDiff": contentDiff ?? -1, "dogSharePercent": (dogShare ?? 0) * 100, "dogReadyMs": dogReadyMs ?? -1]
+                  "contentLumaDiff": contentDiff ?? -1, "headlineSharePercent": (headlineShare ?? 0) * 100, "headlineReadyMs": headlineReadyMs ?? -1]
         await r.closePanelQuietly()
-        return W03Attempt(latencyOk: speedOk && dogReadyOk, otherOk: flashOk && dogShareOk, speedMs: speedMs, note: note, values: values)
+        return W03Attempt(latencyOk: speedOk && headlineReadyOk, otherOk: flashOk && headlineShareOk, speedMs: speedMs, note: note, values: values)
     }
 
     // MARK: W05 sidebar window motion
@@ -580,8 +580,8 @@ enum UITestWindowChecks {
         let opened = openReal(r)
         if let real = opened.window {
             await r.sleepMs(600)
-            let dog = r.panelRect("dog")
-            results.append(await sidebarCycle(r, real, label: "real panel", reduceMotion: false, probeRegion: dog))
+            let probe = r.panelRect("txt.hero.title")
+            results.append(await sidebarCycle(r, real, label: "real panel", reduceMotion: false, probeRegion: probe))
             await r.closePanelQuietly()
         } else {
             results.append(W05Result(label: "real panel", ok: false, note: "the real panel did not open"))

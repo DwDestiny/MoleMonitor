@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Command line arguments and MonitorEngine state (status.json data in the data directory).
-// Output: Menu bar app, or --self-test, --diagnose (headless), --preview (28 static PNG files) and --dog-gallery (PNG gallery) modes.
 // Pos: Entry point and app lifecycle; no cleanup or privileged commands, no Go collector.
 //      The menu bar icon is `StatusIconController` driven by `MenuIconModel` and the CPU of each engine tick (v3 runner,
 //      DESIGN_V3.md 4.2); the status item has no title text.
@@ -247,7 +246,6 @@ enum MoleMonitorMain {
             Diagnose.run(args)
             return
         }
-        if args.contains("--dog-gallery") { DogGallery.run(args) }
         if args.contains("--preview") {
             guard let path = argumentValue("--preview", in: args) else {
                 FileHandle.standardError.write(Data("--preview needs an absolute output path.\n".utf8))
