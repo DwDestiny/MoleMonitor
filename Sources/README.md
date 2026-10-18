@@ -62,6 +62,7 @@ last_updated: 2026-10-13
 | `SleepStore.swift` | 睡眠掉电记录的小型持久化，重启后恢复 |
 | `NotificationPlanner.swift` | 通知规则：按送达顺序决定要发的通知 |
 | `MenuIconModel.swift` | 健康状态到菜单栏图标状态（姿态与角标）及无障碍文字的映射，不含绘制 |
+| `MenuRunner.swift` | 菜单栏奔跑图标（v3）：姿态（站立、奔跑 4 帧）、侧视比熊剪影的基本图形、奔跑迟滞（≥35% 开始，连续 2 个 tick <25% 停止）、三档速度、动效条件、提示文字后缀 |
 | `DogArt.swift` | 比熊各部件、菜单栏头部和角标图形的贝塞尔路径数据，不含绘制 |
 | `DogRig.swift` | 比熊动画数学：每帧的部件变换参数与变换后的图层列表。`DogRig.bubbleLayers` 单独给出关注气泡的图层（位图比熊用） |
 | `DogArtPose.swift` | 位图比熊的选图：`DogArtPose`（8 个姿态）与 `DogArtSelector`（平滑、迟滞、最短保持 4 秒，无定时器，由调用方逐个数据点推进）。规则见 [DESIGN.md 4.9](../docs/DESIGN.md#49-位图阶段) |
@@ -76,7 +77,8 @@ last_updated: 2026-10-13
 | `Engine.swift` | `MonitorEngine`：一个 30 秒 tick，睡眠与唤醒，写 `status.json`，`alert-state.json` 与 NDJSON。状态卡打开时启动 2 秒实时采样定时器，关闭时取消并清空缓冲 |
 | `Sampler.swift` | 读磁盘容量、`sysctl` 网卡计数器、开机时间。只读 |
 | `Notifier.swift` | `UNUserNotificationCenter` 授权与发送。无 App 包时报告 `unavailable` |
-| `StatusIcon.swift` | `StatusIconController`：菜单栏图标的唯一所有者。把五态图标、提示文字和 VoiceOver 标签应用到状态栏按钮，缓存图像，状态切换动画不超过 8 帧。绘制在 `DogShapes.swift` 的 `MenuIconRenderer`。阶段 1 的 SF Symbol 图标代码已删除 |
+| `StatusIcon.swift` | `StatusIconController`：菜单栏图标的唯一所有者。CPU 不忙时显示站立帧，没有图标计时器；CPU 忙时用 1 个计时器播放 4 帧奔跑（4、6、8 fps）。健康标记（黄 ▲、红 ■）不动。Reduce Motion、锁屏、显示器睡眠、图标隐藏、低电量模式时回到站立帧并停止计时器。绘制在 `MenuRunnerShapes.swift` |
+| `MenuRunnerShapes.swift` | `MenuRunnerRenderer`：菜单栏比熊剪影的矢量绘制（实心、空心、标记）；`MenuRunnerFrameCache`：按姿态、状态、深浅、倍率缓存帧位图 |
 | `Clipboard.swift` | 把文本写入通用剪贴板，触控板上给一次轻触反馈 |
 | `ProcessSampler.swift` | 用 libproc 读进程列表，输出 `ProcessSample` 与覆盖率。排名在 Core 的 `AppRanking` |
 | `SystemSampler.swift` | 读每核 CPU tick、网卡计数器、内存压力和机器信息。取代旧的 `LiveSampler` |

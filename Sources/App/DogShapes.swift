@@ -2,7 +2,9 @@
 // Copyright (c) 2026 DwDestiny
 // Input: DogArt path data, DogRig layers, a menu icon state (docs/DESIGN.md 3, 4.2, 4.6).
 // Output: Core Graphics drawing of the card Bichon and of the menu bar icon (five states, DESIGN_V2.md 9).
-// Pos: The one renderer for DogView, StatusIconController and DogGallery. Builds each CGPath once and caches it. Owner WP-E
+// Pos: The renderer for DogView and DogGallery. Builds each CGPath once and caches it. Owner WP-E
+//      v3 (U10): the menu bar icon is drawn by MenuRunnerRenderer (MenuRunnerShapes.swift); MenuIconRenderer below is the
+//      v2 head icon, kept only for DogGallery until P1 deletes it. MenuIconInk is shared with the v3 renderer.
 //      (WP-D's DogView vector fallback calls DogRenderer and does not change it).
 // Stage 2: `drawFrame` draws an animated DogView frame (with the art crossfade of a gait switch), and the menu renderer
 // draws MenuIconFrame values, so the switch animation and the still icon share one drawing path.

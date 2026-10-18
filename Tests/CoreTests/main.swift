@@ -586,6 +586,7 @@ runDogActionTests()
 runBubbleCopyTests()
 runHeroLogicTests()
 runMenuIconTests()
+runMenuRunnerTests()
 runCapacityTests()
 
 // MARK: - Summary

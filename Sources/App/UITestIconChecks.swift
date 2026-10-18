@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: The UI regression runner (UITestHarness.swift), the fixtures of PanelModel.fixtureData, AppDelegate's status item.
-// Output: Gate W08 (docs/DESIGN_V2.md 9.2, 9.3, 13.3): 9 scenarios against a hand-written table (posture, badge, data mark,
-//         template flag, width, accessibility label), the head ink against labelColor and the badge color against its
-//         token under forced light and dark appearances, five states pairwise XOR at 1x, the glyph matrices.
-//         Also the helper of the updated gate A (13.2.1): `headInkCheck`.
+// Input: The UI regression runner (UITestHarness.swift), the fixtures of PanelModel.fixtureData, AppDelegate's status item,
+//        MenuRunnerRenderer and StatusIconController.
+// Output: Gate W08 (the five states: model table, applied state, text, not template, width, body ink and mark color under
+//         forced light and dark), gate W29 (stand 1 frame and run 4 frames on one canvas, light and dark not empty, marks
+//         present, run frames differ, mark box clear; writes the contact sheet ui-icon-sheet.png) and gate W30 (run start
+//         and stop by CPU ticks with hysteresis, speed tiers, one timer while running, 0 icon timers under Reduce Motion,
+//         locked screen, sleeping display, hidden icon, Low Power Mode, collecting). Helper of gate A: `headInkCheck`.
 // Pos: Test code. It exists only in the UITEST build (`#if UITEST`). scripts/build.py finds the marker line below and
-//      registers `UITestIconChecks.register` in the generated `uiTestRegisterAll`. Owner WP-E.
+//      registers `UITestIconChecks.register` in the generated `uiTestRegisterAll`. Owner P-icon (v3, docs/DESIGN_V3.md 4.2).
 //
 // UITEST-REGISTER: UITestIconChecks
 
@@ -18,6 +20,8 @@ import Foundation
 enum UITestIconChecks {
     static func register(into registry: UITestRegistry) {
         registry.add("W08", "menu bar five states") { runner in await runner.stepIconFiveStates() }
+        registry.add("W29", "menu bar runner frames") { runner in await runner.stepRunnerFrames() }
+        registry.add("W30", "menu bar runner trigger and timer") { runner in await runner.stepRunnerTrigger() }
     }
 
     /// One W08 scenario: the input and the expected icon, written by hand (not computed by MenuIconModel).
@@ -73,6 +77,7 @@ enum UITestIconChecks {
         var width: Int
         var height: Int
         var bytes: [UInt8]
+        var cgImage: CGImage?
 
         func alpha(_ x: Int, _ y: Int) -> Double { Double(bytes[(y * width + x) * 4 + 3]) / 255 }
         /// Unpremultiplied RGB (0 to 255) and alpha (0 to 255) of one pixel.
@@ -84,6 +89,7 @@ enum UITestIconChecks {
         }
         /// Alpha grid of the whole image (for IconMetrics.xorRatio).
         var alphaGrid: [[Double]] { (0..<height).map { y in (0..<width).map { x in alpha(x, y) } } }
+        var solidCount: Int { alphaGrid.joined().filter { $0 >= IconMetrics.solidThreshold }.count }
     }
 
     /// Draws `image` at `scale` with `appearance` as the current drawing appearance (as the status bar button does).
@@ -105,15 +111,15 @@ enum UITestIconChecks {
         for y in 0..<h {
             for x in 0..<(w * 4) { bytes[y * w * 4 + x] = p[y * row + x] }
         }
-        return Raster(width: w, height: h, bytes: bytes)
+        return Raster(width: w, height: h, bytes: bytes, cgImage: cg)
     }
 
     static let light = NSAppearance(named: .aqua)!
     static let dark = NSAppearance(named: .darkAqua)!
 
-    /// Gate A (13.2.1) and W08: the head of a non-template icon has the menu bar text color. In the head columns
-    /// (x < 14 pt), the pixels at the largest alpha must equal `labelColor` of the appearance: RGB and alpha each within
-    /// 8 (0 to 255), in light and in dark, at 2x. Returns the worst channel difference.
+    /// Gate A and W08: the body of the icon has the menu bar text color. In the columns x < 14 pt, the pixels at the
+    /// largest alpha must equal `labelColor` of the appearance: RGB and alpha each within 8 (0 to 255), in light and in
+    /// dark, at 2x. Returns the worst channel difference.
     @MainActor static func headInkCheck(_ image: NSImage) -> (ok: Bool, worst: Double, note: String) {
         var worst = 0.0
         var notes = [String]()
@@ -139,19 +145,25 @@ enum UITestIconChecks {
             }
             diff = max(diff, abs(maxA - wa))
             worst = max(worst, diff)
-            notes.append("\(name) head px \(n) diff \(Int(diff.rounded()))")
+            notes.append("\(name) body px \(n) diff \(Int(diff.rounded()))")
             if n < 40 { worst = 255 }
         }
         return (worst <= IconMetrics.headInkTolerance, worst, notes.joined(separator: ", "))
     }
 
-    /// W08: the badge pixels (full alpha, in the badge box) have the token color of the appearance (each channel
-    /// within 8), light and dark, 1x and 2x. Returns the worst difference and the count of badge pixels.
-    @MainActor static func badgeColorCheck(_ image: NSImage, kind: MenuIconKind) -> (ok: Bool, worst: Double, note: String) {
-        guard let token = kind.badgeToken else { return (true, 0, "no colored badge") }
-        let box = kind == .alert
-            ? CGRect(x: DogArt.alarmOrigin.x, y: DogArt.alarmOrigin.y, width: DogArt.alarmSize, height: DogArt.alarmSize)
-            : CGRect(x: DogArt.menuBadgeOrigin.x, y: DogArt.menuBadgeOrigin.y, width: DogArt.badgeSize, height: DogArt.badgeSize)
+    /// The mark box in px at `scale`.
+    static func markBox(scale: Int) -> (x: Range<Int>, y: Range<Int>) {
+        let k = Double(scale)
+        let x0 = Int((MenuRunnerArt.markOrigin.x * k).rounded(.down)), y0 = Int((MenuRunnerArt.markOrigin.y * k).rounded(.down))
+        let x1 = min(Int((MenuRunnerArt.markOrigin.x + MenuRunnerArt.markSize) * k), 24 * scale)
+        let y1 = min(Int((MenuRunnerArt.markOrigin.y + MenuRunnerArt.markSize) * k), 18 * scale)
+        return (x0..<x1, y0..<y1)
+    }
+
+    /// W08 and W29: the full-alpha pixels in the mark box have the token color of the appearance (each channel within
+    /// 8), light and dark, 1x and 2x. Returns the worst difference and the count of mark pixels.
+    @MainActor static func markColorCheck(_ image: NSImage, kind: MenuIconKind) -> (ok: Bool, worst: Double, note: String) {
+        guard let token = kind.badgeToken else { return (true, 0, "no colored mark") }
         var worst = 0.0
         var notes = [String]()
         for (name, appearance, isDark) in [("light", light, false), ("dark", dark, true)] {
@@ -159,11 +171,11 @@ enum UITestIconChecks {
             let want = (Double((hex >> 16) & 0xFF), Double((hex >> 8) & 0xFF), Double(hex & 0xFF))
             for scale in [1, 2] {
                 guard let r = render(image, appearance: appearance, scale: scale) else { return (false, 255, "cannot render") }
+                let box = markBox(scale: scale)
                 var n = 0
                 var diff = 0.0
-                let k = CGFloat(scale)
-                for y in Int(box.minY * k)..<min(r.height, Int(box.maxY * k)) {
-                    for x in Int(box.minX * k)..<min(r.width, Int(box.maxX * k)) {
+                for y in box.y {
+                    for x in box.x {
                         let p = r.color(x, y)
                         guard p.a >= 250 else { continue }
                         n += 1
@@ -177,10 +189,45 @@ enum UITestIconChecks {
         }
         return (worst <= IconMetrics.headInkTolerance, worst, notes.joined(separator: ", "))
     }
+
+    /// Pixels with alpha >= 0.5 inside the mark box (any color).
+    static func markPixels(_ r: Raster, scale: Int) -> Int {
+        let box = markBox(scale: scale)
+        var n = 0
+        for y in box.y { for x in box.x where r.alpha(x, y) >= 0.5 { n += 1 } }
+        return n
+    }
+
+    /// The contact sheet (W29): one row on the light reference bar, one on the dark; each cell is a 2x render of the
+    /// real NSImage under that appearance, enlarged 4 times (8 px per pt), nearest neighbour. Cells: stand, run 1 to 4,
+    /// stand with the yellow triangle, run 2 with the red square, collecting, stale.
+    static func contactSheet(cells: [(MenuRunPose, MenuIconKind)], images: (MenuRunPose, MenuIconKind) -> NSImage) -> Data? {
+        let zoom = 4, scale = 2, gap = 24, pad = 24
+        let cw = 24 * scale * zoom, ch = 18 * scale * zoom
+        let width = pad * 2 + cells.count * cw + (cells.count - 1) * gap
+        let height = (ch + pad * 2) * 2
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .none
+        for (row, (appearance, isDark)) in [(light, false), (dark, true)].enumerated() {
+            let bar = MenuIconPalette.bar(dark: isDark)
+            let y0 = height - (row + 1) * (ch + pad * 2)   // CG y up: row 0 on top
+            ctx.setFillColor(MenuIconInk.hex(bar))
+            ctx.fill(CGRect(x: 0, y: y0, width: width, height: ch + pad * 2))
+            for (i, cell) in cells.enumerated() {
+                guard let r = render(images(cell.0, cell.1), appearance: appearance, scale: scale), let cg = r.cgImage else { continue }
+                let x = pad + i * (cw + gap)
+                ctx.draw(cg, in: CGRect(x: x, y: y0 + pad, width: cw, height: ch))
+            }
+        }
+        guard let sheet = ctx.makeImage() else { return nil }
+        return NSBitmapImageRep(cgImage: sheet).representation(using: .png, properties: [:])
+    }
 }
 
 extension UITestRunner {
-    /// W08: the menu bar five states (DESIGN_V2.md 9). The engine is held back while this runs, then gets the icon back.
+    /// W08: the menu bar five states (DESIGN_V2.md 9.2, DESIGN_V3.md 4.2). The engine is held back while this runs.
     func stepIconFiveStates() async {
         let t0 = now()
         delegate.suspendIconUpdates = true
@@ -188,8 +235,7 @@ extension UITestRunner {
         var notes = [String]()
         var values = [String: Double]()
         let button = delegate.statusItem?.button
-        var grids = [(kind: MenuIconKind, name: String, grid: [[Double]])]()
-        var worstHead = 0.0, worstBadge = 0.0
+        var worstHead = 0.0, worstMark = 0.0
         let scenarios = UITestIconChecks.scenarios(now: Date())
         for s in scenarios {
             // (1) The model gives the expected state.
@@ -211,78 +257,200 @@ extension UITestRunner {
             let image: NSImage
             if let button, let shown = button.image {
                 image = shown
+                // The app's own icon does not run in the UI test build, so the text has no busy suffix.
                 if button.toolTip != text { problems.append("\(s.name): tooltip differs from the icon text") }
                 if (button.accessibilityLabel() ?? "") != text { problems.append("\(s.name): accessibility label differs") }
             } else {
-                image = MenuIconRenderer.image(model)
-                notes.append("\(s.name): no button image here, renderer image used")
+                image = delegate.iconController.image(for: model)
+                notes.append("\(s.name): no button image here, controller image used")
             }
-            // (3) Template flag and width.
-            if image.isTemplate != s.kind.isTemplate {
-                problems.append("\(s.name): isTemplate \(image.isTemplate), expected \(s.kind.isTemplate)")
-            }
+            // (3) Not a template (v3), width 24 pt.
+            if image.isTemplate { problems.append("\(s.name): the image is a template") }
             if abs(Double(image.size.width) - 24) > 0.01 { problems.append("\(s.name): width \(image.size.width) pt") }
-            // (4) Colors under forced light and dark.
+            // (4) Body ink and mark color under forced light and dark.
             var line = "\(s.name)=\(s.kind.rawValue)"
-            if !s.kind.isTemplate {
+            if s.mark == nil {
                 let head = UITestIconChecks.headInkCheck(image)
                 worstHead = max(worstHead, head.worst)
-                if !head.ok { problems.append("\(s.name): head ink \(head.note)") }
-                let badge = UITestIconChecks.badgeColorCheck(image, kind: s.kind)
-                worstBadge = max(worstBadge, badge.worst)
-                if !badge.ok { problems.append("\(s.name): badge color \(badge.note)") }
-                line += " head \(Int(head.worst.rounded())) badge \(Int(badge.worst.rounded()))"
+                if !head.ok { problems.append("\(s.name): body ink \(head.note)") }
+                line += " body \(Int(head.worst.rounded()))"
+            }
+            if s.kind.badgeToken != nil {
+                let mark = UITestIconChecks.markColorCheck(image, kind: s.kind)
+                worstMark = max(worstMark, mark.worst)
+                if !mark.ok { problems.append("\(s.name): mark color \(mark.note)") }
+                line += " mark \(Int(mark.worst.rounded()))"
             }
             notes.append(line)
-            // (5) The 1x alpha grid (light) for the five-state matrix.
-            if let r = UITestIconChecks.render(image, appearance: UITestIconChecks.light, scale: 1) {
-                grids.append((s.kind, s.name, r.alphaGrid))
-            } else {
-                problems.append("\(s.name): cannot render at 1x")
-            }
         }
-        // Five states pairwise at 1x (states of a different kind only).
-        var worst = (value: Double.infinity, pair: "")
-        for i in 0..<grids.count {
-            for j in (i + 1)..<grids.count where grids[i].kind != grids[j].kind {
-                let r = IconMetrics.xorRatio(grids[i].grid, grids[j].grid)
-                if r < worst.value { worst = (r, grids[i].name + "/" + grids[j].name) }
-            }
-        }
-        if !worst.value.isFinite || worst.value < IconMetrics.fiveStatePass {
-            problems.append("five-state XOR \(String(format: "%.3f", worst.value)) (\(worst.pair)) < \(IconMetrics.fiveStatePass)")
-        }
-        // Glyph matrices at 1x: category glyphs and data marks >= 0.35, alarm discs >= 0.30.
-        var glyphs = HealthItem.allCases.map { ($0.rawValue, DogGallery.badgeGrid($0, style: GlyphPaths.chosen)) }
-        for mark in MenuMark.allCases { glyphs.append((mark.rawValue, DogGallery.markGrid(mark))) }
-        let gm = IconMetrics.matrix(glyphs)
-        if gm.minimum < IconMetrics.badgePass { problems.append("glyph XOR \(String(format: "%.3f", gm.minimum)) < \(IconMetrics.badgePass)") }
-        let am = IconMetrics.matrix(HealthItem.allCases.map { ($0.rawValue, DogGallery.alarmGrid($0, style: GlyphPaths.chosen)) })
-        if am.minimum < IconMetrics.alarmPass { problems.append("alarm XOR \(String(format: "%.3f", am.minimum)) < \(IconMetrics.alarmPass)") }
-        // Badge contrast against the reference bars.
+        // Mark contrast against the reference bars.
         var minContrast = Double.infinity
         for token in MenuIconPalette.Token.allCases {
             for isDark in [false, true] {
                 minContrast = min(minContrast, IconMetrics.contrast(MenuIconPalette.hex(token, dark: isDark), MenuIconPalette.bar(dark: isDark)))
             }
         }
-        if minContrast < IconMetrics.badgeContrastPass { problems.append("badge contrast \(String(format: "%.2f", minContrast)) < 3") }
+        if minContrast < IconMetrics.badgeContrastPass { problems.append("mark contrast \(String(format: "%.2f", minContrast)) < 3") }
 
         delegate.suspendIconUpdates = false
         delegate.applyMenuIcon(verdicts: engine.verdicts, dataState: engine.dataState)
         values["scenarios"] = Double(scenarios.count)
-        values["fiveStateMinXOR"] = worst.value.isFinite ? (worst.value * 1000).rounded() / 1000 : -1
-        values["glyphMinXOR"] = (gm.minimum * 1000).rounded() / 1000
-        values["alarmMinXOR"] = (am.minimum * 1000).rounded() / 1000
-        values["badgeMinContrast"] = (minContrast * 100).rounded() / 100
-        values["headInkWorst"] = worstHead
-        values["badgeColorWorst"] = worstBadge
+        values["markMinContrast"] = (minContrast * 100).rounded() / 100
+        values["bodyInkWorst"] = worstHead
+        values["markColorWorst"] = worstMark
         values["problems"] = Double(problems.count)
-        var note = notes.joined(separator: ", ")
-            + String(format: "; five-state min XOR %.3f", worst.value) + " (\(worst.pair))"
-            + String(format: ", glyph min %.3f, alarm min %.3f, contrast min %.2f", gm.minimum, am.minimum, minContrast)
+        var note = notes.joined(separator: ", ") + String(format: "; contrast min %.2f", minContrast)
         if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
         record("W08", "菜单栏五态", problems.isEmpty, since: t0, note, values)
+    }
+
+    /// W29: stand 1 frame and run 4 frames on one 24 x 18 pt canvas; light and dark not empty; the marks present in every
+    /// frame and in their colors; the run frames differ pairwise in the leg band; the mark box clear of the dog in the
+    /// normal frames. Writes ui-icon-sheet.png.
+    func stepRunnerFrames() async {
+        let t0 = now()
+        var problems = [String]()
+        var values = [String: Double]()
+        let controller = StatusIconController(statusItem: nil)
+        func img(_ p: MenuRunPose, _ k: MenuIconKind) -> NSImage { controller.image(p, kind: k) }
+        var minSolid = Int.max
+        var legGrids = [(String, [[Double]])]()
+        for pose in MenuRunPose.all {
+            for kind in [MenuIconKind.normal, .caution, .alert] {
+                let image = img(pose, kind)
+                if abs(image.size.width - 24) > 0.01 || abs(image.size.height - 18) > 0.01 {
+                    problems.append("\(pose)/\(kind.rawValue): size \(image.size)")
+                }
+                if image.isTemplate { problems.append("\(pose)/\(kind.rawValue): template") }
+                for (name, appearance) in [("light", UITestIconChecks.light), ("dark", UITestIconChecks.dark)] {
+                    guard let r = UITestIconChecks.render(image, appearance: appearance, scale: 2) else {
+                        problems.append("\(pose)/\(kind.rawValue)/\(name): cannot render")
+                        continue
+                    }
+                    minSolid = min(minSolid, r.solidCount)
+                    if r.solidCount < 400 { problems.append("\(pose)/\(kind.rawValue)/\(name): \(r.solidCount) solid px at 2x") }
+                    let inBox = UITestIconChecks.markPixels(r, scale: 2)
+                    if kind == .normal, inBox > 0 { problems.append("\(pose)/\(name): \(inBox) dog px in the mark box") }
+                    if kind != .normal, inBox < 40 { problems.append("\(pose)/\(kind.rawValue)/\(name): mark has \(inBox) px") }
+                    if kind == .normal, name == "light" { legGrids.append((pose.description, Array(r.alphaGrid[28..<36]))) }
+                }
+                if kind != .normal {
+                    let c = UITestIconChecks.markColorCheck(image, kind: kind)
+                    if !c.ok { problems.append("\(pose)/\(kind.rawValue): mark color \(c.note)") }
+                }
+            }
+        }
+        // Data states: hollow stand frame with its mark, both appearances.
+        for kind in [MenuIconKind.collecting, .stale] {
+            for appearance in [UITestIconChecks.light, UITestIconChecks.dark] {
+                guard let r = UITestIconChecks.render(img(.stand, kind), appearance: appearance, scale: 2) else { continue }
+                if UITestIconChecks.markPixels(r, scale: 2) < 10 { problems.append("\(kind.rawValue): no data mark") }
+                if r.solidCount < 150 { problems.append("\(kind.rawValue): hollow outline has \(r.solidCount) px") }
+            }
+        }
+        let runOnly = legGrids.filter { $0.0 != "stand" }
+        let m = IconMetrics.matrix(runOnly)
+        if m.minimum < 0.30 { problems.append(String(format: "run frames leg band min XOR %.3f < 0.30", m.minimum)) }
+        let cells: [(MenuRunPose, MenuIconKind)] = [(.stand, .normal)] + MenuRunPose.runFrames.map { ($0, .normal) }
+            + [(.stand, .caution), (.run(1), .alert), (.stand, .collecting), (.stand, .stale)]
+        if let png = UITestIconChecks.contactSheet(cells: cells, images: img) {
+            do { try png.write(to: outDir.appendingPathComponent("ui-icon-sheet.png")) } catch { problems.append("sheet: \(error)") }
+        } else {
+            problems.append("sheet: cannot draw")
+        }
+        values["minSolid2x"] = Double(minSolid)
+        values["runLegMinXOR"] = (m.minimum * 1000).rounded() / 1000
+        values["problems"] = Double(problems.count)
+        var note = String(format: "min solid px %d, run leg band min XOR %.3f", minSolid, m.minimum)
+        if !problems.isEmpty { note += "; failures: " + problems.prefix(12).joined(separator: "; ") }
+        record("W29", "菜单栏奔跑帧", problems.isEmpty, since: t0, note, values)
+    }
+
+    /// W30: the run trigger by CPU ticks and the timer rule (DESIGN_V3.md 4.2, AGENTS.md).
+    func stepRunnerTrigger() async {
+        let t0 = now()
+        var problems = [String]()
+        var notes = [String]()
+        var values = [String: Double]()
+        let host = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 30), styleMask: [.borderless], backing: .buffered, defer: true)
+        let button = NSButton(frame: NSRect(x: 0, y: 0, width: 24, height: 18))
+        host.contentView?.addSubview(button)
+        let controller = StatusIconController(statusItem: nil)
+        controller.fallbackButton = button
+        var conditions = MenuMotionConditions()
+        controller.conditionsOverride = { conditions }
+        var frames = [Int]()
+        controller.onImage = { frames.append($0) }
+        let normal = MenuIconState(posture: .relaxed, badge: nil)
+        controller.apply(normal, text: "MoleMonitor：一切正常。")
+        func expect(_ ok: Bool, _ what: String) { if !ok { problems.append(what) } }
+
+        expect(controller.timerCount == 0, "standing at start: \(controller.timerCount) timers")
+        controller.cpuTick(30)
+        expect(controller.timerCount == 0, "30 %: \(controller.timerCount) timers")
+        controller.cpuTick(40)
+        expect(controller.timerCount == 1, "40 %: \(controller.timerCount) timers, want 1")
+        expect(abs((controller.frameInterval ?? 0) - 0.25) < 1e-6, "40 %: interval \(controller.frameInterval ?? -1)")
+        expect(abs((controller.timerTolerance ?? 0) - 0.05) < 1e-6, "40 %: tolerance \(controller.timerTolerance ?? -1)")
+        expect(button.toolTip == "MoleMonitor：一切正常，CPU 占用高。", "busy text: \(button.toolTip ?? "nil")")
+        frames = []
+        await sleepMs(1100)
+        let seen = Set(frames.filter { $0 > 0 })
+        expect(seen.count >= 3, "4 fps for 1.1 s showed frames \(frames)")
+        values["framesIn1100ms"] = Double(frames.count)
+        controller.cpuTick(70)
+        expect(abs((controller.frameInterval ?? 0) - 1.0 / 6) < 1e-6, "70 %: interval \(controller.frameInterval ?? -1)")
+        controller.cpuTick(90)
+        expect(abs((controller.frameInterval ?? 0) - 0.125) < 1e-6, "90 %: interval \(controller.frameInterval ?? -1)")
+        expect(controller.timerCount == 1, "retime keeps one timer: \(controller.timerCount)")
+        // Hysteresis: one calm tick keeps running, a tick at 30 % resets, two calm ticks in a row stop.
+        controller.cpuTick(20)
+        expect(controller.timerCount == 1, "one tick < 25 % stopped the run")
+        controller.cpuTick(30)
+        controller.cpuTick(20)
+        expect(controller.timerCount == 1, "calm count not reset by 30 %")
+        controller.cpuTick(20)
+        expect(controller.timerCount == 0, "two ticks < 25 %: \(controller.timerCount) timers, want 0")
+        expect(button.toolTip == "MoleMonitor：一切正常。", "text after stop: \(button.toolTip ?? "nil")")
+        expect(frames.last == 0, "stand frame after stop")
+
+        // Each condition alone: 0 icon timers, stand frame; clearing it brings the run back.
+        controller.cpuTick(90)
+        let names = ["reduceMotion", "screenLocked", "displayAsleep", "iconHidden", "lowPower"]
+        var zero = 0
+        for (i, name) in names.enumerated() {
+            conditions = MenuMotionConditions()
+            switch i {
+            case 0: conditions.reduceMotion = true
+            case 1: conditions.screenLocked = true
+            case 2: conditions.displayAsleep = true
+            case 3: conditions.iconVisible = false
+            default: conditions.lowPower = true
+            }
+            controller.refresh()
+            if controller.timerCount == 0 && frames.last == 0 { zero += 1 } else { problems.append("\(name): \(controller.timerCount) timers") }
+            conditions = MenuMotionConditions()
+            controller.refresh()
+            expect(controller.timerCount == 1, "\(name) cleared: \(controller.timerCount) timers")
+        }
+        // Collecting and stale never run.
+        controller.apply(MenuIconState(posture: .hollow, badge: nil, mark: .collecting), text: "MoleMonitor：正在采集。")
+        expect(controller.timerCount == 0, "collecting while busy: \(controller.timerCount) timers")
+        expect(button.toolTip == "MoleMonitor：正在采集。", "collecting text: \(button.toolTip ?? "nil")")
+        // A health mark keeps the run.
+        controller.apply(MenuIconState(posture: .pant, badge: MenuBadge(item: .disk)), text: "MoleMonitor：磁盘异常。")
+        expect(controller.timerCount == 1, "red mark while busy: \(controller.timerCount) timers")
+        controller.cpuTick(10)
+        controller.cpuTick(10)
+        expect(controller.timerCount == 0, "end: \(controller.timerCount) timers")
+        // The app's own icon in the UI test build: no icon timer.
+        expect(delegate.iconController.timerCount == 0, "app icon: \(delegate.iconController.timerCount) timers")
+        values["conditionsWithZeroTimers"] = Double(zero)
+        values["problems"] = Double(problems.count)
+        notes.append("frames in 1.1 s at 4 fps \(frames.count), conditions with 0 timers \(zero)/5")
+        var note = notes.joined(separator: ", ")
+        if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
+        record("W30", "菜单栏奔跑触发与计时器", problems.isEmpty, since: t0, note, values)
     }
 }
 #endif

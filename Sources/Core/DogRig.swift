@@ -11,6 +11,8 @@
 // Stage 2 (I2): DogMotor.frame(dt:input:) also returns the art crossfade of a gait switch (lie <-> stand body,
 // stand <-> trot body) and pops the bubble once (spring 0.6 -> 1). MenuMotion builds the <= 8 frames of the menu bar
 // switch: the head silhouette morphs (ears, tilt), the mouth and the tongue grow, the badge pops 0 -> 1.2 -> 1.
+// v3 (U10): the menu bar icon no longer plays MenuMotion (see MenuRunner.swift); it is kept only for DogGallery and
+// UITestDogChecks until P1 deletes them.
 
 import Foundation
 
@@ -549,13 +551,8 @@ struct MenuIconFrame: Equatable {
     var badgeScale = 1.0
 }
 
-/// When the conditions forbid motion, the icon switches straight to the target image.
-struct MenuMotionConditions: Equatable {
-    var reduceMotion = false
-    var screenLocked = false
-    var displayAsleep = false
-    var iconVisible = true
-}
+// MenuMotionConditions moved to MenuRunner.swift (v3, U10). MenuMotion below is the v2 switch animation: the menu bar
+// icon no longer plays it (DESIGN_V3.md 4.2); only DogGallery and UITestDogChecks still call it, and P1 deletes both.
 
 enum MenuMotion {
     static let frameCount = 8

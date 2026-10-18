@@ -7,6 +7,7 @@
 //      memory pressure, swap and thermal state, reads the battery (60 s on battery, 5 min on AC), scans processes by throttle
 //      (300 s all green, 180 s any yellow or red) and evaluates the rules. A 2 s timer exists only while the card is open (own points,
 //      not saved) and then also scans processes every 4 s. All logic that does not need a Mac is in Core (HealthPipeline, NotificationPlanner).
+//      v3: each tick also hands its CPU percent to the menu bar runner (`cpuTickHandler`); the icon owns its own run timer.
 
 import Foundation
 import Combine
@@ -58,6 +59,9 @@ final class MonitorEngine: ObservableObject {
 
     /// Main thread. Called when the user taps a notification: open the card, expand the item.
     var openCardHandler: ((HealthItem?) -> Void)?
+    /// Called on the main thread after each 30 s tick (and the warm-up tick) with the whole-machine CPU percent of that
+    /// tick, or nil when the tick read none. The menu bar runner uses it (docs/DESIGN_V3.md 4.2).
+    var cpuTickHandler: ((Double?) -> Void)?
 
     /// "提示词包含 App 名称" (default on). The setting is written to status.json for the CLI.
     var includeAppNamesInPrompt: Bool {
@@ -569,7 +573,8 @@ final class MonitorEngine: ObservableObject {
         guard started, !sleeping else { return }
         let now = Date()
         if regular { tickCount += 1 }
-        collectPoint(now: now)
+        let cpu = collectPoint(now: now)
+        DispatchQueue.main.async { [weak self] in self?.cpuTickHandler?(cpu) }
         // The warm-up tick always scans once more: the first scan only sets the baseline, so it gives no CPU values.
         if !regular || scanDue(now: now) { scanProcesses(now: now) }
         if regular && tickCount % MonitorEngine.ticksPerDiskSample == 0 {
@@ -583,8 +588,10 @@ final class MonitorEngine: ObservableObject {
 
     // MARK: Readings
 
-    /// One 30 s point: CPU, network, memory pressure, swap, thermal state and, when due, the battery.
-    private func collectPoint(now: Date) {
+    /// One 30 s point: CPU, network, memory pressure, swap, thermal state and, when due, the battery. Returns the CPU
+    /// percent of this point (nil when the sampler gave none).
+    @discardableResult
+    private func collectPoint(now: Date) -> Double? {
         let reading = coarseSampler.read(at: now, slow: true)
         let readNow = refreshPower(now: now, force: false)
         var point = TrendPoint(t: now)
@@ -605,6 +612,7 @@ final class MonitorEngine: ObservableObject {
         if reading.cpuPercent != nil { latestCPU = reading.cpuPercent }
         latestRate = reading.rate
         if let list = reading.interfaces { latestInterfaces = list }
+        return reading.cpuPercent
     }
 
     /// Reads the battery every 60 s on battery power and every 5 minutes on AC. Returns true when it read now.
