@@ -61,7 +61,7 @@ struct AppIconView: View {
 
 // MARK: - Header
 
-/// The level shape before the title: ■ red, ▲ yellow, ✓ normal. The anomaly log and unknown levels have none.
+/// The level shape before the title: ■ red, ▲ yellow, ✓ normal, gray dot for network. The anomaly log and unknown levels have none.
 private struct SidebarLevelMark: View {
     let state: SidebarContentState
     @Environment(\.tok) private var tok
@@ -70,6 +70,9 @@ private struct SidebarLevelMark: View {
         Group {
             if state.item == .anomalyLog {
                 EmptyView()
+            } else if state.item == .network {
+                // Network has no health level: the gray dot of the main column, not a check mark.
+                StatusDotView(dot: .normal)
             } else if state.level == .red {
                 StatusDotView(dot: .red)
             } else if state.level == .yellow {
