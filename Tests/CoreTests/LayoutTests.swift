@@ -307,6 +307,22 @@ func runSidebarTests() {
     expect(c7.lines[0].pointCount == 288 && c7.recordedText == "已记录 23 小时", "7 d with 23 hours of history, got \(String(describing: c7.recordedText))")
     let stats = SidebarStats.make(input)
     expect(stats.map { $0.label } == ["当前", "均值", "峰值"] && stats[1].value == "20%" && stats[2].value == "40%", "cpu stats \(stats)")
+    let sentence = SidebarSummary.sentence(.cpu, range: .d7, stats: stats)
+    expect(sentence == "7 天均值 20%，峰值 40%", "cpu sentence leaves out the missing current value, got \(sentence)")
+    expect(SidebarSummary.sentence(.cpu, range: .h2, stats: [SidebarStat(label: "当前", value: "74%"), SidebarStat(label: "均值", value: "56%"),
+                                                           SidebarStat(label: "峰值", value: "81%")]) == "当前 74%，2 小时均值 56%，峰值 81%", "design example sentence")
+    expect(SidebarSummary.sentence(.memory, range: .h2, stats: [SidebarStat(label: "压力", value: "87%"), SidebarStat(label: "swap", value: "9.8 GB"),
+                                                              SidebarStat(label: "30 分钟变化", value: "+2.4 GB")]).contains("swap 9.8 GB"), "swap is in the memory sentence")
+    expect(!SidebarSummary.sentence(.network, range: .h2, stats: [SidebarStat(label: "今天", value: "1 GB")]).contains("\u{00B7}"), "no middle dot in the sentence")
+    expect(c2.axisMarks.map { $0.text } == ["0", "70", "90"] && c2.axisMarks.filter { $0.threshold }.count == 2, "cpu marks: zero line and thresholds")
+    expect(c2.liveEnd?.t == now && c7.liveEnd == nil, "live dot on fresh 2 h data only")
+    let ev = EventRecord(item: .cpu, first: .yellow, peak: .yellow, reasonCode: "cpu_mean_10m", start: now.addingTimeInterval(-1800),
+                         end: nil, peakValue: 80, unit: "%", app: nil, endEstimated: false)
+    var input2 = input
+    input2.range = .h2
+    let banded = SidebarChart.make(input2, events: [ev, ev])
+    expect(banded.bands.count == 1 && banded.bands[0].kind == .warning && banded.bands[0].to == now, "an ongoing yellow record is one warning band to now")
+    expect(SidebarChart.make(input2).bands.isEmpty, "no records, no bands")
 
     section("Sidebar: network and thermal")
     input.item = .network
@@ -320,7 +336,8 @@ func runSidebarTests() {
     input.range = .h2
     input.trend = TrendSeries(segments: [(0..<10).map { TrendPoint(t: now.addingTimeInterval(-Double(9 - $0) * 30), cpu: 10, thermal: $0 < 5 ? .nominal : .fair) }])
     let th = SidebarChart.make(input)
-    expect(th.style == .step && th.domain == 0...3 && th.lines.count == 2 && th.lines[1].secondary, "thermal step with a CPU line")
+    expect(th.style == .step && th.domain == 0...3 && th.lines.count == 1, "thermal step, one chart one line")
+    expect(th.axisMarks.count == 4 && th.axisMarks.allSatisfy { !$0.threshold }, "thermal marks are the four level words")
     expect(th.readout(at: now, timeZone: utc)?.contains("偏热") == true, "thermal readout uses the word")
 
     section("Sidebar: ranking and footnotes")
@@ -354,7 +371,11 @@ func runSidebarTests() {
                          end: now.addingTimeInterval(-29 * 3600), peakValue: 94, unit: "%", app: "Xcode", endEstimated: true)
     let groups = SidebarRecords.groups([e2, e1], days: 7, now: now, timeZone: utc)
     expect(groups.count == 2 && groups[0].title == "今天" && groups[1].title == "昨天", "groups today and yesterday, got \(groups.map { $0.title })")
-    expect(groups[0].rows[0].span.hasSuffix("进行中") && groups[0].rows[0].ongoing, "ongoing record")
+    expect(groups[0].rows[0].span.hasSuffix(" 起，进行中") && groups[0].rows[0].ongoing, "ongoing record, got \(groups[0].rows[0].span)")
+    expect(!groups[1].rows[0].evidence.contains("\u{00B7}"), "no middle dot in the evidence")
+    let strip = RecordStrip.segments(groups.flatMap { $0.rows }, days: 7, now: now)
+    expect(strip.count == 2 && strip.last?.level == .red && strip.last?.to == 1, "strip: red last and the ongoing record reaches today")
+    expect(strip.allSatisfy { $0.to - $0.from >= 0.008 - 1e-9 }, "short records stay visible on the strip")
     expect(groups[1].rows[0].duration.hasPrefix("约 ") && groups[1].rows[0].evidence.contains("Xcode"), "estimated end and app name")
     expect(SidebarRecords.dayTitle(20000, today: 20010).contains("月") && SidebarRecords.dayTitle(20000, today: 20010).contains("周"), "older day title")
     let rstats = SidebarStats.make(SidebarInput(item: .anomalyLog, range: .d7, trend: .empty, rollups: [], diskSeries: [], diskTrigger: nil, sleeps: [],

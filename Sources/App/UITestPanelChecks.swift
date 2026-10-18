@@ -1288,15 +1288,12 @@ extension UITestRunner {
                 }
                 let state = model.sidebarContent(for: item)
                 guard let cap = state.capacity else { problems.append("\(c.rawValue) \(item.rawValue): no capacity area"); continue }
-                let totalRect = sideRect("cap.total"), usedRect = sideRect("cap.used"), availableRect = sideRect("cap.available")
-                guard let totalRect, let usedRect, let availableRect else {
+                // v3 (docs/DESIGN_V3.md 6, docs/CI.md W19 v3 entry): one bar and one line of numbers, no three-column stat block.
+                guard let barRect = sideRect("cap.bar"), let lineRect = sideRect("cap.line") else {
                     problems.append("\(c.rawValue) \(item.rawValue): capacity frames missing")
                     continue
                 }
-                // The three columns are 95 pt wide and right aligned: the text boxes end at the column edge (tolerance 0.5 pt).
-                let edges = [totalRect.maxX, usedRect.maxX, availableRect.maxX]
-                let gap1 = abs((edges[1] - edges[0]) - 96), gap2 = abs((edges[2] - edges[1]) - 96)
-                if gap1 > 0.5 || gap2 > 0.5 { problems.append("\(c.rawValue) \(item.rawValue): column edges \(edges) are not 96 pt apart") }
+                if lineRect.maxX > barRect.maxX + 0.5 { problems.append("\(c.rawValue) \(item.rawValue): capacity line wider than the bar") }
                 let units = [cap.total, cap.used, cap.available].map { $0.split(separator: " ").last.map(String.init) ?? "" }
                 if Set(units).count != 1 { problems.append("\(c.rawValue) \(item.rawValue): units differ \(units)") }
                 let n = [cap.total, cap.used, cap.available].map { Double($0.split(separator: " ").first ?? "") ?? -1 }
@@ -1331,7 +1328,7 @@ extension UITestRunner {
             model.panelDidClose()
             await closeFixture()
         }
-        return ["sidebar capacity checked: " + (notes.isEmpty ? "none" : notes.joined(separator: ", ")) + " (column edges 96 pt apart, +-0.5 pt)"]
+        return ["sidebar capacity checked: " + (notes.isEmpty ? "none" : notes.joined(separator: ", ")) + " (one bar and one number line, docs/CI.md sidebar v3 entry)"]
     }
 
     // MARK: W07, drag readout
@@ -1372,7 +1369,8 @@ extension UITestRunner {
         if share < 0.95 { problems.append("only \(updated) of 120 moves updated the readout") }
         if worstMs > 8 { problems.append("the slowest move took \(String(format: "%.2f", worstMs)) ms") }
         if draws > 2 { problems.append("the main chart was evaluated \(draws) times during the drag") }
-        if readout.text == nil || readout.text?.contains("·") != true { problems.append("readout text '\(readout.text ?? "nil")'") }
+        // v3 (docs/CI.md, sidebar v3 entry): time and value joined by "，", never a middle dot (DESIGN_V3.md 9 rule 2).
+        if readout.text == nil || readout.text?.contains("，") != true || readout.text?.contains("\u{00B7}") == true { problems.append("readout text '\(readout.text ?? "nil")'") }
         readout.clear()
         await closeFixture()
         var note = "120 synthetic moves at 60 Hz: \(updated) updated the readout (\(Int(share * 100)) %), slowest \(String(format: "%.2f", worstMs)) ms, "

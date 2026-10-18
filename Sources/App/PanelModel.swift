@@ -531,7 +531,7 @@ final class PanelModel: ObservableObject, PanelPinning {
                                  status: data.status, now: data.now, timeZone: zone)
         var chart: ChartData?
         if item != .anomalyLog {
-            var built = SidebarChart.make(input)
+            var built = SidebarChart.make(input, events: data.events)
             if let mark = recordHighlight { built.bands.append(ChartTimeBand(from: mark.lowerBound, to: mark.upperBound, kind: .highlight)) }
             chart = built
         }
