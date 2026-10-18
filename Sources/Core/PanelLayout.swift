@@ -30,8 +30,9 @@ enum PanelMetrics {
     /// Inner padding of a text control (record entry, text button) whose background starts at the block edge (x 8):
     /// its text then starts at the headline x (16).
     static let textInset = 8.0
-    /// The curve band inside a problem row: from y 46 to y 62 (10 pt above the bottom edge), x from rowInset to the value edge.
-    static let curveTop = 46.0, curveHeight = 16.0, curveBottomInset = 10.0
+    /// The curve band inside a problem row: from y 49 to y 65 (7 pt above the bottom edge), x from rowInset to the value edge.
+    /// The line is drawn 2 pt inside the band, so its lowest point is 9 pt above the bottom edge (FABLE round 2, item A).
+    static let curveTop = 49.0, curveHeight = 16.0, curveBottomInset = 7.0
     static let dotColumn = 8.0, dotGap = 8.0, textColumn = 120.0, valueColumn = 92.0
     // Footer (DESIGN_V3.md 5.4): the "..." button is 32 x 32, the primary button takes the rest of the 336 pt line.
     static let moreButtonWidth = 32.0, footerGap = 8.0

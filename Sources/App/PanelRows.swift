@@ -6,8 +6,10 @@
 // Pos: Section 2 of the main column (docs/DESIGN_V3.md 3.3, 5.1, 5.2). Problem rows are the only rows with a tint, a curve, a 17 pt value
 //      and a duration. The 17 pt value is text.primary: the level is carried by the shape, the tint and the curve (FABLE round 1,
 //      item 2). The fourth and later problems use the quiet style and keep their level shape and level value color (no other carrier).
-//      The curve band (FABLE round 1, item 1): x 16 to 320 and y 46 to 62 inside the 336 x 72 tint, the series normalized to its
-//      own min/max (SparkFit), so the line has >= 12 pt of amplitude and never touches the text or the rounded corners.
+//      The curve band (FABLE round 1, item 1; round 2, item A): x 16 to 320 and y 49 to 65 inside the 336 x 72 tint, the series
+//      normalized to its own min/max (SparkFit), so the line has >= 12 pt of amplitude and never touches the text or the rounded
+//      corners. Line and end dot only, no area fill: the tint is the area.
+//      State shapes: collecting is a 6 pt solid ring, stale an 8 pt solid ring (no dashed ring in the main column).
 //      Left edges of the main column: 8 (tint, hover background), 24 (glyph column), 40 (name and note).
 //      A row is hovered or selected: the background is `fillHover` / `fillRowActive`. No blue, no divider. Radius: 8 pt only.
 //      Only these type sizes appear: 17, 13, 11 pt. The mini curve has no timer. Reorder moves with `PanelMotion.move` (fade under Reduce Motion).
@@ -44,7 +46,9 @@ struct StatusDotView: View {
             case .collecting:
                 Circle().strokeBorder(tok.dotNeutral, lineWidth: 1.5).frame(width: 6, height: 6)
             case .stale:
-                Circle().strokeBorder(tok.dotNeutral, style: StrokeStyle(lineWidth: 1.5, dash: [1.5, 1.5])).frame(width: 6, height: 6)
+                // A plain solid ring, 8 pt: one size up from the 6 pt collecting ring. The dashed ring means only "进行中" in the
+                // anomaly log (FABLE round 2, item C).
+                Circle().strokeBorder(tok.dotNeutral, lineWidth: 1.5).frame(width: 8, height: 8)
             case .missing:
                 Rectangle().fill(tok.dotNeutral).frame(width: 8, height: 1.5)
             case .failed:
@@ -72,24 +76,6 @@ private struct SparkLineShape: Shape {
                 let q = SparkGeometry.point(point, series, rect)
                 if i == 0 { p.move(to: q) } else { p.addLine(to: q) }
             }
-        }
-        return p
-    }
-}
-
-/// The area under each run, down to the bottom of the rect (a 14 % to 0 fade of the line color, DESIGN_V3.md 5.1).
-private struct SparkAreaShape: Shape {
-    let series: SparkSeries
-
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        for run in series.runs where run.count >= 2 {
-            let points = run.map { SparkGeometry.point($0, series, rect) }
-            guard let first = points.first, let last = points.last else { continue }
-            p.move(to: CGPoint(x: first.x, y: rect.maxY))
-            for q in points { p.addLine(to: q) }
-            p.addLine(to: CGPoint(x: last.x, y: rect.maxY))
-            p.closeSubpath()
         }
         return p
     }
@@ -136,7 +122,8 @@ private struct SparkEndRingShape: Shape {
     }
 }
 
-/// The curve inside a problem row: 304 x 16 pt, a 1.5 pt line, a fading area and a solid end dot. The series arrives fitted (SparkFit).
+/// The curve inside a problem row: 304 x 16 pt, a 1.5 pt line and a solid end dot, no area fill (the tint is the area, FABLE round 2,
+/// item A). The series arrives fitted (SparkFit).
 /// A stale series draws dashed in the third-level text color with a hollow end dot.
 struct SparkView: View {
     let series: SparkSeries
@@ -159,9 +146,6 @@ struct SparkView: View {
                     .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .butt, lineJoin: .round, dash: [3, 2.5]))
                 SparkEndRingShape(series: series).stroke(color, lineWidth: 1.25)
             } else {
-                // The area fades from 14 % under the line to 0 at the band bottom, so it has no hard box edge inside the tint.
-                SparkAreaShape(series: series)
-                    .fill(LinearGradient(colors: [color.opacity(0.14), color.opacity(0)], startPoint: .top, endPoint: .bottom))
                 SparkLineShape(series: series)
                     .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                 SparkEndShape(series: series).fill(color)
@@ -225,7 +209,7 @@ private extension View {
 // MARK: - Problem row
 
 /// A problem row (DESIGN_V3.md 5.1): the level tint on the whole row, name and 17 pt value on line 1, the plain-words note on line 2,
-/// the curve in its own band below the text, inset 16 pt left and right and 10 pt from the bottom. Every problem row of one level looks the same.
+/// the curve in its own band below the text, inset 16 pt left and right and 7 pt from the bottom. Every problem row of one level looks the same.
 struct ProblemRowView: View {
     let row: PanelRowState
     let spark: SparkSeries

@@ -80,6 +80,11 @@ func runLayoutTests() {
     expect(PanelMetrics.problemRow == 72 && PanelMetrics.problemToQuietGap == 8 && PanelMetrics.quietRow == 28 && PanelMetrics.recordRow == 28 && PanelMetrics.footer == 32, "row heights")
     expect(PanelMetrics.primaryButtonWidth + PanelMetrics.footerGap + PanelMetrics.moreButtonWidth == PanelMetrics.rowBackgroundWidth,
            "footer line adds up to 336")
+    // FABLE round 2, item A: the band sits 3 pt lower (y 49 to 65). The line is drawn 2 pt inside the band.
+    expect(PanelMetrics.curveTop == 49 && PanelMetrics.curveHeight == 16 && PanelMetrics.curveBottomInset == 7, "curve band y 49 to 65")
+    expect(PanelMetrics.curveTop + PanelMetrics.curveHeight + PanelMetrics.curveBottomInset == PanelMetrics.problemRow,
+           "curve band ends at the row bottom less the inset")
+    expect(PanelMetrics.curveBottomInset + 2 >= 8, "the lowest point of the line is >= 8 pt above the tint bottom")
 
     section("SparkFit: problem-row curve uses its own min and max (FABLE round 1, item 1)")
     let step = SparkFit.domain(values: [85, 85, 87, 87], fixed: 0...100)

@@ -936,7 +936,7 @@ final class UITestRunner {
         // Open 2: the full entrance again, with frame captures.
         // The CI VM can report Reduce Motion as on, and under Reduce Motion the full entrance is the same 150 ms fade as a reopen.
         // C and I need the real full entrance (spring, 40 ms stagger, 8 pt rise), so the window and the entrance get motion here.
-        // The hero is a text block with a static status light, so it has no motion of its own to hide the settle.
+        // The hero is a plain text block (no status light), so it has no motion of its own to hide the settle.
         PanelEntranceGate.resetForTest()
         PanelWindow.testReduceMotion = false
         guard let second = await openPanel(offsets: [0, 60, 120, 200, 300, 450, 650, 900], via: .sendAction, holdMs: 1000, prefix: "open1") else {

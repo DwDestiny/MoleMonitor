@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: PanelData of the panel model and the prompt setting "include app names" (docs/DESIGN_V3.md 1.3, 4.1).
+// Input: PanelData of the panel model and the prompt setting "include app names" (docs/DESIGN_V3.md 4.1).
 // Output: The headline block: one sentence in `PanelType.lead` (17 pt), left aligned, at most 2 lines, in a fixed 320 x 64 pt slot.
 //         A one-line headline gets a 13 pt `text.secondary` subline 4 pt below it (HeroBrain.subline: the reading clock, the stale age,
 //         or what collecting waits for). A two-line headline has none. The subline hides with the title during the 0.5 s collecting delay.
-//         Behind it, in dark appearance only, the status light: a pre-rendered radial gradient (352 x 96 pt) that is yellow for a
-//         yellow problem, red for a red one, and absent when all is well. A change of level crosses over in 400 ms.
-//         Light appearance has no status light: on the light popover material it read as a formless pink wash (anti-sameness X15,
-//         FABLE round 1, item 3). There the level is carried by the problem rows (shape, tint, curve). Reason in docs/CI.md. While the first readings arrive, the
-//         title reads "正在检查，已完成 N/6 项" and shows only after 0.5 s (HeroBrain.collectingDelay).
-// Pos: First block of the panel. No dog, bubble, prop, stage or ground (U10, 2026-10-18). The text comes from Core/BubbleCopy.swift
-//      through HeroBrain (Core/HeroLogic.swift). The status light is two CGImages per appearance, drawn once with Core Graphics
-//      (no live blur, no TimelineView, no CADisplayLink). The signature `PanelHero(data:quiet:)` stays for PanelRoot.
+//         While the first readings arrive, the title reads "正在检查，已完成 N/6 项" and shows only after 0.5 s (HeroBrain.collectingDelay).
+// Pos: First block of the panel. No dog, bubble, prop, stage or ground (U10, 2026-10-18). No status light and no background of its own:
+//      the status light was deleted after review round 2 (a formless wash, X15; reason in docs/CI.md). The level is carried by the
+//      problem rows (shape, tint, curve). The text comes from Core/BubbleCopy.swift through HeroBrain (Core/HeroLogic.swift).
+//      The signature `PanelHero(data:quiet:)` stays for PanelRoot.
 
-import AppKit
 import SwiftUI
 
 // MARK: - Model
@@ -32,91 +28,6 @@ final class HeroModel: ObservableObject {
     func sync(_ facts: HeroFacts) {
         guard facts != brain.facts else { return }
         brain.update(facts)
-    }
-}
-
-// MARK: - Status light
-
-/// The two kinds of status light. Green, unknown, collecting and stale data have none.
-enum HeroGlowKind: Equatable {
-    case none, warning, danger
-
-    init(_ data: PanelData) {
-        guard data.isFresh, let level = data.problems.first?.level else { self = .none; return }
-        switch level {
-        case .red: self = .danger
-        case .yellow: self = .warning
-        default: self = .none
-        }
-    }
-}
-
-/// Pre-rendered status light images (DESIGN_V3.md 1.3): 352 x 96 pt at 2x, an elliptical gradient from the top center to clear.
-/// Drawn once per kind and appearance. Main thread only.
-@MainActor
-enum HeroGlowImages {
-    static let size = CGSize(width: 352, height: 96)
-    private static let scale = 2
-    private static var cache = [String: CGImage]()
-
-    static func image(_ kind: HeroGlowKind, tokens: PanelTokens, dark: Bool) -> CGImage? {
-        let color: Color
-        switch kind {
-        case .none: return nil
-        case .warning: color = tokens.heroGlowWarning
-        case .danger: color = tokens.heroGlowDanger
-        }
-        let key = "\(kind)-\(dark)"
-        if let hit = cache[key] { return hit }
-        guard let ns = NSColor(color).usingColorSpace(.sRGB),
-              let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        let w = Int(size.width) * scale, h = Int(size.height) * scale
-        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        let a = ns.alphaComponent
-        func stop(_ f: CGFloat) -> CGColor { CGColor(colorSpace: space, components: [ns.redComponent, ns.greenComponent, ns.blueComponent, a * f])! }
-        let colors = [stop(1), stop(0.62), stop(0.22), stop(0)] as CFArray
-        var locations: [CGFloat] = [0, 0.35, 0.72, 1]
-        guard let gradient = CGGradient(colorsSpace: space, colors: colors, locations: &locations) else { return nil }
-        // Core Graphics is y up here, so the top edge is y = h. The circle of radius w/2 becomes an ellipse that is h deep.
-        ctx.translateBy(x: CGFloat(w) / 2, y: CGFloat(h))
-        ctx.scaleBy(x: 1, y: CGFloat(h) / (CGFloat(w) / 2))
-        ctx.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: CGFloat(w) / 2, options: [])
-        guard let image = ctx.makeImage() else { return nil }
-        cache[key] = image
-        return image
-    }
-}
-
-/// Both lights stay in the tree. A change of kind moves their opacities, so the old one fades out while the new one fades in.
-private struct HeroGlow: View {
-    let kind: HeroGlowKind
-    @Environment(\.tok) private var tok
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        let dark = scheme == .dark
-        ZStack(alignment: .topLeading) {
-            // Light appearance draws no light (see the file header).
-            if dark {
-                layer(.warning, dark: dark)
-                layer(.danger, dark: dark)
-            }
-        }
-        .frame(width: HeroGlowImages.size.width, height: HeroGlowImages.size.height, alignment: .topLeading)
-        .animation(.easeInOut(duration: 0.4), value: kind)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-
-    @ViewBuilder
-    private func layer(_ k: HeroGlowKind, dark: Bool) -> some View {
-        if let image = HeroGlowImages.image(k, tokens: tok, dark: dark) {
-            Image(decorative: image, scale: 2)
-                .resizable()
-                .frame(width: HeroGlowImages.size.width, height: HeroGlowImages.size.height)
-                .opacity(kind == k ? 1 : 0)
-        }
     }
 }
 
@@ -176,11 +87,6 @@ struct PanelHero: View {
         .padding(.top, 4)
         .frame(width: PanelMetrics.contentWidth, height: PanelMetrics.hero, alignment: .topLeading)
         .uiTestFrame("txt.hero.title")
-        .background(alignment: .topLeading) {
-            // The light is 352 pt wide and 96 pt high from the top of the panel: 16 pt left and 12 pt above the 320 pt slot.
-            HeroGlow(kind: HeroGlowKind(data))
-                .offset(x: -(PanelMetrics.width - PanelMetrics.contentWidth) / 2, y: -PanelMetrics.topPadding)
-        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("section.hero")
         .task(id: data.isCollecting) {
