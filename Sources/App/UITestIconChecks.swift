@@ -395,9 +395,10 @@ extension UITestRunner {
         expect(button.toolTip == "MoleMonitor：一切正常，CPU 占用高。", "busy text: \(button.toolTip ?? "nil")")
         frames = []
         await sleepMs(1100)
-        let seen = Set(frames.filter { $0 > 0 })
-        expect(seen.count >= 3, "4 fps for 1.1 s showed frames \(frames)")
-        values["framesIn1100ms"] = Double(frames.count)
+        let window = frames
+        let seen = Set(window.filter { $0 > 0 })
+        expect(seen.count >= 3, "4 fps for 1.1 s showed frames \(window)")
+        values["framesIn1100ms"] = Double(window.count)
         controller.cpuTick(70)
         expect(abs((controller.frameInterval ?? 0) - 1.0 / 6) < 1e-6, "70 %: interval \(controller.frameInterval ?? -1)")
         controller.cpuTick(90)
@@ -429,6 +430,7 @@ extension UITestRunner {
             }
             controller.refresh()
             if controller.timerCount == 0 && frames.last == 0 { zero += 1 } else { problems.append("\(name): \(controller.timerCount) timers") }
+            expect(button.toolTip == "MoleMonitor：一切正常。", "\(name): text while still: \(button.toolTip ?? "nil")")
             conditions = MenuMotionConditions()
             controller.refresh()
             expect(controller.timerCount == 1, "\(name) cleared: \(controller.timerCount) timers")
@@ -447,7 +449,7 @@ extension UITestRunner {
         expect(delegate.iconController.timerCount == 0, "app icon: \(delegate.iconController.timerCount) timers")
         values["conditionsWithZeroTimers"] = Double(zero)
         values["problems"] = Double(problems.count)
-        notes.append("frames in 1.1 s at 4 fps \(frames.count), conditions with 0 timers \(zero)/5")
+        notes.append("frames in 1.1 s at 4 fps \(window.count) \(window), conditions with 0 timers \(zero)/5")
         var note = notes.joined(separator: ", ")
         if !problems.isEmpty { note += "; failures: " + problems.joined(separator: "; ") }
         record("W30", "菜单栏奔跑触发与计时器", problems.isEmpty, since: t0, note, values)

@@ -165,8 +165,9 @@ struct MenuRunnerFigure: Equatable {
 }
 
 /// Side-view Bichon facing left (DESIGN_V3.md 4.2): a big round head with a small muzzle and a cut-out eye, a curly
-/// body (an ellipse with three bumps on the back and three under the belly), a tail ball on a short stalk raised above
-/// the back, four short legs (round-ended lines; the far leg of each pair sits 1.4 pt behind). The mark box (bottom right)
+/// body (an ellipse with a neck fluff, three bumps on the back and three under the belly), a tail ball on a thick short
+/// stalk raised above the back, four short legs (round-ended lines; the far leg of each pair sits 1.5 pt behind and,
+/// standing, 0.3 pt shorter, so each pair shows a small step). The mark box (bottom right)
 /// stays clear of the dog in every pose.
 enum MenuRunnerArt {
     static let width = 24.0
@@ -178,19 +179,20 @@ enum MenuRunnerArt {
     static let markGap = 0.75
 
     static let legRadius = 0.95
-    static let farOffset = 1.4
+    static let farOffset = 1.5
     static let frontHip = (x: 8.4, y: 12.2)
     static let hindHip = (x: 12.4, y: 12.2)
 
-    /// Head, muzzle, body puff, tail.
+    /// Head, muzzle, neck fluff, body puff, tail plume.
     static let torso: [MenuRunnerShape] = [
         .circle(x: 5.0, y: 5.6, r: 4.4),
         .circle(x: 1.65, y: 7.4, r: 1.6),
-        .ellipse(x: 11.8, y: 10.4, rx: 4.6, ry: 3.0),
-        .circle(x: 9.6, y: 8.2, r: 2.1), .circle(x: 12.6, y: 7.8, r: 2.1), .circle(x: 15.2, y: 8.8, r: 1.9),
+        .circle(x: 7.6, y: 8.0, r: 2.0),
+        .ellipse(x: 11.8, y: 10.6, rx: 4.6, ry: 3.2),
+        .circle(x: 9.8, y: 8.2, r: 2.1), .circle(x: 12.6, y: 7.8, r: 2.1), .circle(x: 15.2, y: 8.8, r: 1.9),
         .circle(x: 8.6, y: 11.2, r: 2.2), .circle(x: 11.6, y: 12.4, r: 1.7), .circle(x: 14.6, y: 11.8, r: 1.9),
-        .capsule(x0: 15.6, y0: 8.4, x1: 16.8, y1: 6.2, r: 1.0),
-        .circle(x: 17.6, y: 4.4, r: 2.3),
+        .capsule(x0: 15.0, y0: 8.6, x1: 16.3, y1: 6.6, r: 1.25),
+        .circle(x: 17.2, y: 4.8, r: 2.4),
     ]
     static let eye: MenuRunnerShape = .circle(x: 3.5, y: 5.0, r: 0.8)
 
@@ -213,17 +215,17 @@ enum MenuRunnerArt {
         func l(_ a: Double, _ len: Double) -> Leg { Leg(angle: a, length: len) }
         switch p {
         case .stand:
-            return Pose(frontNear: l(4, 4.8), frontFar: l(-4, 4.8), hindNear: l(4, 4.8), hindFar: l(-4, 4.8), bob: 0)
+            return Pose(frontNear: l(0, 4.8), frontFar: l(0, 4.5), hindNear: l(0, 4.8), hindFar: l(0, 4.5), bob: 0)
         case .run(let i):
             switch ((i % MenuRunPose.runFrameCount) + MenuRunPose.runFrameCount) % MenuRunPose.runFrameCount {
             case 0:   // Reach: front legs stretched forward, hind legs under the body.
                 return Pose(frontNear: l(55, 4.8), frontFar: l(42, 4.8), hindNear: l(12, 4.6), hindFar: l(0, 4.6), bob: 0)
-            case 1:   // Gather: all feet under the body, weight down.
-                return Pose(frontNear: l(-28, 4.4), frontFar: l(-16, 4.4), hindNear: l(36, 4.6), hindFar: l(24, 4.6), bob: 0.5)
+            case 1:   // Gather: short bent legs under the body, feet off the ground.
+                return Pose(frontNear: l(-20, 3.8), frontFar: l(10, 3.8), hindNear: l(22, 3.8), hindFar: l(-8, 3.8), bob: 0)
             case 2:   // Push: hind legs kick back, front legs folded up.
-                return Pose(frontNear: l(78, 3.0), frontFar: l(64, 3.0), hindNear: l(-36, 4.8), hindFar: l(-24, 4.8), bob: 0)
+                return Pose(frontNear: l(78, 3.0), frontFar: l(64, 3.0), hindNear: l(-36, 4.6), hindFar: l(-22, 4.6), bob: 0.5)
             default:  // Flight: front forward, hind back, body up.
-                return Pose(frontNear: l(42, 4.2), frontFar: l(30, 4.2), hindNear: l(-44, 4.0), hindFar: l(-28, 4.0), bob: -0.5)
+                return Pose(frontNear: l(42, 4.2), frontFar: l(30, 4.2), hindNear: l(-44, 4.0), hindFar: l(-26, 4.0), bob: -0.5)
             }
         }
     }

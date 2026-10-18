@@ -32,18 +32,49 @@ enum MenuRunnerRenderer {
         }
     }
 
-    /// The outline of a pose as one path (union of its shapes), built once per pose.
+    /// The outer contour of a pose (union of its shapes, holes dropped), built once per pose. Small gaps between the
+    /// belly bumps and the legs make holes in the union; the hollow icon strokes the outer contour only.
     private static let lock = NSLock()
-    private static var unions = [MenuRunPose: CGPath]()
-    static func union(_ pose: MenuRunPose) -> CGPath {
+    private static var outlines = [MenuRunPose: CGPath]()
+    static func outline(_ pose: MenuRunPose) -> CGPath {
         lock.lock()
         defer { lock.unlock() }
-        if let hit = unions[pose] { return hit }
+        if let hit = outlines[pose] { return hit }
         let shapes = MenuRunnerArt.figure(pose).fill.map(path)
         var u = shapes[0]
         for p in shapes.dropFirst() { u = u.union(p) }
-        unions[pose] = u
-        return u
+        let outer = largestSubpath(u)
+        outlines[pose] = outer
+        return outer
+    }
+
+    /// The subpath with the largest bounding box (the outer contour of one connected shape).
+    static func largestSubpath(_ path: CGPath) -> CGPath {
+        var parts = [CGMutablePath]()
+        path.applyWithBlock { pointer in
+            let e = pointer.pointee
+            switch e.type {
+            case .moveToPoint:
+                let p = CGMutablePath()
+                p.move(to: e.points[0])
+                parts.append(p)
+            case .addLineToPoint:
+                parts.last?.addLine(to: e.points[0])
+            case .addQuadCurveToPoint:
+                parts.last?.addQuadCurve(to: e.points[1], control: e.points[0])
+            case .addCurveToPoint:
+                parts.last?.addCurve(to: e.points[2], control1: e.points[0], control2: e.points[1])
+            case .closeSubpath:
+                parts.last?.closeSubpath()
+            @unknown default:
+                break
+            }
+        }
+        func area(_ p: CGPath) -> CGFloat {
+            let b = p.boundingBoxOfPath
+            return b.width * b.height
+        }
+        return parts.max(by: { area($0) < area($1) }) ?? path
     }
 
     /// The health or data mark of a kind, nil for normal.
@@ -90,13 +121,13 @@ enum MenuRunnerRenderer {
         ctx.setFillColor(opaque)
         ctx.setStrokeColor(opaque)
         if hollow {
-            let outline = union(pose)
+            let contour = outline(pose)
             ctx.saveGState()
-            ctx.addPath(outline)
+            ctx.addPath(contour)
             ctx.clip()
             ctx.setLineWidth(hollowLine * 2)
             ctx.setLineJoin(.round)
-            ctx.addPath(outline)
+            ctx.addPath(contour)
             ctx.strokePath()
             ctx.restoreGState()
         } else {

@@ -91,14 +91,15 @@ final class StatusIconController {
             return
         }
         button.imagePosition = .imageOnly
-        let busy = run.running && current.state.mark == nil
-        let text = MenuRunLogic.text(current.text, running: busy)
+        let kind = current.state.kind
+        let animates = MenuRunLogic.animates(run, state: current.state, conditions: motionConditions())
+        // The busy suffix only while the icon runs (DESIGN_V3.md 4.2).
+        let text = MenuRunLogic.text(current.text, running: animates)
         if button.toolTip != text {
             button.toolTip = text
             button.setAccessibilityLabel(text)
         }
-        let kind = current.state.kind
-        if MenuRunLogic.animates(run, state: current.state, conditions: motionConditions()), let speed = run.speed {
+        if animates, let speed = run.speed {
             if timer == nil || timerSpeed != speed { startTimer(speed) }
             show(.run(frame), kind: kind, on: button)
         } else {
