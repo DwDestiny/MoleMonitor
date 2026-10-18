@@ -2,8 +2,8 @@
 // Copyright (c) 2026 DwDestiny
 // Input: The runner silhouette of a pose (Core MenuRunnerArt), the icon kind, the inks of a light or dark menu bar.
 // Output: Core Graphics drawing of the v3 menu bar icon (docs/DESIGN_V3.md 4.2): the side-view Bichon in the button ink
-//         (`labelColor`), solid (eye and drooping-ear gap cleared) or hollow (outer contour only, no ear gap), with the health mark (yellow triangle, red square) or the data mark (collecting,
-//         stale) bottom right; frame bitmaps cached by pose, kind, light or dark and scale; the NSImage of a frame.
+//         (`labelColor`), solid (eye and drooping-ear gap cleared) or hollow (outer contour only, no ear gap), with the health mark (yellow triangle, red square) or the stale ring bottom right
+//         (collecting has no mark, R3); frame bitmaps cached by pose, kind, light or dark and scale; the NSImage of a frame.
 // Pos: The one renderer of the menu bar icon. StatusIconController shows its images; UITestIconChecks (W29) draws the
 //      contact sheet from it. Vector paths only, no bitmap assets. Owner P-icon (v3, U10). Q4 moved `MenuIconInk` here
 //      from the deleted DogShapes.swift.
@@ -99,11 +99,14 @@ enum MenuRunnerRenderer {
             let r = CGRect(x: o.x + (s - side) / 2, y: o.y + (s - side) / 2, width: side, height: side)
             return CGPath(roundedRect: r, cornerWidth: 1, cornerHeight: 1, transform: nil)
         case .collecting:
-            var t = CGAffineTransform(translationX: o.x, y: o.y)
-            return GlyphPaths.markYDown(.collecting, box: CGFloat(s)).copy(using: &t)
+            // R3: the hollow dog alone; the v2 three dots were 3 single pixels at 1x.
+            return nil
         case .stale:
-            var t = CGAffineTransform(translationX: o.x, y: o.y)
-            return GlyphPaths.markYDown(.stale, box: CGFloat(s)).copy(using: &t)
+            // R3: a hollow small circle (no clock hands), the stale-row circle of the panel. Filled ring, nonzero rule.
+            let ring = MenuRunnerArt.staleRing
+            let mid = ring.outer - ring.line / 2
+            let circle = CGPath(ellipseIn: CGRect(x: ring.x - mid, y: ring.y - mid, width: 2 * mid, height: 2 * mid), transform: nil)
+            return circle.copy(strokingWithWidth: CGFloat(ring.line), lineCap: .butt, lineJoin: .round, miterLimit: 1)
         }
     }
 

@@ -7,7 +7,8 @@
 // Pos: Pure logic and geometry, Foundation only, tested on Linux (Tests/CoreTests/MenuRunnerTests.swift). The App draws
 //      the shapes (Sources/App/MenuRunnerShapes.swift) and owns the one run timer (Sources/App/StatusIcon.swift).
 //      v3 (U10, 2026-10-18): replaces the v2 head postures and the switch animation of the menu bar icon. Redrawn the
-//      same day (Q4): tail ball on the back, two short leg columns, drooping ear, so it reads as a Bichon.
+//      same day (Q4): tail ball on the back, two short leg columns, drooping ear, so it reads as a Bichon. R3 (same day):
+//      the flight frame is a level bound (front column forward, hind column back), and the stale ring geometry is here.
 
 import Foundation
 
@@ -179,6 +180,19 @@ enum MenuRunnerArt {
     static let markSize = 6.5
     /// Clear ring around the mark, pt.
     static let markGap = 0.75
+    /// The stale data mark (R3): a hollow circle that fills the mark box (outer diameter 6.4 pt, line 1.2 pt, the
+    /// hollow outline width), the same shape as the solid-line hollow circle of a stale row in the panel. Collecting
+    /// has no mark: the hollow dog alone says "no data yet".
+    static let staleRing = (x: 20.75, y: 14.75, outer: 3.2, line: 1.2)
+
+    /// True when the data state draws a mark in the mark box (only stale).
+    static func hasDataMark(_ m: MenuMark) -> Bool { m == .stale }
+
+    /// True when (px, py) is on the stale ring.
+    static func staleRingContains(_ px: Double, _ py: Double) -> Bool {
+        let d = ((px - staleRing.x) * (px - staleRing.x) + (py - staleRing.y) * (py - staleRing.y)).squareRoot()
+        return d <= staleRing.outer && d >= staleRing.outer - staleRing.line
+    }
 
     /// Half width of a leg column (front pair, hind pair).
     static let legRadius = 1.5
@@ -236,8 +250,8 @@ enum MenuRunnerArt {
                 return Pose(front: l(-6, 2.4), hind: l(24, 2.8), bob: -0.5)
             case 2:   // Push: both columns slant back, the hind one kicks, body down.
                 return Pose(front: l(-28, 4.0), hind: l(-24, 3.4), bob: 0.5)
-            default:  // Flight: front far forward, hind folded back, body up.
-                return Pose(front: l(64, 4.0), hind: l(-50, 2.6), bob: -0.5)
+            default:  // Flight, a bound: body level and up, front column stretched forward, hind column stretched back.
+                return Pose(front: l(56, 4.4), hind: l(-44, 2.9), bob: -0.5)
             }
         }
     }

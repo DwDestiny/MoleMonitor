@@ -4,7 +4,6 @@
 // Output: The category badge path: `badge` is y up in a 10 x 10 pt box (fixed contract, the card's CategoryGlyph),
 // `badgeYDown` is y down in a box of any size, by default the 8 x 8 pt menu bar box (DogArt.badgeSize).
 // `alarmKnockout` is the glyph cut out of the 9 x 9 pt alarm disc (red level, round 3).
-// `markYDown` is the data mark of collecting (three dots) and stale (clock), y down in the 8 x 8 pt box (DESIGN_V2.md 9.2).
 // `pawYDown` is the paw stamp of a successful copy (docs/DESIGN_V3.md 5.6): one palm pad and four toes, y down, in a square box.
 // Pos: One glyph source for the menu bar badge, the bubble and the card's CategoryGlyph (I3 calls it). Owner WP-E.
 //      The paw is drawn only by the copy button (PanelFooter, CopyStamp). It is the one place the panel shows a paw.
@@ -75,15 +74,6 @@ enum GlyphPaths {
             let p = letterPath(letter(item), box: inner)
             return p.copy(using: &t) ?? p
         }
-    }
-
-    /// Data mark path (collecting or stale), inside (0, 0, box, box), y down. Fill with the nonzero rule.
-    static func markYDown(_ mark: MenuMark, box: CGFloat = CGFloat(DogArt.badgeSize)) -> CGPath {
-        let path = CGMutablePath()
-        let k = box / CGFloat(DogArt.badgeSize)
-        let t = CGAffineTransform(scaleX: k, y: k)
-        for part in DogArt.mark(mark) { path.addPath(cgPath(part.ops), transform: t) }
-        return path
     }
 
     /// One CGPath from DogArt ops, no cache.

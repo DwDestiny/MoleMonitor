@@ -14,7 +14,8 @@ import Foundation
 enum MenuPosture: String, CaseIterable { case relaxed, raised, pant, hollow }
 struct MenuBadge: Hashable { var item: HealthItem }   // The category of the worst problem; the posture and the color show the level
 
-/// The mark of the two data states (DESIGN_V2.md 9.2): an 8 x 8 pt three-dot ellipsis (collecting) or a clock (stale).
+/// The two data states (DESIGN_V3.md 4.2): collecting draws the hollow dog with no mark, stale adds a hollow small
+/// circle in the mark box (MenuRunnerArt.staleRing). The cases name the state, not a glyph.
 /// The mark is drawn in the menu bar text color, next to the hollow head.
 enum MenuMark: String, CaseIterable { case collecting, stale }
 
@@ -198,8 +199,7 @@ enum MenuIconModel {
 
 /// The 1x legibility metric of DESIGN.md 3.3 and 9.4 G1-4 and G1-5, and the five-state gates of DESIGN_V2.md 9.3 (W08).
 enum IconMetrics {
-    /// Five states pairwise at 1x (W08, DESIGN_V2.md 9.3). The data marks (ellipsis, clock) join the badge glyph matrix
-    /// at `badgePass`.
+    /// Five states pairwise at 1x (W08, DESIGN_V2.md 9.3).
     static let fiveStatePass = 0.20
     /// Yellow and red badges against the reference menu bars (W08): WCAG contrast at least this ratio.
     static let badgeContrastPass = 3.0
