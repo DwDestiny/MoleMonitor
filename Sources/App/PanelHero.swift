@@ -2,6 +2,8 @@
 // Copyright (c) 2026 DwDestiny
 // Input: PanelData of the panel model and the prompt setting "include app names" (docs/DESIGN_V3.md 1.3, 4.1).
 // Output: The headline block: one sentence in `PanelType.lead` (17 pt), left aligned, at most 2 lines, in a fixed 320 x 64 pt slot.
+//         A one-line headline gets a 13 pt `text.secondary` subline 4 pt below it (HeroBrain.subline: the reading clock, the stale age,
+//         or what collecting waits for). A two-line headline has none. The subline hides with the title during the 0.5 s collecting delay.
 //         Behind it the status light: a pre-rendered radial gradient (352 x 96 pt) that is yellow for a yellow problem, red for a
 //         red one, and absent when all is well. A change of level crosses over in 400 ms. While the first readings arrive, the
 //         title reads "正在检查，已完成 N/6 项" and shows only after 0.5 s (HeroBrain.collectingDelay).
@@ -137,34 +139,49 @@ struct PanelHero: View {
                        now: data.now, includeAppNames: includeAppNames)
     }
 
+    /// Subline under a one-line headline (DESIGN_V3.md 4.1): 13 pt regular, 4 pt below the title. 4 + 22 + 4 + 16 pt fits in 64 pt.
+    static let sublineFont = Font.system(size: 13)
+    static let sublineGap: CGFloat = 4
+
     /// While collecting, the title waits `HeroBrain.collectingDelay` seconds. A static render (`--preview`) shows it at once.
     private var titleHidden: Bool { data.isCollecting && !collectingShown && !snapshot }
 
     var body: some View {
         let _ = model.sync(PanelHero.facts(data, includeAppNames: includeAppNames))
         let text = model.brain.text
-        Text(titleHidden ? "" : text.wrapped)
-            .font(PanelType.lead)
-            .foregroundStyle(tok.textPrimary)
-            .multilineTextAlignment(.leading)
-            .lineLimit(2)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, 4)
-            .frame(width: PanelMetrics.contentWidth, height: PanelMetrics.hero, alignment: .topLeading)
-            .uiTestFrame("txt.hero.title")
-            .accessibilityIdentifier("label.summary")
-            .accessibilityLabel(Text(titleHidden ? "" : text.main))
-            .background(alignment: .topLeading) {
-                // The light is 352 pt wide and 96 pt high from the top of the panel: 16 pt left and 12 pt above the 320 pt slot.
-                HeroGlow(kind: HeroGlowKind(data))
-                    .offset(x: -(PanelMetrics.width - PanelMetrics.contentWidth) / 2, y: -PanelMetrics.topPadding)
+        let subline = titleHidden ? nil : model.brain.subline
+        VStack(alignment: .leading, spacing: PanelHero.sublineGap) {
+            Text(titleHidden ? "" : text.wrapped)
+                .font(PanelType.lead)
+                .foregroundStyle(tok.textPrimary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("label.summary")
+                .accessibilityLabel(Text(titleHidden ? "" : text.main))
+            if let subline {
+                Text(subline)
+                    .font(PanelHero.sublineFont)
+                    .foregroundStyle(tok.textSecondary)
+                    .lineLimit(1)
+                    .uiTestFrame("txt.hero.subline")
+                    .accessibilityIdentifier("label.summary.subline")
             }
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("section.hero")
-            .task(id: data.isCollecting) {
-                guard data.isCollecting else { collectingShown = false; return }
-                try? await Task.sleep(nanoseconds: UInt64(HeroBrain.collectingDelay * 1_000_000_000))
-                if !Task.isCancelled { collectingShown = true }
-            }
+        }
+        .padding(.top, 4)
+        .frame(width: PanelMetrics.contentWidth, height: PanelMetrics.hero, alignment: .topLeading)
+        .uiTestFrame("txt.hero.title")
+        .background(alignment: .topLeading) {
+            // The light is 352 pt wide and 96 pt high from the top of the panel: 16 pt left and 12 pt above the 320 pt slot.
+            HeroGlow(kind: HeroGlowKind(data))
+                .offset(x: -(PanelMetrics.width - PanelMetrics.contentWidth) / 2, y: -PanelMetrics.topPadding)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("section.hero")
+        .task(id: data.isCollecting) {
+            guard data.isCollecting else { collectingShown = false; return }
+            try? await Task.sleep(nanoseconds: UInt64(HeroBrain.collectingDelay * 1_000_000_000))
+            if !Task.isCancelled { collectingShown = true }
+        }
     }
 }

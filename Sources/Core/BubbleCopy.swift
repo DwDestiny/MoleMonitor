@@ -4,6 +4,7 @@
 // Output: BubbleText: the headline sentence, the evidence part, and its level. BubbleCopy.text(for:) builds them.
 //         BubbleCopy.width(_:) counts width units (0.4: full-width 1, half-width 0.5). BubbleCopy.allTemplates lists every template at its worst value (W13).
 //         BubbleText.wrapped is the text the view draws: a text longer than one line breaks once at its comma, so the system never splits a word.
+//         BubbleCopy.subline(for:headline:sampledAt:now:) is the 13 pt second line under a one-line headline (new facts, never the headline again).
 // Pos: The one source of the panel headline texts (the type name stays Bubble* from v2; the bubble itself was deleted by U10, 2026-10-18).
 //      Foundation only. Line budget (v3): 17 pt type in a 320 pt content width holds 18.8 em, `lineEm` keeps a margin below that.
 //      Copy rules: plain words; a problem text has an evidence number.
@@ -97,6 +98,26 @@ enum BubbleCopy {
     /// The title while the first readings arrive (DESIGN_V3.md 4.1 rule 6).
     static func collectingText(done: Int) -> String {
         "正在检查，已完成 \(max(0, min(done, readingCount)))/\(readingCount) 项"
+    }
+
+    // MARK: Subline
+
+    /// The 13 pt second line under a one-line headline (DESIGN_V3.md 4.1). It adds a fact the headline does not say:
+    /// fresh data gives the clock of the last reading ("10:42 更新"), stale data gives how long nothing new arrived
+    /// ("已经 25 分钟没有新数据"), collecting says what comes next. A two-line headline has no subline, and fresh data
+    /// without a reading time has none either. The clock uses the calendar of the input, like the stale headline.
+    static func subline(for input: BubbleInput, headline: BubbleText, sampledAt: Date?, now: Date) -> String? {
+        guard !wrapped(headline.main).contains("\n") else { return nil }
+        switch input.dataState {
+        case .collecting:
+            return "数据到齐后在这里给出结论"
+        case .stale(let at):
+            return "已经 \(duration(now.timeIntervalSince(at)))没有新数据"
+        case .fresh:
+            guard let at = sampledAt else { return nil }
+            let c = input.calendar.dateComponents([.hour, .minute], from: at)
+            return String(format: "%02d:%02d 更新", c.hour ?? 0, c.minute ?? 0)
+        }
     }
 
     // MARK: Quiet texts

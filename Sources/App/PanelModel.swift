@@ -608,7 +608,7 @@ final class PanelModel: ObservableObject, PanelPinning {
         return copied.isEmpty ? nil : footerState.copiedBubble
     }
 
-    /// Copies the prompt and shows "✓ 已复制" for 1.5 seconds. A failed copy shows the failure bubble instead.
+    /// Copies the prompt and shows the paw stamp "已复制" for 1.5 seconds (PanelFooter, CopyStamp). A failed copy shows the failure bubble instead.
     /// The collecting state has no usable button, so it does nothing.
     func copy(_ target: CopyTarget) {
         guard footerState.enabled else { return }

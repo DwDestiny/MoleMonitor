@@ -2,7 +2,7 @@
 // Copyright (c) 2026 DwDestiny
 // Input: Fixtures and helpers (expect, section, now, GB) defined in main.swift.
 // Output: Assertions for HeroFacts, HeroProgress and HeroBrain (docs/DESIGN_V3.md 4.1): evidence numbers, the 30 s number rule,
-//         the collecting count and the quiet texts.
+//         the collecting count, the quiet texts and the subline under a one-line headline.
 // Pos: Called from main.swift via runHeroLogicTests(); no top-level code in this file.
 
 import Foundation
@@ -77,4 +77,33 @@ func runHeroLogicTests() {
     cb.update(facts([], cpu: 3, at: now.addingTimeInterval(1), state: .collecting, battery: nil) { $0.memoryPressurePercent = 40; $0.rx = 1 })
     expect(cb.text.main == "正在检查，已完成 3/6 项", "the count updates at once")
     expect(HeroBrain.collectingDelay == 0.5, "the collecting title waits 0.5 s")
+
+    // Subline under a one-line headline (DESIGN_V3.md 4.1)
+    func clockOf(_ d: Date) -> String {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: d)
+        return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
+    }
+    let readAt = now.addingTimeInterval(-90)
+    let clock = clockOf(readAt)
+    let green = HeroBrain(facts: facts([]) { $0.sampledAt = readAt })
+    expect(green.text.main == "一切正常" && green.subline == clock + " 更新", "all green: the subline is the clock of the last reading")
+    expect(green.facts.sampledAt == readAt, "facts carry the reading time")
+    expect(HeroBrain(facts: facts([])).subline == nil, "fresh data without a reading time has no subline")
+    expect(cb.subline == "数据到齐后在这里给出结论", "collecting: the subline says what comes next, not the count again")
+    let staleAt = now.addingTimeInterval(-25 * 60)
+    let st = HeroBrain(facts: facts([], state: .stale(staleAt)) { $0.sampledAt = staleAt })
+    expect(st.subline == "已经 25 分钟没有新数据", "stale: the subline says how long nothing new arrived")
+    expect(!(st.subline ?? "").contains(clockOf(staleAt)), "stale: the subline does not repeat the clock of the headline")
+    let twoLine = HeroBrain(facts: facts([v(.memory, .red, "pressure_critical")]) { $0.memoryPressurePercent = 96; $0.sampledAt = readAt })
+    expect(BubbleCopy.wrapped(twoLine.text.main).contains("\n") == (twoLine.subline == nil), "a two-line headline has no subline")
+    var oneLineCount = 0
+    var twoLineCount = 0
+    for (_, text, _) in BubbleCopy.allTemplates {
+        let sub = BubbleCopy.subline(for: BubbleInput(), headline: text, sampledAt: readAt, now: now)
+        let two = BubbleCopy.wrapped(text.main).contains("\n")
+        if two { twoLineCount += 1 } else { oneLineCount += 1 }
+        expect(two == (sub == nil), "subline only under one line: \(text.main)")
+        if let sub { expect(!sub.contains(" \u{00B7} ") && sub != text.main, "subline is plain and new: \(sub)") }
+    }
+    expect(oneLineCount > 0 && twoLineCount > 0, "the templates hold both one-line and two-line headlines")
 }

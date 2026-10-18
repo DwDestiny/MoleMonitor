@@ -2,8 +2,8 @@
 // Copyright (c) 2026 DwDestiny
 // Input: The item verdicts, the current readings, the app list, the status file, the data state and the clock of one data point
 //        (HeroFacts.make) (docs/DESIGN_V3.md 4.1).
-// Output: HeroFacts (what the headline needs from one data point), HeroBrain (the headline text with its 30 s number rule and the
-//         0.5 s collecting delay) and HeroProgress (how many of the 6 readings have arrived).
+// Output: HeroFacts (what the headline needs from one data point), HeroBrain (the headline text with its 30 s number rule, the
+//         0.5 s collecting delay and the subline under a one-line headline) and HeroProgress (how many of the 6 readings have arrived).
 // Pos: Pure logic of the headline block. Foundation only, so the rules run in the Core tests (HeroLogicTests). PanelHero.swift (App)
 //      wraps HeroBrain in an ObservableObject. The dog, its gaits, taps, eggs and one-shots were deleted (U10, 2026-10-18).
 
@@ -15,6 +15,8 @@ struct HeroFacts: Equatable {
     /// Problem items in ProblemOrder ("item:level:reason"). A change updates the text at once.
     var problemKey: [String]
     var problemItems: [HealthItem]
+    /// Time of the last reading. The subline of fresh data shows its clock.
+    var sampledAt: Date? = nil
     var now: Date
 
     var hasProblem: Bool { !problemItems.isEmpty }
@@ -26,7 +28,7 @@ struct HeroFacts: Equatable {
         let bubble = BubbleInput(dataState: dataState, cpuPercent: c.cpuPercent, problems: problems,
                                  collected: HeroProgress.done(c))
         let key = ordered.map { "\($0.item.rawValue):\($0.level.rawValue):\($0.reasonCode)" }
-        return HeroFacts(bubble: bubble, problemKey: key, problemItems: ordered.map(\.item), now: now)
+        return HeroFacts(bubble: bubble, problemKey: key, problemItems: ordered.map(\.item), sampledAt: c.sampledAt, now: now)
     }
 
     /// The evidence of one problem for the headline templates (4.11 placeholder table).
@@ -103,6 +105,11 @@ struct HeroBrain {
     private(set) var text: BubbleText
     private var textKey = ""
     private var textAt: Date
+
+    /// The 13 pt line under a one-line headline, or nil (BubbleCopy.subline). It follows every data point, so the clock stays current.
+    var subline: String? {
+        BubbleCopy.subline(for: facts.bubble, headline: text, sampledAt: facts.sampledAt, now: facts.now)
+    }
 
     init(facts: HeroFacts) {
         self.facts = facts
