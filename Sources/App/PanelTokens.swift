@@ -551,3 +551,20 @@ extension View {
     func uiTestFrame(_ id: String) -> some View { self }
 }
 #endif
+
+// MARK: - v3 row tokens (docs/DESIGN_V3.md 2.3, 5; added by the rows package)
+
+extension PanelTokens {
+    /// Background of the row whose sidebar is open: `fillHover` one step deeper (black 10 %, white 14 %). Neutral, no hue.
+    var fillRowActive: Color { pick(Color(.sRGB, white: 0, opacity: 0.10), Color(.sRGB, white: 1, opacity: 0.14)) }
+    /// Fill of a primary button that is pressed or hovered: the accent fill with a white veil.
+    var veilHover: Color { Color.white.opacity(0.10) }
+}
+
+/// Sizes of the v3 row glyphs in pt (docs/DESIGN_V3.md 5.2).
+enum PanelRowGlyph {
+    /// The check mark of a quiet row.
+    static let checkSize: CGFloat = 9
+    /// The glyph column of a row is 8 pt wide for every shape.
+    static let column: CGFloat = 8
+}

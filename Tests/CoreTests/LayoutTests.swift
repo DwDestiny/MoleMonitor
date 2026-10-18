@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Fixtures and helpers (expect, section, now, GB) defined in main.swift.
-// Output: Assertions for PanelLayout v2 (docs/DESIGN_V2.md 2.3, 5.2, 7.2) and PanelRowText (rows, anomaly bars, footer).
+// Output: Assertions for PanelLayout (docs/DESIGN_V3.md 3.3, 5; DESIGN_V2.md 5.2) and PanelRowText (rows, problem notes, records, footer).
 // Pos: Called from main.swift via runLayoutTests(); no top-level code in this file. Owner WP-C.
 
 import Foundation
@@ -24,22 +24,48 @@ private func plan(_ problems: [(HealthItem, HealthLevel)], battery: Bool = true)
 }
 
 func runLayoutTests() {
-    section("PanelLayout v2: height formula")
+    section("PanelLayout v3: height formula (DESIGN_V3.md 3.3)")
+    // The expected values are computed from PanelMetrics, with the parts written out here. They do not call PanelLayout.height.
+    func expected(items: Int, problems: Int, hero: Double) -> Double {
+        let expanded = min(PanelMetrics.maxProblemRows, problems)
+        let quietItems = items - expanded
+        let quietRows = Double((quietItems + 1) / 2)
+        var rowsHeight = quietRows * PanelMetrics.quietRow
+        if expanded > 0 { rowsHeight += Double(expanded) * PanelMetrics.problemRow + Double(expanded - 1) * PanelMetrics.problemRowGap }
+        return PanelMetrics.topPadding + hero + PanelMetrics.heroGap + rowsHeight + PanelMetrics.rowsToRecordGap
+            + PanelMetrics.recordRow + PanelMetrics.recordToFooterGap + PanelMetrics.footer + PanelMetrics.bottomPadding
+    }
     let all: [(HealthItem, HealthLevel)] = [(.disk, .red), (.memory, .red), (.power, .yellow), (.cpu, .yellow), (.thermal, .yellow)]
-    for (count, laptop) in [(0, 524.0), (1, 524.0), (2, 524.0), (3, 524.0), (4, 524.0), (5, 524.0)] {
+    for count in 0...5 {
         let p = plan(Array(all.prefix(count)))
-        expect(p.height == laptop, "laptop \(count) anomalies: \(laptop), got \(p.height)")
+        let want = expected(items: 6, problems: count, hero: PanelMetrics.hero)
+        expect(p.height == want, "laptop \(count) anomalies: \(want), got \(p.height)")
         expect(p.rows.count == 6, "laptop has 6 rows")
+        expect(p.problemRowCount == min(3, count), "laptop \(count) anomalies: \(min(3, count)) expanded rows")
     }
     let desktopAll: [(HealthItem, HealthLevel)] = [(.disk, .red), (.memory, .red), (.cpu, .yellow), (.thermal, .yellow)]
-    for (count, desktop) in [(0, 484.0), (1, 484.0), (2, 484.0), (3, 484.0), (4, 484.0)] {
+    for count in 0...4 {
         let p = plan(Array(desktopAll.prefix(count)), battery: false)
-        expect(p.height == desktop, "desktop \(count) anomalies: \(desktop), got \(p.height)")
+        let want = expected(items: 5, problems: count, hero: PanelMetrics.hero)
+        expect(p.height == want, "desktop \(count) anomalies: \(want), got \(p.height)")
         expect(p.rows.count == 5 && !p.rows.contains(.battery), "desktop has 5 rows, no battery")
     }
+    // All green with 6 items is at most 340 pt, for the hero of this branch and for the 132 pt hero of DESIGN_V3.md 3.3.
+    for hero in [PanelMetrics.hero, 132.0] {
+        let green = PanelLayout.height(hasBattery: true, problems: 0, hero: hero)
+        expect(green == expected(items: 6, problems: 0, hero: hero), "all green with hero \(hero): \(green)")
+        expect(hero > 132 || green <= 340, "all green with hero \(hero) is at most 340, got \(green)")
+        let top = PanelLayout.height(hasBattery: true, problems: 3, hero: hero)
+        expect(top == expected(items: 6, problems: 3, hero: hero), "three problem rows with hero \(hero): \(top)")
+    }
+    expect(PanelLayout.height(hasBattery: true, problems: 0, hero: 132) == 332, "all green with the 132 pt hero is 332 pt")
+    expect(PanelLayout.height(hasBattery: true, problems: 3, hero: 132) == 504, "three problem rows with the 132 pt hero is 504 pt")
+    expect(plan(Array(all.prefix(4))).height == plan(Array(all.prefix(3))).height, "the fourth problem does not add height")
+    expect(PanelMetrics.heroOverlap == 6 && PanelMetrics.heroOverlap <= PanelMetrics.heroGap, "the dog's feet fit in the gap above the list")
     expect(PanelMetrics.width == 352 && PanelMetrics.widthWithSidebar == 672, "widths 352 and 672")
-    expect(PanelMetrics.dotColumn + PanelMetrics.dotGap + PanelMetrics.textColumn + PanelMetrics.valueColumn
-           + PanelMetrics.sparkGap + PanelMetrics.sparkWidth == PanelMetrics.contentWidth, "row columns add up to 320")
+    expect(PanelMetrics.problemRow == 64 && PanelMetrics.quietRow == 28 && PanelMetrics.recordRow == 28 && PanelMetrics.footer == 32, "row heights")
+    expect(PanelMetrics.primaryButtonWidth + PanelMetrics.footerGap + PanelMetrics.moreButtonWidth == PanelMetrics.rowBackgroundWidth,
+           "footer line adds up to 336")
 
     section("PanelLayout v2: row order")
     let quiet = plan([])
@@ -49,7 +75,7 @@ func runLayoutTests() {
     expect(mixed.rows.prefix(2) == [.disk, .thermal], "red problem before yellow problem, got \(mixed.rows)")
     expect(Array(mixed.rows.dropFirst(2)) == [.cpu, .memory, .network, .battery], "normal rows keep the fixed order, got \(mixed.rows)")
     let four = plan(Array(all.prefix(4)))
-    expect(four.anomalies.count == 4 && four.height == quiet.height, "4 anomalies: all listed, height unchanged")
+    expect(four.anomalies.count == 4 && four.problemRowCount == 3, "4 anomalies: all listed, 3 expanded rows")
     expect(plan([(.power, .yellow)], battery: false).anomalies.isEmpty, "no battery anomaly on a desktop")
 
     section("PanelRows: values and notes")
@@ -148,17 +174,77 @@ func runLayoutTests() {
         for b in bars { expect(r.measurement != b.reason && !b.title.contains(r.measurement), "no repeated measured value") }
     }
 
+    section("PanelRows: problem notes (DESIGN_V3.md 5.1)")
+    let worstLasting = [200.0, 26 * 60.0, 47 * 60.0 + 59]   // minutes: 3 h 20 min, 1 day 2 h, 1 day 23 h 59 min
+    func note(_ item: SidebarItem, _ health: HealthItem, _ level: HealthLevel, _ code: String, _ cur: CurrentReadings,
+              minutes: Double = 180, growth: [String: DiskGrowth] = [:], apps: [AppUsage] = []) -> PanelRowState {
+        PanelRows.row(item, PanelRowsInput(verdicts: [lv(health, level, code: code, since: minutes)], current: cur, dataState: .fresh,
+                                           diskGrowth: growth, topApps: apps, now: now, timeZone: utc))
+    }
+    let nd = note(.disk, .disk, .red, "growth_5d", c, growth: growth)
+    expect(nd.problemNote == "5 天胖了 314 GB，已持续 3 小时", "disk note: \(String(describing: nd.problemNote))")
+    var pressure = c
+    pressure.memoryPressurePercent = 87
+    let nm = note(.memory, .memory, .red, "pressure_critical", pressure, minutes: 25)
+    expect(nm.problemNote == "喘不过气，已持续 25 分" && nm.value == "87%", "memory note: \(String(describing: nm.problemNote))")
+    expect(nm.quietValue == "87%", "the quiet value of memory has no prefix word")
+    expect(note(.memory, .memory, .red, "pressure_critical", pressure, minutes: 0.2).problemNote == "喘不过气，刚刚开始", "a new problem says it just started")
+    expect(note(.disk, .disk, .red, "low_space", c).problemNote == "快满了，可用空间不足，已持续 3 小时", "low space note")
+    let nb = note(.battery, .power, .yellow, "awake_drain", drain)
+    expect(nb.problemNote == "掉电太快，每小时 34%，已持续 3 小时", "battery note: \(String(describing: nb.problemNote))")
+    let ns = note(.battery, .power, .yellow, "sleep_drain", drain)
+    expect(ns.problemNote == "掉电太快，睡眠每小时 3.3%，已持续 3 小时", "battery sleep note: \(String(describing: ns.problemNote))")
+    let nc = note(.cpu, .cpu, .yellow, "cpu_mean_10m", c)
+    expect(nc.problemNote == "跑太久，10 分钟均值 94%，已持续 3 小时", "cpu note: \(String(describing: nc.problemNote))")
+    let nt = note(.thermal, .thermal, .yellow, "thermal_fair", c)
+    expect(nt.problemNote == "发烫，CPU 51 \u{00B0}C，已持续 3 小时", "thermal note: \(String(describing: nt.problemNote))")
+    let heavy = [AppUsage(key: "x", name: "Final Cut Pro Long Name", bundleID: nil, cpuPercent: 230, memoryBytes: 1, memoryBasis: "footprint",
+                          processCount: 1, isSystem: false, diskWrittenBytes: nil)]
+    func appNote(_ minutes: Double) -> PanelRowState {
+        let v = ItemVerdict(item: .cpu, level: .yellow, reasonCode: "app_saturated", headline: "Final Cut Pro Long Name 占满一个核",
+                            since: now.addingTimeInterval(-minutes * 60), levelChangedAt: nil, alert: nil)
+        return PanelRows.row(.cpu, PanelRowsInput(verdicts: [v], current: c, dataState: .fresh, topApps: heavy, now: now, timeZone: utc))
+    }
+    let na = appNote(180)
+    expect(na.problemNote == "Final Cut Pr\u{2026} 跑太久 230%，已持续 3 小时", "app note cuts a long name: \(String(describing: na.problemNote))")
+    expect(PanelRows.row(.cpu, input).problemNote == nil, "a healthy row has no problem note")
+    // Every note fits 24 width units, also at the longest duration and the longest numbers.
+    var worst = c
+    worst.memoryPressurePercent = 100; worst.awakeDrainPerHour = 100; worst.cpuMean10m = 100
+    worst.lastSleep = SleepRecord(sleptAt: now.addingTimeInterval(-3 * 3600), wokeAt: now, batteryBefore: 100, batteryAfter: 70, onBatteryBeforeSleep: true)
+    let big = ["30d": DiskGrowth(window: "30d", bytes: 1_200_000_000_000, netBytes: nil, fromMinAt: nil, coveredHours: 720, status: .ok)]
+    for minutes in worstLasting {
+        var notes = [String]()
+        notes.append(note(.disk, .disk, .red, "growth_30d", worst, minutes: minutes, growth: big).problemNote ?? "")
+        notes.append(note(.disk, .disk, .red, "low_space", worst, minutes: minutes).problemNote ?? "")
+        notes.append(note(.memory, .memory, .red, "swap_growth", worst, minutes: minutes).problemNote ?? "")
+        notes.append(note(.memory, .memory, .yellow, "pressure_warning", worst, minutes: minutes).problemNote ?? "")
+        notes.append(note(.battery, .power, .yellow, "sleep_drain", worst, minutes: minutes).problemNote ?? "")
+        notes.append(note(.battery, .power, .yellow, "awake_drain", worst, minutes: minutes).problemNote ?? "")
+        notes.append(note(.cpu, .cpu, .yellow, "cpu_mean_10m", worst, minutes: minutes).problemNote ?? "")
+        notes.append(appNote(minutes).problemNote ?? "")
+        notes.append(note(.thermal, .thermal, .red, "thermal_critical", worst, minutes: minutes).problemNote ?? "")
+        for text in notes {
+            expect(BubbleCopy.width(text) <= BubbleCopy.maxWidth, "problem note at most 24 width units (\(BubbleCopy.width(text))): \(text)")
+            expect(text.contains(where: { $0.isNumber }), "the problem note keeps a number: \(text)")
+        }
+    }
+    let quietKeep = PanelRows.row(.disk, input)
+    expect(quietKeep.quietValue == "可用 402 GB", "the quiet disk value keeps the free-space prefix, got \(quietKeep.quietValue)")
+    let gray = PanelRows.row(.cpu, PanelRowsInput(verdicts: [lv(.cpu, .yellow, code: "cpu_mean_10m")], current: c, dataState: .stale(now.addingTimeInterval(-3600)), now: now))
+    expect(gray.problemNote == nil, "a stale row has no problem note")
+
     section("PanelFooter and PanelArea")
     let f0 = PanelFooterState.make(dataState: .fresh, anomalyCount: 0)
-    expect(f0.mode == .inspect && f0.title == "让 Agent 做一次日常巡检" && f0.enabled, "quiet footer")
+    expect(f0.mode == .inspect && f0.title == "复制日常巡检提示词" && f0.enabled && !f0.hidden, "quiet footer")
     let f1 = PanelFooterState.make(dataState: .fresh, anomalyCount: 2)
-    expect(f1.mode == .copyProblems && f1.title == "复制排查提示词" && f1.subtitle == "粘贴给你的 Agent", "problem footer")
+    expect(f1.mode == .copyProblems && f1.title == "复制排查提示词" && !f1.hidden, "problem footer: no subtitle")
     expect(f1.copiedTitle == "\u{2713} 已复制" && f1.copiedBubble == "已复制，去问你的 Agent 吧", "copied texts")
-    expect(!PanelFooterState.make(dataState: .collecting, anomalyCount: 0).enabled, "collecting footer is disabled")
+    expect(!PanelFooterState.make(dataState: .collecting, anomalyCount: 0).enabled && PanelFooterState.make(dataState: .collecting, anomalyCount: 0).hidden, "collecting footer is hidden")
     expect(PanelFooterState.make(dataState: .stale(now), anomalyCount: 1).mode == .copyProblems, "stale footer follows the problems")
     expect(PanelAreaState.make(dataState: .fresh, anomalyCount: 0, records: 3, now: now) == .quiet(records: 3), "quiet area")
     expect(PanelAreaState.recordsText(0) == "近 7 天无记录" && PanelAreaState.recordsText(3) == "近 7 天 3 条记录", "records text")
-    expect(PanelAreaState.make(dataState: .fresh, anomalyCount: 1, records: nil, now: now) == .anomalies, "anomaly area")
+    expect(PanelAreaState.make(dataState: .fresh, anomalyCount: 1, records: 6, now: now) == .anomalies(records: 6), "anomaly area keeps the record count")
 
     section("SparkSeries")
     let empty = SparkSeries.empty(now: now)
