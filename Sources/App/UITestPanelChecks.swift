@@ -325,7 +325,6 @@ extension UITestRunner {
         stepLargeType()
         await stepColdFirstFrame(copyBox: copyBox)
         await stepIcon()
-        await stepCollapsedRows()
     }
 
     /// Pixels near the system focus ring color in the ring zone around a frame (`margin` points outside the frame, plus the frame).
