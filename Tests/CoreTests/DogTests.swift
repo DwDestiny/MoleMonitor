@@ -94,46 +94,6 @@ private func dogNearOutline(_ polys: [[(Double, Double)]], _ x: Double, _ y: Dou
     return false
 }
 
-/// 1x alpha grid of a menu icon, following the rules of MenuIconRenderer (Sources/App/DogShapes.swift).
-func dogMenuGrid(_ posture: MenuPosture, badge: HealthItem?) -> [[Double]] {
-    let w = Int(DogArt.menuSize.w), h = Int(DogArt.menuSize.h)
-    var a = Array(repeating: Array(repeating: 0.0, count: w), count: h)
-    func over(_ c: [[Double]]) { for y in 0..<h { for x in 0..<w { a[y][x] = c[y][x] + a[y][x] * (1 - c[y][x]) } } }
-    func clear(_ c: [[Double]]) { for y in 0..<h { for x in 0..<w { a[y][x] *= (1 - c[y][x]) } } }
-    if posture == .hollow {
-        // Inner ring of the silhouette (stroke 3 pt clipped to the head = 1.5 pt inside), then the face dots solid.
-        for part in DogArt.menuHead(posture) where part.role == .fur {
-            over(dogCoverage(dogPolygons(part.ops), w: w, h: h, stroke: 2 * 1.5, insideOnly: true))
-        }
-        for part in DogArt.menuHead(posture) where part.role == .cutout { over(dogCoverage(dogPolygons(part.ops), w: w, h: h)) }
-    } else {
-        for part in DogArt.menuHead(posture) {
-            let polys = dogPolygons(part.ops)
-            if part.role == .tongue {
-                // Round 3: a clear ring around the tongue, then the tongue at 55 % alpha.
-                clear(dogCoverage(polys, w: w, h: h, stroke: 1.5))
-                over(dogCoverage(polys, w: w, h: h).map { $0.map { $0 * DogArt.menuTongueAlpha } })
-            } else if part.role == .cutout {
-                clear(dogCoverage(polys, w: w, h: h))
-            } else {
-                over(dogCoverage(polys, w: w, h: h))
-            }
-        }
-    }
-    if let badge, posture == .pant {
-        // Round 3: red level, the 9 x 9 pt disc at x 15 to 24 with the glyph cleared out of it.
-        let o = DogArt.alarmOrigin
-        for part in DogArt.alarmDisc { over(dogCoverage(dogPolygons(part.ops) { ($0 + o.x, $1 + o.y) }, w: w, h: h)) }
-        for part in DogArt.alarmBadge(badge) { clear(dogCoverage(dogPolygons(part.ops) { ($0 + o.x, $1 + o.y) }, w: w, h: h)) }
-    } else if let badge {
-        // No cutout: the badge box (x 16 to 24) never touches the head (x 0 to 16).
-        let o = DogArt.menuBadgeOrigin
-        for part in DogArt.badge(badge) {
-            over(dogCoverage(dogPolygons(part.ops) { ($0 + o.x, $1 + o.y) }, w: w, h: h))
-        }
-    }
-    return a
-}
 
 /// 1x alpha grid of one alarm disc (9 x 9 pt): the disc minus the knockout.
 func dogAlarmGrid(_ item: HealthItem) -> [[Double]] {
@@ -241,18 +201,6 @@ func runDogTests() {
     expect(DogArt.ops("M 1 2 L 3 4 C 5 6 7 8 9 10 Z") == [.move(1, 2), .line(3, 4), .cubic(5, 6, 7, 8, 9, 10), .close], "path data decoder")
 
     var menuBad = [String]()
-    for posture in MenuPosture.allCases {
-        for p in DogArt.menuHead(posture) {
-            if !dogClosed(p.ops) { menuBad.append("\(posture.rawValue).\(p.name) open") }
-            // Round 2: the whole head, ears and tongue included, stays left of the badge box (the drawn curve,
-            // not the control points). Round 3: the raised head tilts and may reach x 16; the pant head stays
-            // left of the alarm disc (x 15).
-            let right = posture == .raised ? DogArt.menuRaisedWidth : DogArt.menuHeadWidth
-            for (x, y) in dogPolygons(p.ops).joined() where x < 0 || x > right || y < 0 || y > 18 {
-                menuBad.append("\(posture.rawValue).\(p.name) outside"); break
-            }
-        }
-    }
     for item in HealthItem.allCases {
         for p in DogArt.badge(item) {
             if !dogClosed(p.ops) { menuBad.append("badge \(item.rawValue) open") }
@@ -271,80 +219,7 @@ func runDogTests() {
     for (x, y) in dogPolygons(DogArt.alarmDisc[0].ops).joined() where x < -1e-9 || x > DogArt.alarmSize + 1e-9 || y < -1e-9 || y > DogArt.alarmSize + 1e-9 {
         menuBad.append("alarm disc outside \(x),\(y)"); break
     }
-    expect(DogArt.alarmOrigin.x >= DogArt.menuHeadWidth && DogArt.alarmOrigin.x + DogArt.alarmSize <= DogArt.menuSize.w
-           && DogArt.alarmOrigin.y + DogArt.alarmSize <= DogArt.menuSize.h, "the alarm disc sits right of the pant head, inside 24 x 18")
-    expect(menuBad.isEmpty, "menu head and badge paths are closed and inside their boxes: \(menuBad)")
-    expect(DogArt.menuHead(.relaxed) != DogArt.menuHead(.raised) && DogArt.menuHead(.raised) != DogArt.menuHead(.pant), "the 3 postures have different art")
-
-    section("Menu icon 1x metric (software raster)")
-    let postures: [MenuPosture] = [.relaxed, .raised, .pant]
-    let pGrids = postures.map { ($0.rawValue, dogMenuGrid($0, badge: nil)) }
-    let pm = IconMetrics.matrix(pGrids)
-    for (k, v) in pm.pairs.sorted(by: { $0.key < $1.key }) { print("  posture \(k): \(String(format: "%.3f", v))") }
-    expect(pm.minimum >= IconMetrics.posturePass, "postures differ by XOR >= 0.20 at 1x (min \(String(format: "%.3f", pm.minimum)))")
-    for (name, grid) in pGrids {
-        // Pixels under the three face cutouts: eyes (5, 8) and (9, 8), nose (7, 11); the pant nose sits 1 pt higher;
-        // the raised face moves 1 pt right with the tilt (round 3).
-        let dx = name == "raised" ? 1 : 0
-        for (cx, cy) in [(5 + dx, 8), (9 + dx, 8), (7 + dx, name == "pant" ? 10 : 11)] {
-            expect(grid[cy][cx] < 0.02, "\(name): face cutout pixel (\(cx), \(cy)) is fully clear (alpha \(grid[cy][cx]))")
-        }
-    }
-    let relaxedRaised = IconMetrics.xorRatio(pGrids[0].1, pGrids[1].1)
-    expect(relaxedRaised >= IconMetrics.relaxedRaisedPass,
-           "relaxed and raised differ by XOR >= 0.25 at 1x (\(String(format: "%.3f", relaxedRaised)))")
-    let hollow = dogMenuGrid(.hollow, badge: nil)
-    let hollowInk = hollow.joined().filter { $0 >= 0.5 }.count
-    let filledInk = pGrids[0].1.joined().filter { $0 >= 0.5 }.count
-    expect(hollowInk > 40 && hollowInk * 10 < filledInk * 6, "hollow is a ring, lighter than the filled head (\(hollowInk) of \(filledInk) solid pixels)")
-    let bGrids = HealthItem.allCases.map { ($0.rawValue, dogBadgeGrid($0)) }
-    let bm = IconMetrics.matrix(bGrids)
-    for (k, v) in bm.pairs.sorted(by: { $0.key < $1.key }) { print("  badge \(k): \(String(format: "%.3f", v))") }
-    expect(bm.minimum >= IconMetrics.badgePass, "badge glyphs differ by XOR >= 0.35 at 1x (min \(String(format: "%.3f", bm.minimum)))")
-    // Round 3: the stems of the thermometer and the strokes of the bolt are at least 2 px wide at 1x.
-    let thermal = dogBadgeGrid(.thermal), power = dogBadgeGrid(.power)
-    let stemRows = (0..<4).map { y in thermal[y].filter { $0 >= 0.5 }.count }
-    let boltRows = (0..<8).map { y in power[y].filter { $0 >= 0.5 }.count }
-    expect(stemRows.allSatisfy { $0 >= 2 } && boltRows.allSatisfy { $0 >= 2 }, "thermometer stem and bolt strokes are >= 2 px at 1x (\(stemRows), \(boltRows))")
-    let aGrids = HealthItem.allCases.map { ($0.rawValue, dogAlarmGrid($0)) }
-    let am = IconMetrics.matrix(aGrids)
-    for (k, v) in am.pairs.sorted(by: { $0.key < $1.key }) { print("  alarm \(k): \(String(format: "%.3f", v))") }
-    expect(am.minimum >= IconMetrics.alarmPass, "alarm discs differ by XOR >= 0.30 at 1x (min \(String(format: "%.3f", am.minimum)))")
-    // The alarm disc is heavier than the yellow glyph: more solid pixels for every item.
-    for item in HealthItem.allCases {
-        let disc = dogAlarmGrid(item).joined().filter { $0 >= 0.5 }.count
-        let glyph = dogBadgeGrid(item).joined().filter { $0 >= 0.5 }.count
-        expect(disc > glyph, "\(item.rawValue): the alarm disc (\(disc) px) outweighs the yellow glyph (\(glyph) px)")
-    }
-    // Round 2: the badge never cuts the head. The head columns are the same with and without a badge:
-    // 0 to 15 next to the 8 pt glyph, 0 to 14 next to the 9 pt alarm disc of the pant head (round 3).
-    let o = DogArt.menuBadgeOrigin, side = DogArt.badgeSize
-    expect(o.x >= DogArt.menuRaisedWidth && o.x + side <= DogArt.menuSize.w && o.y + side <= DogArt.menuSize.h,
-           "the badge box sits right of the head, inside 24 x 18")
-    var headInBadge = [String]()
-    for posture in MenuPosture.allCases {
-        let plain = dogMenuGrid(posture, badge: nil)
-        let split = posture == .pant ? Int(DogArt.alarmOrigin.x) : Int(o.x)
-        for item in HealthItem.allCases {
-            let marked = dogMenuGrid(posture, badge: item)
-            var same = true, badgeInk = 0
-            for y in 0..<18 {
-                for x in 0..<split where abs(marked[y][x] - plain[y][x]) > 1e-9 { same = false }
-                for x in split..<24 where marked[y][x] >= 0.5 { badgeInk += 1 }
-            }
-            expect(same, "\(posture.rawValue) + \(item.rawValue): the badge leaves the head untouched")
-            expect(badgeInk >= 20, "\(posture.rawValue) + \(item.rawValue): the badge has at least 20 solid pixels (\(badgeInk))")
-        }
-        for y in 0..<18 { for x in split..<24 where plain[y][x] > 0 { headInBadge.append("\(posture.rawValue) \(x),\(y)") } }
-    }
-    // Round 3: the pant tongue is lighter than the face and wider than tall.
-    let tongue = DogArt.menuPant.first { $0.role == .tongue }!
-    let tx = dogPolygons(tongue.ops).joined().map { $0.0 }, ty = dogPolygons(tongue.ops).joined().map { $0.1 }
-    expect(tx.max()! - tx.min()! > ty.max()! - ty.min()! && DogArt.menuTongueAlpha <= 0.6,
-           "pant tongue is wider than tall and drawn at <= 60 % alpha")
-    expect(headInBadge.isEmpty, "no head ink in the badge columns: \(headInBadge)")
-    expect(IconMetrics.xorRatio([[1, 0]], [[1, 1]]) == 0.5, "xorRatio: 1 different of max 2 solid")
-    expect(IconMetrics.xorRatio([[0.4]], [[0]]) == 0, "xorRatio: alpha below 0.5 is not solid")
+    expect(menuBad.isEmpty, "badge paths are closed and inside their boxes: \(menuBad)")
 
     section("Dog gait rules")
     expect(DogGaitRules.nextGait(from: .lie, s: 9.9) == .lie, "lie stays below 10")
@@ -588,79 +463,6 @@ func runDogTests() {
     let staticIn = DogInput(cpuPercent: 25, thermal: .nominal, memoryLevel: .green, worstProblem: nil, worstLevel: .green, isStatic: true)
     let sf = ms.frame(dt: 0.04, input: staticIn)
     expect(sf.gait == .stand && sf.pose.opacity == DogMotor.grayOpacity && sf.fadeFrom == nil, "collecting or stale: the gray standing frame")
-
-    section("Menu bar switch frames (stage 2)")
-    let relaxed = MenuIconState(posture: .relaxed, badge: nil)
-    let raisedCpu = MenuIconState(posture: .raised, badge: MenuBadge(item: .cpu))
-    let pantCpu = MenuIconState(posture: .pant, badge: MenuBadge(item: .cpu))
-    let pantMem = MenuIconState(posture: .pant, badge: MenuBadge(item: .memory))
-    let hollowState = MenuIconState(posture: .hollow, badge: nil)
-    expect(MenuMotion.frameCount <= 8 && Double(MenuMotion.frameCount - 1) * MenuMotion.frameInterval <= 0.6 + 1e-9,
-           "at most 8 frames in at most 600 ms")
-    let normRelaxed = MenuMotion.normalized(DogArt.menuRelaxed)
-    let cubicCount: ([DogPathOp]) -> Int = { $0.filter { if case .cubic = $0 { return true }; return false }.count }
-    expect(cubicCount(normRelaxed[0].ops) == 22 && cubicCount(DogArt.menuRaised[0].ops) == 22 && cubicCount(DogArt.menuPant[0].ops) == 22,
-           "the three head silhouettes line up at 22 edges")
-    let before = dogCoverage(dogPolygons(DogArt.menuRelaxed[0].ops), w: 24, h: 18)
-    let after = dogCoverage(dogPolygons(normRelaxed[0].ops), w: 24, h: 18)
-    var splitDiff = 0.0
-    for y in 0..<18 { for x in 0..<24 { splitDiff = max(splitDiff, abs(before[y][x] - after[y][x])) } }
-    expect(splitDiff < 0.02, "splitting the relaxed edges keeps the shape (max alpha change \(String(format: "%.3f", splitDiff)))")
-    var allEight = true, lastMatches = true, pairs = 0
-    let menuStates = [relaxed] + [MenuPosture.raised, .pant].flatMap { p in HealthItem.allCases.map { MenuIconState(posture: p, badge: MenuBadge(item: $0)) } }
-    for a in menuStates {
-        for b in menuStates where a != b {
-            pairs += 1
-            let frames = MenuMotion.frames(from: a, to: b)
-            if frames.count != 8 { allEight = false; continue }
-            let last = frames[7], still = MenuMotion.still(b)
-            let sameHead = last.head.count == still.head.count
-                && zip(last.head, MenuMotion.normalized(still.head)).allSatisfy { p, q in
-                    p.name == q.name && p.ops.count == q.ops.count && zip(p.ops, q.ops).allSatisfy { dogOpNear($0, $1) }
-                }
-            if !(sameHead && last.badge == still.badge && last.alarm == still.alarm && last.badgeScale == 1) { lastMatches = false }
-        }
-    }
-    expect(allEight, "every switch between \(pairs) state pairs has 8 frames")
-    expect(lastMatches, "the last frame of every switch is the still target")
-    expect(MenuMotion.frames(from: hollowState, to: relaxed).isEmpty && MenuMotion.frames(from: raisedCpu, to: hollowState).isEmpty
-           && MenuMotion.frames(from: relaxed, to: relaxed).isEmpty, "hollow and unchanged states have no frames")
-    let up = MenuMotion.frames(from: relaxed, to: raisedCpu).map { $0.badgeScale }
-    expect(abs((up.max() ?? 0) - 1.2) < 1e-9 && up.last == 1 && up[0] < 0.5, "a new badge pops 0 -> 1.2 -> 1 (\(up.map { String(format: "%.2f", $0) }))")
-    let down = MenuMotion.frames(from: pantMem, to: relaxed)
-    expect(down.last?.badge == nil && down[0].badge == MenuBadge(item: .memory) && down[0].alarm && abs((down.map { $0.badgeScale }.max() ?? 0) - 1.2) < 1e-9,
-           "a badge that goes away plays the pop backward")
-    let redSame = MenuMotion.frames(from: raisedCpu, to: pantCpu)
-    expect(redSame.allSatisfy { $0.alarm } && redSame[0].badgeScale < 0.5, "yellow -> red of the same item pops the alarm disc")
-    let toPant = MenuMotion.frames(from: relaxed, to: pantMem)
-    let tongueHeights = toPant.map { f -> Double in
-        guard let t = f.head.first(where: { $0.name == "tongue" }) else { return 0 }
-        let ys = dogPolygons(t.ops).flatMap { $0.map { $0.1 } }
-        return (ys.max() ?? 0) - (ys.min() ?? 0)
-    }
-    expect(zip(tongueHeights, tongueHeights.dropFirst()).allSatisfy { $1 >= $0 - 1e-9 } && (tongueHeights.last ?? 0) > 2,
-           "the tongue grows frame by frame (\(tongueHeights.map { String(format: "%.1f", $0) }))")
-    let earX = MenuMotion.frames(from: relaxed, to: raisedCpu).map { f -> Double in
-        dogPolygons(f.head[0].ops).flatMap { $0.map { $0.0 } }.max() ?? 0
-    }
-    expect(zip(earX, earX.dropFirst()).allSatisfy { $1 >= $0 - 1e-6 } && (earX.last ?? 0) <= DogArt.menuRaisedWidth + 1e-9,
-           "the ear tip moves out step by step and stays inside x 16 (\(earX.map { String(format: "%.1f", $0) }))")
-    // Who plays and who switches directly.
-    let t0 = Date(timeIntervalSince1970: 1_000_000)
-    let free = MenuMotionConditions()
-    expect(MenuMotion.play(from: relaxed, to: raisedCpu, lastPlayed: [:], now: t0, conditions: free) == .cpu, "a change plays for its item")
-    expect(MenuMotion.play(from: nil, to: raisedCpu, lastPlayed: [:], now: t0, conditions: free) == nil, "the first image switches directly")
-    expect(MenuMotion.play(from: raisedCpu, to: relaxed, lastPlayed: [:], now: t0, conditions: free) == .cpu, "a downgrade plays for the item that goes away")
-    expect(MenuMotion.play(from: relaxed, to: raisedCpu, lastPlayed: [.cpu: t0.addingTimeInterval(-299)], now: t0, conditions: free) == nil,
-           "the same item plays at most once in 5 minutes")
-    expect(MenuMotion.play(from: relaxed, to: raisedCpu, lastPlayed: [.cpu: t0.addingTimeInterval(-300)], now: t0, conditions: free) == .cpu,
-           "after 5 minutes it plays again")
-    expect(MenuMotion.play(from: relaxed, to: pantMem, lastPlayed: [.cpu: t0], now: t0, conditions: free) == .memory, "another item is not throttled")
-    for (name, c) in [("Reduce Motion", MenuMotionConditions(reduceMotion: true)), ("locked screen", MenuMotionConditions(screenLocked: true)),
-                      ("sleeping display", MenuMotionConditions(displayAsleep: true)), ("hidden icon", MenuMotionConditions(iconVisible: false))] {
-        expect(MenuMotion.play(from: relaxed, to: raisedCpu, lastPlayed: [:], now: t0, conditions: c) == nil, "\(name): direct switch")
-    }
-    expect(MenuMotion.play(from: hollowState, to: relaxed, lastPlayed: [:], now: t0, conditions: free) == nil, "collecting -> normal: direct switch")
 
     section("Dog memory red and gray (stage 2)")
     let walkGreen = DogMotor.staticPose(gait: .walk, input: dogInput(cpu: 25))

@@ -104,22 +104,44 @@ func runMenuRunnerTests() {
         let g = MenuRunnerArt.alphaGrid(p, scale: 1)
         let solid = g.joined().filter { $0 >= 0.5 }.count
         expect(solid >= 120, "\(p): \(solid) solid px at 1x")
-        expect(f.legs.count == 4, "\(p): four legs")
-        // The tail ball top is above the back line (the raised tail).
-        expect(MenuRunnerArt.torso.last.map { $0.bounds.1 } ?? 99 < 3, "\(p): tail ball raised")
+        expect(f.legs.count == 2, "\(p): two leg columns (front pair, hind pair)")
+        // Legs about 1/4 of the canvas height: each column reaches at most 6 pt below its hip.
+        expect(f.legs.allSatisfy { $0.bounds.3 - $0.bounds.1 <= 7.5 }, "\(p): short leg columns")
+    }
+    // The tail ball sits on the back: no higher than the top of the head, and it overlaps a back shape (no stalk).
+    let tailTop = MenuRunnerArt.tail.bounds.1, headTop = MenuRunnerArt.head.bounds.1
+    expect(tailTop >= headTop, "tail ball top \(tailTop) not above head top \(headTop)")
+    if case let .circle(tx, ty, tr) = MenuRunnerArt.tail {
+        let touches = MenuRunnerArt.torso.contains { s in
+            s != MenuRunnerArt.tail && s.contains(tx - tr * 0.8, ty + tr * 0.6)
+        }
+        expect(touches, "tail ball lower front overlaps the back (no stalk)")
+    } else {
+        expect(false, "tail ball is a circle")
+    }
+    expect(!MenuRunnerArt.torso.contains { if case .capsule = $0 { return true } else { return false } },
+           "no stalk shapes in the torso")
+    // The ear gap cuts into the head (a drooping ear, not an upward dot): every gap stroke starts below the head top.
+    expect(MenuRunnerArt.earGap.count >= 2 && MenuRunnerArt.earGap.allSatisfy { $0.bounds.1 > headTop + 2 },
+           "drooping ear gap inside the head")
+    // The head is the biggest round shape.
+    if case let .circle(_, _, hr) = MenuRunnerArt.head, case let .circle(_, _, tr) = MenuRunnerArt.tail {
+        expect(hr > tr * 2, "head radius \(hr) > 2 x tail radius")
     }
     expect((bobs.max() ?? 0) - (bobs.min() ?? 0) <= 1.0 + 1e-9, "body bob range <= 1 pt")
     expect(MenuRunnerArt.figure(.stand).bob == 0, "stand frame has no bob")
     // Standing feet are on the ground line (bottom of the round end at y 17.6 to 18).
     let standFeet = MenuRunnerArt.figure(.stand).legs.map { $0.bounds.3 }
-    expect(standFeet.allSatisfy { $0 >= 17.6 && $0 <= 18 }, "stand: four feet on the ground")
+    expect(standFeet.allSatisfy { $0 >= 17.6 && $0 <= 18 }, "stand: both leg columns on the ground")
 
-    // The 4 run frames differ pairwise in the leg band (rows below the belly, 2x) by at least 30 %.
+    // The 4 run frames differ pairwise in the leg band (rows below the belly, 2x) by at least 30 % (the W29 gate). The
+    // Q4 redraw reaches about 0.8; the Core floor below is 0.6 so a later edit cannot silently flatten the gait.
     let band = 28..<36   // y 14 to 18 pt at 2x (below the belly)
     let grids = MenuRunPose.runFrames.map { ($0.description, Array(MenuRunnerArt.alphaGrid($0, scale: 2)[band])) }
     let m = IconMetrics.matrix(grids)
     print("  run leg band pairs: " + m.pairs.sorted { $0.key < $1.key }.map { "\($0.key) \(String(format: "%.2f", $0.value))" }.joined(separator: ", "))
     expect(m.minimum >= 0.30, "run frames leg band pairwise XOR min \(String(format: "%.3f", m.minimum)) >= 0.30")
+    expect(m.minimum >= 0.60, "run frames leg band pairwise XOR min \(String(format: "%.3f", m.minimum)) >= 0.60 (Core floor)")
     let standVsRun = MenuRunPose.runFrames.map {
         IconMetrics.xorRatio(Array(MenuRunnerArt.alphaGrid(.stand, scale: 2)[band]), Array(MenuRunnerArt.alphaGrid($0, scale: 2)[band]))
     }

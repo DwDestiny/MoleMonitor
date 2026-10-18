@@ -6,7 +6,8 @@
 //         speed tiers (4, 6, 8 fps), the motion conditions, the "CPU busy" text suffix, and a coverage raster for tests.
 // Pos: Pure logic and geometry, Foundation only, tested on Linux (Tests/CoreTests/MenuRunnerTests.swift). The App draws
 //      the shapes (Sources/App/MenuRunnerShapes.swift) and owns the one run timer (Sources/App/StatusIcon.swift).
-//      v3 (U10, 2026-10-18): replaces the v2 head postures and the switch animation of the menu bar icon.
+//      v3 (U10, 2026-10-18): replaces the v2 head postures and the switch animation of the menu bar icon. Redrawn the
+//      same day (Q4): tail ball on the back, two short leg columns, drooping ear, so it reads as a Bichon.
 
 import Foundation
 
@@ -154,7 +155,7 @@ enum MenuRunnerShape: Equatable {
     }
 }
 
-/// The silhouette of one pose: `fill` shapes in the ink, then `cut` shapes cleared (the eye).
+/// The silhouette of one pose: `fill` shapes in the ink, then `cut` shapes cleared (the eye and the ear gap).
 struct MenuRunnerFigure: Equatable {
     var fill: [MenuRunnerShape]
     var cut: [MenuRunnerShape]
@@ -164,10 +165,11 @@ struct MenuRunnerFigure: Equatable {
     var legs: [MenuRunnerShape]
 }
 
-/// Side-view Bichon facing left (DESIGN_V3.md 4.2): a big round head with a small muzzle and a cut-out eye, a curly
-/// body (an ellipse with a neck fluff, three bumps on the back and three under the belly), a tail ball on a thick short
-/// stalk raised above the back, four short legs (round-ended lines; the far leg of each pair sits 1.5 pt behind and,
-/// standing, 0.3 pt shorter, so each pair shows a small step). The mark box (bottom right)
+/// Side-view Bichon facing left (DESIGN_V3.md 4.2, review round 2 of U10): the head is the biggest round shape, with a
+/// short muzzle, a cut-out eye and a drooping ear (an ear lobe on the side of the head, its front and lower edge cut as
+/// a thin gap); a curly body (an ellipse with a chest fluff, three curls on the back and a rump curl); the tail ball sits
+/// directly on the rear of the back (no stalk) and stays below the top of the head; two short fluffy leg columns (front
+/// pair and hind pair, each one wide round-ended column, about 1/4 of the canvas height). The mark box (bottom right)
 /// stays clear of the dog in every pose.
 enum MenuRunnerArt {
     static let width = 24.0
@@ -178,36 +180,46 @@ enum MenuRunnerArt {
     /// Clear ring around the mark, pt.
     static let markGap = 0.75
 
-    static let legRadius = 0.95
-    static let farOffset = 1.5
-    static let frontHip = (x: 8.4, y: 12.2)
-    static let hindHip = (x: 12.4, y: 12.2)
+    /// Half width of a leg column (front pair, hind pair).
+    static let legRadius = 1.5
+    static let frontHip = (x: 8.6, y: 12.0)
+    static let hindHip = (x: 13.2, y: 12.0)
 
-    /// Head, muzzle, neck fluff, body puff, tail plume.
+    static let head: MenuRunnerShape = .circle(x: 5.6, y: 6.3, r: 4.9)
+    /// The tail ball, on the rear of the back (it overlaps the back curl, so no stalk).
+    static let tail: MenuRunnerShape = .circle(x: 16.5, y: 6.0, r: 2.2)
+    /// The ear lobe; its front and lower edge are cut by `earGap`.
+    static let ear: MenuRunnerShape = .ellipse(x: 7.3, y: 8.2, rx: 1.8, ry: 3.1)
+
+    /// Head, muzzle, chest fluff, body, back curls, rump curl, ear lobe, tail ball.
     static let torso: [MenuRunnerShape] = [
-        .circle(x: 5.0, y: 5.6, r: 4.4),
-        .circle(x: 1.65, y: 7.4, r: 1.6),
-        .circle(x: 7.6, y: 8.0, r: 2.0),
-        .ellipse(x: 11.8, y: 10.6, rx: 4.6, ry: 3.2),
-        .circle(x: 9.8, y: 8.2, r: 2.1), .circle(x: 12.6, y: 7.8, r: 2.1), .circle(x: 15.2, y: 8.8, r: 1.9),
-        .circle(x: 8.6, y: 11.2, r: 2.2), .circle(x: 11.6, y: 12.4, r: 1.7), .circle(x: 14.6, y: 11.8, r: 1.9),
-        .capsule(x0: 15.0, y0: 8.6, x1: 16.3, y1: 6.6, r: 1.25),
-        .circle(x: 17.2, y: 4.8, r: 2.4),
+        head,
+        .circle(x: 1.6, y: 8.3, r: 1.45),
+        .circle(x: 7.8, y: 10.2, r: 2.6),
+        .ellipse(x: 11.6, y: 10.0, rx: 4.8, ry: 3.3),
+        .circle(x: 10.4, y: 7.2, r: 1.9), .circle(x: 12.8, y: 7.0, r: 2.0), .circle(x: 14.9, y: 7.9, r: 1.8),
+        .circle(x: 15.3, y: 9.4, r: 1.5),
+        ear,
+        tail,
     ]
-    static let eye: MenuRunnerShape = .circle(x: 3.5, y: 5.0, r: 0.8)
+    static let eye: MenuRunnerShape = .circle(x: 3.4, y: 6.0, r: 0.75)
+    /// The thin gap that draws the drooping ear: down from the top of the head, then back under the lobe.
+    static let earGap: [MenuRunnerShape] = [
+        .capsule(x0: 6.3, y0: 4.5, x1: 5.6, y1: 6.8, r: 0.3),
+        .capsule(x0: 5.6, y0: 6.8, x1: 5.7, y1: 9.8, r: 0.3),
+        .capsule(x0: 5.7, y0: 9.8, x1: 6.9, y1: 11.2, r: 0.3),
+    ]
 
-    /// One leg: angle in degrees from straight down, positive swings the foot forward (left).
+    /// One leg column: angle in degrees from straight down, positive swings the foot forward (left).
     struct Leg: Equatable {
         var angle: Double
         var length: Double
     }
 
-    /// Leg angles of a pose: front near, front far, hind near, hind far; and the body offset.
+    /// The front and hind leg columns of a pose, and the body offset.
     struct Pose: Equatable {
-        var frontNear: Leg
-        var frontFar: Leg
-        var hindNear: Leg
-        var hindFar: Leg
+        var front: Leg
+        var hind: Leg
         var bob: Double
     }
 
@@ -215,36 +227,32 @@ enum MenuRunnerArt {
         func l(_ a: Double, _ len: Double) -> Leg { Leg(angle: a, length: len) }
         switch p {
         case .stand:
-            return Pose(frontNear: l(0, 4.8), frontFar: l(0, 4.5), hindNear: l(0, 4.8), hindFar: l(0, 4.5), bob: 0)
+            return Pose(front: l(0, 4.5), hind: l(0, 4.5), bob: 0)
         case .run(let i):
             switch ((i % MenuRunPose.runFrameCount) + MenuRunPose.runFrameCount) % MenuRunPose.runFrameCount {
-            case 0:   // Reach: front legs stretched forward, hind legs under the body.
-                return Pose(frontNear: l(55, 4.8), frontFar: l(42, 4.8), hindNear: l(12, 4.6), hindFar: l(0, 4.6), bob: 0)
-            case 1:   // Gather: short bent legs under the body, feet off the ground.
-                return Pose(frontNear: l(-20, 3.8), frontFar: l(10, 3.8), hindNear: l(22, 3.8), hindFar: l(-8, 3.8), bob: 0)
-            case 2:   // Push: hind legs kick back, front legs folded up.
-                return Pose(frontNear: l(78, 3.0), frontFar: l(64, 3.0), hindNear: l(-36, 4.6), hindFar: l(-22, 4.6), bob: 0.5)
-            default:  // Flight: front forward, hind back, body up.
-                return Pose(frontNear: l(42, 4.2), frontFar: l(30, 4.2), hindNear: l(-44, 4.0), hindFar: l(-26, 4.0), bob: -0.5)
+            case 0:   // Reach: front column stretched forward, hind column forward under the body.
+                return Pose(front: l(40, 4.2), hind: l(30, 3.8), bob: 0)
+            case 1:   // Gather: both columns short and under the body, body up.
+                return Pose(front: l(-6, 2.4), hind: l(24, 2.8), bob: -0.5)
+            case 2:   // Push: both columns slant back, the hind one kicks, body down.
+                return Pose(front: l(-28, 4.0), hind: l(-24, 3.4), bob: 0.5)
+            default:  // Flight: front far forward, hind folded back, body up.
+                return Pose(front: l(64, 4.0), hind: l(-50, 2.6), bob: -0.5)
             }
         }
     }
 
-    static func leg(hip: (x: Double, y: Double), dx: Double, _ leg: Leg, bob: Double) -> MenuRunnerShape {
+    static func leg(hip: (x: Double, y: Double), _ leg: Leg, bob: Double) -> MenuRunnerShape {
         let a = leg.angle * Double.pi / 180
-        let x0 = hip.x + dx, y0 = hip.y + bob
+        let x0 = hip.x, y0 = hip.y + bob
         return .capsule(x0: x0, y0: y0, x1: x0 - leg.length * sin(a), y1: y0 + leg.length * cos(a), r: legRadius)
     }
 
     static func figure(_ p: MenuRunPose) -> MenuRunnerFigure {
         let q = pose(p)
-        let legs = [
-            leg(hip: frontHip, dx: farOffset, q.frontFar, bob: q.bob),
-            leg(hip: hindHip, dx: farOffset, q.hindFar, bob: q.bob),
-            leg(hip: frontHip, dx: 0, q.frontNear, bob: q.bob),
-            leg(hip: hindHip, dx: 0, q.hindNear, bob: q.bob),
-        ]
-        return MenuRunnerFigure(fill: torso.map { $0.moved(dy: q.bob) } + legs, cut: [eye.moved(dy: q.bob)], bob: q.bob, legs: legs)
+        let legs = [leg(hip: frontHip, q.front, bob: q.bob), leg(hip: hindHip, q.hind, bob: q.bob)]
+        let cut = ([eye] + earGap).map { $0.moved(dy: q.bob) }
+        return MenuRunnerFigure(fill: torso.map { $0.moved(dy: q.bob) } + legs, cut: cut, bob: q.bob, legs: legs)
     }
 
     /// Coverage raster of a pose (row 0 at the top): `scale` px per pt, 4 x 4 samples per px, values 0 to 1.
