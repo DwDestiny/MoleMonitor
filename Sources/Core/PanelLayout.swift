@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Health verdicts and the battery flag (docs/DESIGN_V2.md 2.2, 2.3, 5.2, 7.2).
-// Output: A PanelLayoutPlan: the row order, the anomaly items, the exact panel height (524 pt; desktop 484 pt).
+// Output: A PanelLayoutPlan: the row order, the anomaly items, the exact panel height (436 pt; desktop 396 pt, hero 64 pt (DESIGN_V3.md 4.1)).
 // Pos: Pure layout planning of the v2 panel; the SwiftUI views only render the plan. Foundation only. Owner WP-C.
 //      The height depends on the battery flag only. The anomaly area is one 36 pt line, so the number of anomalies never changes it.
 
@@ -14,7 +14,7 @@ enum PanelMetrics {
     static let widthWithSidebar = 672.0
     static let windowRadius = 12.0
     // Heights (DESIGN_V2.md 2.3)
-    static let topPadding = 12.0, hero = 152.0, heroGap = 8.0
+    static let topPadding = 12.0, hero = 64.0, heroGap = 8.0
     static let row = 40.0, rowsToAnomalyGap = 12.0
     static let anomalyQuiet = 36.0, anomalyLine = 36.0
     static let anomalyToFooterGap = 12.0, footer = 40.0, bottomPadding = 12.0
@@ -112,7 +112,7 @@ enum PanelLayout {
     /// Height of the anomaly area: one line, with or without anomalies (DESIGN_V2.md 2.3, 7.2 as changed on 2026-10-12).
     static let anomalyHeight = PanelMetrics.anomalyLine
 
-    /// Total height of the panel in pt: 524 with the battery row, 484 without.
+    /// Total height of the panel in pt: 436 with the battery row, 396 without.
     static func height(hasBattery: Bool) -> Double {
         let rows = Double(hasBattery ? 6 : 5) * PanelMetrics.row
         let parts: [Double] = [PanelMetrics.topPadding, PanelMetrics.hero, PanelMetrics.heroGap, rows,

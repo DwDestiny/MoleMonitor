@@ -26,13 +26,13 @@ private func plan(_ problems: [(HealthItem, HealthLevel)], battery: Bool = true)
 func runLayoutTests() {
     section("PanelLayout v2: height formula")
     let all: [(HealthItem, HealthLevel)] = [(.disk, .red), (.memory, .red), (.power, .yellow), (.cpu, .yellow), (.thermal, .yellow)]
-    for (count, laptop) in [(0, 524.0), (1, 524.0), (2, 524.0), (3, 524.0), (4, 524.0), (5, 524.0)] {
+    for (count, laptop) in [(0, 436.0), (1, 436.0), (2, 436.0), (3, 436.0), (4, 436.0), (5, 436.0)] {
         let p = plan(Array(all.prefix(count)))
         expect(p.height == laptop, "laptop \(count) anomalies: \(laptop), got \(p.height)")
         expect(p.rows.count == 6, "laptop has 6 rows")
     }
     let desktopAll: [(HealthItem, HealthLevel)] = [(.disk, .red), (.memory, .red), (.cpu, .yellow), (.thermal, .yellow)]
-    for (count, desktop) in [(0, 484.0), (1, 484.0), (2, 484.0), (3, 484.0), (4, 484.0)] {
+    for (count, desktop) in [(0, 396.0), (1, 396.0), (2, 396.0), (3, 396.0), (4, 396.0)] {
         let p = plan(Array(desktopAll.prefix(count)), battery: false)
         expect(p.height == desktop, "desktop \(count) anomalies: \(desktop), got \(p.height)")
         expect(p.rows.count == 5 && !p.rows.contains(.battery), "desktop has 5 rows, no battery")
