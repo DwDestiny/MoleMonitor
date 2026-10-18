@@ -967,7 +967,9 @@ enum SidebarEntrance {
         let expanded = plan.problemRowCount
         if index < expanded { return base + Double(index) * (PanelMetrics.problemRow + PanelMetrics.problemRowGap) }
         var top = base
-        if expanded > 0 { top += Double(expanded) * PanelMetrics.problemRow + Double(expanded - 1) * PanelMetrics.problemRowGap }
+        if expanded > 0 {
+            top += Double(expanded) * PanelMetrics.problemRow + Double(expanded - 1) * PanelMetrics.problemRowGap + PanelMetrics.problemToQuietGap
+        }
         let quiet = index - expanded
         return top + Double(quiet / PanelMetrics.quietColumns) * PanelMetrics.quietRow
     }

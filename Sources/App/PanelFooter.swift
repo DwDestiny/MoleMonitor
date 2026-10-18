@@ -60,7 +60,7 @@ private struct TextButtonBody: View {
         let shape = RoundedRectangle(cornerRadius: PanelRadius.control, style: .continuous)
         configuration.label
             .foregroundStyle(tok.textPrimary)
-            .padding(.horizontal, PanelMetrics.rowInset)
+            .padding(.horizontal, PanelMetrics.textInset)   // text at the headline x (16), hover background at the block edge (8)
             .frame(height: PanelMetrics.footer)
             .background(shape.fill(hovering || configuration.isPressed ? tok.fillHover : Color.clear))
             .contentShape(shape)

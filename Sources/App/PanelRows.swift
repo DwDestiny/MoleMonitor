@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: PanelModel (row states, mini curves, hover and selection state, the layout plan) and the tokens.
-// Output: The rows section of the main column: up to 3 problem rows (64 pt, level tint, value, plain-words note, full-width curve)
-//         and the quiet grid (28 pt rows, two columns, check mark, name, value, no curve).
+// Output: The rows section of the main column: up to 3 problem rows (72 pt, level tint, value, plain-words note, a curve inside
+//         the tint) and, 8 pt below them, the quiet grid (28 pt rows, two columns, check mark, name, value, no curve).
 // Pos: Section 2 of the main column (docs/DESIGN_V3.md 3.3, 5.1, 5.2). Problem rows are the only rows with a tint, a curve, a 17 pt value
-//      and a duration. The fourth and later problems use the quiet style and keep their level shape and level text color.
+//      and a duration. The 17 pt value is text.primary: the level is carried by the shape, the tint and the curve (FABLE round 1,
+//      item 2). The fourth and later problems use the quiet style and keep their level shape and level value color (no other carrier).
+//      The curve band (FABLE round 1, item 1): x 16 to 320 and y 46 to 62 inside the 336 x 72 tint, the series normalized to its
+//      own min/max (SparkFit), so the line has >= 12 pt of amplitude and never touches the text or the rounded corners.
+//      Left edges of the main column: 8 (tint, hover background), 24 (glyph column), 40 (name and note).
 //      A row is hovered or selected: the background is `fillHover` / `fillRowActive`. No blue, no divider. Radius: 8 pt only.
 //      Only these type sizes appear: 17, 13, 11 pt. The mini curve has no timer. Reorder moves with `PanelMotion.move` (fade under Reduce Motion).
 
@@ -132,12 +136,12 @@ private struct SparkEndRingShape: Shape {
     }
 }
 
-/// The curve at the bottom of a problem row: full row width, 16 pt high, a 1.5 pt line, a 10 % area and a solid end dot.
+/// The curve inside a problem row: 304 x 16 pt, a 1.5 pt line, a 10 % area and a solid end dot. The series arrives fitted (SparkFit).
 /// A stale series draws dashed in the third-level text color with a hollow end dot.
 struct SparkView: View {
     let series: SparkSeries
     let color: Color
-    var size = CGSize(width: PanelMetrics.rowBackgroundWidth, height: PanelMetrics.curveHeight)
+    var size = CGSize(width: PanelMetrics.rowBackgroundWidth - 2 * PanelMetrics.rowInset, height: PanelMetrics.curveHeight)
     var stale = false
     @Environment(\.tok) private var tok
 
@@ -219,7 +223,7 @@ private extension View {
 // MARK: - Problem row
 
 /// A problem row (DESIGN_V3.md 5.1): the level tint on the whole row, name and 17 pt value on line 1, the plain-words note on line 2,
-/// the curve along the bottom edge. Every problem row of one level looks the same.
+/// the curve in its own band below the text, inset 16 pt left and right and 10 pt from the bottom. Every problem row of one level looks the same.
 struct ProblemRowView: View {
     let row: PanelRowState
     let spark: SparkSeries
@@ -232,8 +236,9 @@ struct ProblemRowView: View {
         let shape = RoundedRectangle(cornerRadius: PanelRadius.control, style: .continuous)
         ZStack(alignment: .bottom) {
             shape.fill(tok.rowTint(row.dot))
-            SparkView(series: spark, color: tok.chartHot(row.level), stale: row.status == .stale)
+            SparkView(series: SparkFit.fitted(spark), color: tok.chartHot(row.level), stale: row.status == .stale)
                 .uiTestFrame("row." + id + ".spark")
+                .padding(.bottom, PanelMetrics.curveBottomInset)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: PanelMetrics.dotGap) {
                     StatusDotView(dot: row.dot)
@@ -246,7 +251,7 @@ struct ProblemRowView: View {
                     Spacer(minLength: 8)
                     Text(row.value)
                         .font(PanelType.rowValue)
-                        .foregroundStyle(row.valueColor(tok))
+                        .foregroundStyle(row.status == .measured ? tok.textPrimary : row.valueColor(tok))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                         .numericChange(row.value)
@@ -262,7 +267,7 @@ struct ProblemRowView: View {
                     .uiTestFrame("txt.row.note." + id)
             }
             .padding(.horizontal, PanelMetrics.rowInset)
-            .padding(.top, 10)
+            .padding(.top, 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(width: PanelMetrics.rowBackgroundWidth, height: PanelMetrics.problemRow)
@@ -369,6 +374,7 @@ struct PanelRowsSection: View {
                         }
                     }
                 }
+                if !lines.isEmpty { Color.clear.frame(height: PanelMetrics.problemToQuietGap) }
             }
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 HStack(spacing: 0) {

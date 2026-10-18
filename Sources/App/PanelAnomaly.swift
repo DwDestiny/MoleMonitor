@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: PanelModel (area state, authorization, sidebar and focus state).
-// Output: The record row of the main column, 28 pt: with problems only the entry "近 7 天 N 条记录 ›", without problems
-//         "✓ 没有异常" on the left and the same entry on the right. Empty while collecting. Stale: only the entry, the age is in the headline.
+// Output: The record row of the main column, 28 pt: only the entry "近 7 天 N 条记录 ›", left aligned, with and without problems
+//         and when stale (the age is in the headline). Empty while collecting. All green has no "✓ 没有异常": it repeated the headline
+//         (FABLE round 1, item 6). The entry's hover background starts at the block edge (x 8), its text at the headline x (16).
 // Pos: Section 3 of the main column (docs/DESIGN_V3.md 5.3). There is no summary line and no fold: the problem rows above carry
 //      the items, their values and their duration. The entry opens the anomaly log in the sidebar.
 
@@ -16,46 +17,21 @@ struct PanelAnomalySection: View {
         let state = model.areaState
         HStack(spacing: 0) {
             switch state {
-            case .quiet(let records):
-                quietMark
-                Spacer(minLength: 8)
-                rightLink(records: records)
-            case .anomalies(let records):
+            case .quiet(let records), .anomalies(let records), .stale(_, let records):
                 rightLink(records: records)
                 Spacer(minLength: 8)
             case .collecting:
                 Spacer(minLength: 0)
-            case .stale(_, let records):
-                Spacer(minLength: 8)
-                rightLink(records: records)
             }
         }
-        .padding(.horizontal, PanelMetrics.rowInset - Self.entryPadding)
         .frame(width: PanelMetrics.rowBackgroundWidth, height: PanelMetrics.recordRow, alignment: .top)
         .hoverRegion(.neutral, model: model)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("section.anomaly")
     }
 
-    /// The entry has 8 pt of inner padding for its hit area. The row takes that off its own inset, so the text starts at the row inset.
-    private static let entryPadding = 8.0
-
-    /// "✓ 没有异常": the check mark is the same gray as the check marks of the quiet rows.
-    private var quietMark: some View {
-        HStack(spacing: PanelMetrics.dotGap) {
-            Image(systemName: "checkmark")
-                .font(.system(size: PanelRowGlyph.checkSize, weight: .semibold))
-                .foregroundStyle(tok.textTertiary)
-                .frame(width: PanelRowGlyph.column)
-                .accessibilityHidden(true)
-            Text("没有异常")
-                .font(PanelType.rowNote)
-                .foregroundStyle(tok.textSecondary)
-                .lineLimit(1)
-                .uiTestFrame("txt.anomaly.quiet")
-        }
-        .padding(.horizontal, Self.entryPadding)
-    }
+    /// The entry has 8 pt of inner padding for its hit area. The row starts at the block edge (x 8), so the text starts at x 16.
+    private static let entryPadding = PanelMetrics.textInset
 
     @ViewBuilder
     private func rightLink(records: Int?) -> some View {
@@ -98,7 +74,7 @@ private struct EntryLink: View {
                 .font(PanelType.rowNote)
                 .foregroundStyle(hovering || open ? tok.textPrimary : tok.textSecondary)
                 .lineLimit(1)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, PanelMetrics.textInset)
                 .frame(height: PanelMetrics.recordRow)
                 .background(shape.fill(open ? tok.fillRowActive : Color.clear))
                 .overlay(shape.strokeBorder(tok.accent, lineWidth: 1.5).opacity(focused ? 1 : 0))
