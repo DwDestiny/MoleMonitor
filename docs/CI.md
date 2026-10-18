@@ -60,12 +60,13 @@ artifact 的内容：
 
 ## UI 测试总时长
 
-`scripts/ci_acceptance.py` 给整个 `--ui-test` 运行 420 秒的总时间预算（`ui_budget`）。超过预算时，脚本终止进程，并报告 `FAIL  UI test finished within 420 s`。这个预算是运行时长上限，不是质量阈值。
+`scripts/ci_acceptance.py` 给整个 `--ui-test` 运行 500 秒的总时间预算（`ui_budget`）。超过预算时，脚本终止进程，并报告 `FAIL  UI test finished within 500 s`。这个预算是运行时长上限，不是质量阈值。
 
 | 日期 | 预算 | 作业超时 | 原因 |
 |---|---|---|---|
 | 2026-10-13 之前 | 170 s | 20 分钟 | v1 门禁约 40 项，main 上实测 151.6 s |
-| 2026-10-13 起 | 420 s | 30 分钟 | v2 新增约 20 个门禁（W02 至 W22，例如 W05 单项约 10.6 s）。run 38338270673 在 170 s 时只跑到 W06，W07、W10、W13 至 W22 与 K 都没有运行。上一次完整作业用时 16.3 分钟，UI 测试占 170 s，新预算下预计全程约 20 分钟 |
+| 2026-10-13 至 2026-10-18 | 420 s | 30 分钟 | v2 新增约 20 个门禁（W02 至 W22，例如 W05 单项约 10.6 s）。run 38338270673 在 170 s 时只跑到 W06，W07、W10、W13 至 W22 与 K 都没有运行。上一次完整作业用时 16.3 分钟，UI 测试占 170 s，新预算下预计全程约 20 分钟 |
+| 2026-10-18 起 | 500 s | 30 分钟 | Q2 恢复 W17，测量窗口 60 s（U9、U10）。预算只增加这 60 s 与余量，其他门禁的限值不变 |
 
 UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> ms <名称>`，再输出完整说明。脚本逐行读取输出，把 `GATE ` 行和 `registered check ` 行立即打印到 CI 日志（前缀 `ui-test: `）。因此，如果运行再次超时，日志的最后一行 `GATE` 就是最后一个结束的门禁。
 
@@ -135,7 +136,7 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 | W12 | 气泡与比熊不透明像素距离 ≥4 pt，气泡宽 ≤192 pt，≤2 行 | 删除。文案行宽改由 Core 单测 `BubbleCopyTests` 检查：17 pt、320 pt 内容宽，每行 ≤18.4 em，≤2 行（W13 的一部分） |
 | W14 | 主线程每帧工作：打开 10 s 稳态 body 评估 ≤每 2 s 一次，比熊视图 draw 0，无 `CADisplayLink`。源码审计不含 `Timer`、`TimelineView` | 运行时部分删除。源码审计保留，范围是 `Panel*.swift`，不再含 `DogSpriteView.swift` |
 | W15 | Reduce Motion：稳态 CA 动画数 0，侧栏展开无尺寸动画，气泡无缩放，对照组动画数 >0 | 删除（原检查依赖比熊图层）。动效退路的新检查由 P3 登记 |
-| W17 | 打开 10 s 稳态进程 CPU 均值 ≤3% | 检查代码在已删除的精灵检查文件里，随之删除。**限值 3% 不变**，DESIGN_V3.md 第 8 章仍要求它，由 P3 在新文件里恢复 |
+| W17 | 打开 10 s 稳态进程 CPU 均值 ≤3% | 检查代码在已删除的精灵检查文件里，随之删除。**限值 3% 不变**，DESIGN_V3.md 第 8 章仍要求它。Q2 已在 `Sources/App/UITestCpuChecks.swift` 恢复（见“Q2 文案与数据一致性”） |
 | W18 | 播放全部 10 个动作后精灵缓存 ≤8 MB，资源包 ≤4 MB | 删除，没有精灵。包体减少约 2.9 MB（`DogSprites` 2.5 MB 加 `DogArt` 0.4 MB） |
 | W16（部分） | 关闭 3 s 后：精灵缓存 0 字节 | 只删这一条。其余不变：实时采样关、1 个引擎计时器、0 个 CA 动画、实时缓冲清空、进程 CPU <5%（最好的一个窗口）。检查代码移到 `UITestPanelChecks.swift`，输出值 `spriteBytesOpen` 删除 |
 | W03（探针） | 点击到比熊区域就绪 ≤150 ms，首帧比熊墨迹 ≥1% | 探针对象由比熊区域改为标题块文字区域（`txt.hero.title`），门槛 ≤150 ms 与 ≥1% 不变，输出值改名为 `headlineReadyMs`、`headlineSharePercent` |
@@ -179,16 +180,7 @@ W27 只做源码审计，没有运行时部分。原因：运行时无法按字�
 
 ### W26 待清理清单
 
-W26 对下列文件暂时豁免。这些文件里的“ · ”由 P4 与 P6 清理。清理后 P6 从 `scripts/ci_acceptance.py` 的 `DOT_JOIN_PENDING` 里删除对应文件。运行 CI 时，日志会打印豁免命中数。
-
-| 文件 | 命中行 | 负责 |
-|---|---|---|
-| `Sources/Core/HealthRules.swift` | 281、288、439、443 | P6（DESIGN_V3.md 9.2） |
-| `Sources/Core/Brief.swift` | 33 | P6（DESIGN_V3.md 9.2） |
-| `Sources/Core/PreviewScenario.swift` | 362 至 390 | P6（DESIGN_V3.md 9.2） |
-| `Sources/Core/SidebarContent.swift` | 176、186、842 | P4（DESIGN_V3.md 9.2） |
-| `Sources/App/PanelTokens.swift` | 372（网络流量文字） | P4。DESIGN_V3.md 9.2 没有列出，W26 新发现 |
-| `Sources/Core/NotificationPlanner.swift` | 56、102（通知标题“ · 已持续 ”） | P6。DESIGN_V3.md 9.2 没有列出，W26 新发现 |
+清单已清空（Q2，2026-10-18）。`DOT_JOIN_PENDING` 是空集合，只有 `Sources/Core/Prompt.swift`（提示词正文）永久排除。任何其他文件出现“ · ”，W26 失败。
 
 ### 侧栏门禁
 
@@ -357,3 +349,18 @@ run 38365358267 的第一次运行里，W06 窗口部分失败：“opened befor
 - 虚拟机的 CPU、内存、磁盘数字不能外推到真机。
 
 真机待验清单见 [HANDOFF.md](HANDOFF.md) 的“下一步”。
+
+## Q2 文案与数据一致性（2026-10-18）
+
+引用：U6（文案要认真设计）、U3（设计由开发方决定）、U9、U10。依据：Fable 第 1 轮视觉评审（FABLE1 第 5 至 7 条）。
+
+| 项 | 改动 |
+|---|---|
+| 过期 | 标题“数据已经 N 分钟没更新”，副标题“最后一次读数在 HH:MM”。行内数值不再带时钟前缀，值列宽不变。`BubbleCopy.text(for:now:)` 多一个 `now` 参数 |
+| 采集中 | 没有副标题。已有读数的行显示实际数值，状态为 measured，圆点为实心。没有读数的行显示“采集中”，圆点为空心，数量与标题“已完成 N/6 项”一致 |
+| 一事一词 | 原因短语只来自 `PanelAnomalies.reasonWord`（“5 天胖了”“喘不过气”“掉电太快”“跑太久”“发烫”）。主列问题行与异常记录页共用它。记录页在短语后加测得值（`PanelAnomalies.recordEvidence`）。数字写法“34%/h”，百分号前没有空格 |
+| 预览数据 | 内存记录峰值 91% 改为 87%，与问题行一致。磁盘统计句的窗口改为 24 小时、7 天、30 天，与分段控件一致，由已用空间序列计算，序列没有覆盖窗口起点时显示“—” |
+| W26 | 去除 HealthRules、Brief、PreviewScenario、NotificationPlanner、PanelTokens（372 行）里的“ · ”。`Brief.line` 的后缀改用“，”。`DOT_JOIN_PENDING` 清空 |
+| W17 | 恢复。`Sources/App/UITestCpuChecks.swift`（只在 `#if UITEST` 内）：打开 allGreen 面板，每 2 s 一个数据点，60 s 内进程 CPU 均值 ≤3%（沿用旧方法：CPU 秒数除以墙钟秒数）。DESIGN_V3.md 第 8 章要求 |
+
+> **注意**：W17 在 CI 虚拟机上测量，不证明真机的 CPU。

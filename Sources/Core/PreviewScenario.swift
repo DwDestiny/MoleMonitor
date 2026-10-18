@@ -194,7 +194,7 @@ extension PreviewScenario {
             open = [record(.power, .yellow, .yellow, "sleep_drain", start: 130, end: nil, value: 3.3, unit: "%/h")]
         case .multi:
             open = [record(.disk, .yellow, .red, "growth_5d", start: 192, end: nil, value: 314, unit: "GB"),
-                    record(.memory, .yellow, .red, "pressure_critical", start: 50, end: nil, value: 91, unit: "%"),
+                    record(.memory, .yellow, .red, "pressure_critical", start: 50, end: nil, value: 87, unit: "%"),
                     record(.power, .yellow, .yellow, "awake_drain", start: 40, end: nil, value: 34, unit: "%/h"),
                     record(.cpu, .yellow, .yellow, "cpu_mean_5m", start: 40, end: nil, value: 74, unit: "%")]
         }
@@ -359,11 +359,11 @@ extension PreviewScenario {
                 let text: String
                 switch item {
                 case .thermal: text = "温度正常"
-                case .memory: text = "内存压力正常 · swap " + swap
+                case .memory: text = "内存压力正常，swap " + swap
                 case .cpu: text = "CPU 5 分钟均值 " + RateText.percent(current.cpuMean5m)
                 case .disk: text = "磁盘正常"
                 case .power:
-                    let source: String = current.powerSource == .ac ? " · 接电源" : " · 电池供电"
+                    let source: String = current.powerSource == .ac ? "，接电源" : "，电池供电"
                     text = "电量 " + battery + source
                 }
                 return ItemVerdict(item: item, level: .green, reasonCode: "ok", headline: text,
@@ -383,11 +383,11 @@ extension PreviewScenario {
         case .diskRed:
             problems = [diskProblem]
         case .powerYellow:
-            problems = [problem(.power, .yellow, "sleep_drain", "睡眠掉电 3.3%/小时", ago: 130)]
+            problems = [problem(.power, .yellow, "sleep_drain", "睡眠掉电 3.3%/h", ago: 130)]
         case .multi:
             problems = [diskProblem,
-                        problem(.memory, .red, "pressure_critical", "压力严重 · swap 9.8 GB", ago: 25),
-                        problem(.power, .yellow, "awake_drain", "电池供电 · 掉电 34%/小时", ago: 40),
+                        problem(.memory, .red, "pressure_critical", "压力严重，swap 9.8 GB", ago: 25),
+                        problem(.power, .yellow, "awake_drain", "电池供电，掉电 34%/h", ago: 40),
                         problem(.cpu, .yellow, "cpu_mean_5m", "5 分钟均值 74%", ago: 40)]
         }
         let problemItems: [HealthItem] = problems.map { $0.item }

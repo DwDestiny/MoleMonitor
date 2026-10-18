@@ -12,7 +12,7 @@ import Foundation
 ///   磁盘 绿（剩余 412 GB）           normal
 ///   磁盘 黄（回落观察）              hysteresis hold or recovering
 ///   磁盘 未知                        no figure available
-/// Suffix: ` · App 未运行（数据 2 小时前）` or ` · 数据已过期（12 分钟前）`.
+/// Suffix: `，App 未运行（数据 2 小时前）` or `，数据已过期（12 分钟前）`.
 enum Brief {
     static func line(_ s: StatusFile, freshness: StatusStore.Freshness) -> String {
         let d = s.items.disk
@@ -30,7 +30,7 @@ enum Brief {
         if let detail { out += "（\(detail)）" }
         if !freshness.fresh {
             let age = ageText(freshness.ageSeconds)
-            out += freshness.appRunning ? " · 数据已过期（\(age)）" : " · App 未运行（数据 \(age)）"
+            out += freshness.appRunning ? "，数据已过期（\(age)）" : "，App 未运行（数据 \(age)）"
         }
         return out
     }

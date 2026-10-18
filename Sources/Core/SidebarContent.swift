@@ -563,10 +563,10 @@ enum SidebarStats {
                     SidebarStat(label: "swap", value: TextFormat.bytes(c.swapUsed)),
                     SidebarStat(label: "30 分钟变化", value: TextFormat.signedBytes(c.swapGrowth30m))]
         case .disk:
-            let growth = input.status?.items.disk.growth ?? [:]
-            func g(_ key: String) -> String { growth[key]?.bytes.map { TextFormat.signedDiskGB($0) } ?? dash }
-            return [SidebarStat(label: "1 天增长", value: g("1d")), SidebarStat(label: "5 天增长", value: g("5d")),
-                    SidebarStat(label: "30 天增长", value: g("30d"))]
+            // The windows are the ones of the segmented control (24 小时, 7 天, 30 天), measured on the used-space series.
+            func g(_ days: Double) -> String { diskGrowthText(input, days: days) }
+            return [SidebarStat(label: "24 小时增长", value: g(1)), SidebarStat(label: "7 天增长", value: g(7)),
+                    SidebarStat(label: "30 天增长", value: g(30))]
         case .network:
             return networkStats(input)
         case .battery:
@@ -610,6 +610,16 @@ enum SidebarStats {
     }
 
     /// Traffic of today, yesterday and the last 30 days from the rollup windows (local days).
+    /// Change of the used space over the last `days` days. A dash when the series does not reach back to the window start.
+    static func diskGrowthText(_ input: SidebarInput, days: Double) -> String {
+        let window = days * 86400
+        let start = input.now.addingTimeInterval(-window)
+        let pts = input.diskSeries.filter { $0.t >= start && $0.t <= input.now }.sorted { $0.t < $1.t }
+        guard let first = pts.first, let last = pts.last, pts.count > 1,
+              first.t.timeIntervalSince(start) <= max(window * 0.1, 2 * DiskSeries.bucketSeconds) else { return dash }
+        return TextFormat.signedDiskGB(last.used - first.used)
+    }
+
     private static func networkStats(_ input: SidebarInput) -> [SidebarStat] {
         let shift = Double(input.timeZone.secondsFromGMT(for: input.now))
         let nowLocal = input.now.timeIntervalSince1970 + shift
@@ -842,18 +852,7 @@ enum SidebarRecords {
 
         var duration = TextFormat.span(seconds: (e.end ?? now).timeIntervalSince(e.start))
         if e.endEstimated && !ongoing { duration = "约 " + duration }
-        var evidence = PanelAnomalies.reasonWord(item: e.item, code: e.reasonCode)
-        if let v = e.peakValue, v.isFinite {
-            let unit = e.unit ?? ""
-            let number = String(format: "%.0f", v)
-            if unit == "%" {
-                evidence += " " + number + "%"
-            } else if unit.isEmpty {
-                evidence += " " + number
-            } else {
-                evidence += " " + number + " " + unit
-            }
-        }
+        var evidence = PanelAnomalies.recordEvidence(item: e.item, code: e.reasonCode, value: e.peakValue, unit: e.unit)
         if let app = e.app, !app.isEmpty { evidence += "，" + app }
         let id = "\(e.item.rawValue)-\(Int(e.start.timeIntervalSince1970))"
         var span = startText + " 起，进行中"
@@ -928,8 +927,8 @@ enum SidebarSummary {
             add(1) { "swap " + $0 }
             add(2) { "30 分钟变化 " + $0 }
         case .disk:
-            add(0) { "1 天 " + $0 }
-            add(1) { "5 天 " + $0 }
+            add(0) { "24 小时 " + $0 }
+            add(1) { "7 天 " + $0 }
             add(2) { "30 天 " + $0 }
         case .network:
             // Yesterday is left out: the sentence stays on one line.

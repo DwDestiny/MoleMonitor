@@ -170,12 +170,12 @@ private func runMemoryRuleTests() {
     let w = replayMemory(warn60).last
     expect(w?.level == .yellow && w?.reasonCode == "pressure_warning", "warning for 60 s is yellow")
     expect(minutesSince(w) == 5.5, "since is the first warning sample, got \(String(describing: minutesSince(w)))")
-    expect(w?.headline == "压力警告 · swap 1.1 GB", "yellow headline: \(w?.headline ?? "")")
+    expect(w?.headline == "压力警告，swap 1.1 GB", "yellow headline: \(w?.headline ?? "")")
 
     let crit = gen(0, 5) { pt($0, pressure: .normal, swap: 9 * gib) } + gen(5.5, 6.5) { pt($0, pressure: .critical, swap: 9 * gib) }
     let c = replayMemory(crit).last
     expect(c?.level == .red && c?.reasonCode == "pressure_critical", "critical for 30 s is red")
-    expect(c?.headline == "压力严重 · swap 9.7 GB", "red headline: \(c?.headline ?? "")")
+    expect(c?.headline == "压力严重，swap 9.7 GB", "red headline: \(c?.headline ?? "")")
 
     // Exit: 5 minutes at most warning leaves red; 5 minutes of normal leaves yellow.
     let phase = gen(0, 3) { pt($0, pressure: .normal, swap: gib) } + gen(3.5, 10) { pt($0, pressure: .critical, swap: gib) }
@@ -230,7 +230,7 @@ private func runMemoryRuleTests() {
     expect(replayMemory(noPressure).last?.level == .unknown, "no memory readings is unknown")
     let first = replayMemory(gen(0, 0.5) { pt($0, pressure: .normal, swap: gib) })
     expect(first.last?.level == .green, "a normal pressure reading is green at once")
-    expect(first.last?.headline == "内存压力正常 · swap 1.1 GB", "green headline: \(first.last?.headline ?? "")")
+    expect(first.last?.headline == "内存压力正常，swap 1.1 GB", "green headline: \(first.last?.headline ?? "")")
 }
 
 private func runThermalRuleTests() {

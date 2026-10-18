@@ -79,7 +79,9 @@ func runBubbleCopyTests() {
     var cal = Calendar(identifier: .gregorian)
     cal.timeZone = TimeZone(identifier: "UTC")!
     let staleAt = cal.date(bySettingHour: 13, minute: 20, second: 0, of: now)!
-    expect(BubbleCopy.text(for: BubbleInput(dataState: .stale(staleAt), calendar: cal)).main == "数据停在 13:20，不是最新的", "stale example")
+    expect(BubbleCopy.text(for: BubbleInput(dataState: .stale(staleAt), calendar: cal), now: staleAt.addingTimeInterval(25 * 60)).main == "数据已经 25 分钟没更新", "stale example")
+    expect(BubbleCopy.subline(for: BubbleInput(dataState: .stale(staleAt), calendar: cal), headline: BubbleText(main: "x"), sampledAt: nil, now: staleAt.addingTimeInterval(25 * 60)) == "最后一次读数在 13:20", "stale subline names the clock")
+    expect(BubbleCopy.subline(for: BubbleInput(dataState: .collecting), headline: BubbleText(main: "x"), sampledAt: nil, now: staleAt) == nil, "collecting has no subline")
     expect(BubbleCopy.text(for: BubbleInput(dataState: .collecting, collected: 0)).main == "正在检查，已完成 0/6 项", "collecting, nothing yet")
     expect(BubbleCopy.text(for: BubbleInput(dataState: .collecting, collected: 4)).main == "正在检查，已完成 4/6 项", "collecting example")
     expect(BubbleCopy.collectingText(done: 9) == "正在检查，已完成 6/6 项" && BubbleCopy.collectingText(done: -1) == "正在检查，已完成 0/6 项", "the count stays inside 0 to 6")

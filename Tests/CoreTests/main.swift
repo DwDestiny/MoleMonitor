@@ -533,9 +533,9 @@ do {
     let unknown = makeStatus([])
     expect(Brief.line(unknown, freshness: freshF) == "磁盘 绿", "no data keeps previous level, no figure: \(Brief.line(unknown, freshness: freshF))")
     let down = StatusStore.Freshness(fresh: false, ageSeconds: 7300, appRunning: false)
-    expect(Brief.line(red, freshness: down) == "磁盘 红（5 天 +300 GB） · App 未运行（数据 2 小时前）", "app not running: \(Brief.line(red, freshness: down))")
+    expect(Brief.line(red, freshness: down) == "磁盘 红（5 天 +300 GB），App 未运行（数据 2 小时前）", "app not running: \(Brief.line(red, freshness: down))")
     let late = StatusStore.Freshness(fresh: false, ageSeconds: 720, appRunning: true)
-    expect(Brief.line(red, freshness: late) == "磁盘 红（5 天 +300 GB） · 数据已过期（12 分钟前）", "stale data: \(Brief.line(red, freshness: late))")
+    expect(Brief.line(red, freshness: late) == "磁盘 红（5 天 +300 GB），数据已过期（12 分钟前）", "stale data: \(Brief.line(red, freshness: late))")
     expect(!Brief.line(red, freshness: freshF).contains("\n"), "brief is one line")
 }
 

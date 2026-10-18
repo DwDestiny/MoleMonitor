@@ -31,7 +31,7 @@ func runHeroLogicTests() {
     expect(BubbleCopy.text(for: disk.bubble).main == "磁盘只剩 12 GB，快装不下了", "disk red text with the free space")
     let mem = facts([v(.memory, .yellow, "pressure_warning")]) { $0.memoryPressurePercent = 82 }
     expect(BubbleCopy.text(for: mem.bubble).main == "内存压力 82%，有点挤了", "memory yellow text with the pressure percent")
-    let sleep = facts([v(.power, .red, "sleep_drain", "睡眠掉电 4.2%/小时")])
+    let sleep = facts([v(.power, .red, "sleep_drain", "睡眠掉电 4.2%/h")])
     expect(sleep.bubble.problems.first?.number == 4.2, "sleep drain: the rate comes from the headline")
     expect(HeroFacts.firstNumber("CPU 5 分钟均值 87%") == 5 && HeroFacts.firstNumber("无") == nil, "first number of a text")
     let hot = facts([v(.thermal, .yellow, "thermal_fair", since: now.addingTimeInterval(-600))])
@@ -89,11 +89,11 @@ func runHeroLogicTests() {
     expect(green.text.main == "一切正常" && green.subline == clock + " 更新", "all green: the subline is the clock of the last reading")
     expect(green.facts.sampledAt == readAt, "facts carry the reading time")
     expect(HeroBrain(facts: facts([])).subline == nil, "fresh data without a reading time has no subline")
-    expect(cb.subline == "数据到齐后在这里给出结论", "collecting: the subline says what comes next, not the count again")
+    expect(cb.subline == nil, "collecting: no subline filler")
     let staleAt = now.addingTimeInterval(-25 * 60)
     let st = HeroBrain(facts: facts([], state: .stale(staleAt)) { $0.sampledAt = staleAt })
-    expect(st.subline == "已经 25 分钟没有新数据", "stale: the subline says how long nothing new arrived")
-    expect(!(st.subline ?? "").contains(clockOf(staleAt)), "stale: the subline does not repeat the clock of the headline")
+    expect(st.text.main == "数据已经 25 分钟没更新", "stale: the headline is the conclusion with the age")
+    expect(st.subline == "最后一次读数在 " + clockOf(staleAt), "stale: the subline names the clock of the last reading")
     let twoLine = HeroBrain(facts: facts([v(.memory, .red, "pressure_critical")]) { $0.memoryPressurePercent = 96; $0.sampledAt = readAt })
     expect(BubbleCopy.wrapped(twoLine.text.main).contains("\n") == (twoLine.subline == nil), "a two-line headline has no subline")
     var oneLineCount = 0

@@ -278,14 +278,14 @@ enum MemoryHealth {
         if pLevel.known, pLevel.level != .green {
             let label = pLevel.level == .red ? "压力严重" : "压力警告"
             let code = pLevel.level == .red ? "pressure_critical" : "pressure_warning"
-            return verdict(.memory, combined, code: code, headline: label + " · swap " + swapText, now: now)
+            return verdict(.memory, combined, code: code, headline: label + "，swap " + swapText, now: now)
         }
         if state.memorySwap.known, state.memorySwap.level != .green {
             let g = TextFormat.bytes(growth.map { max(0, $0) })
             return verdict(.memory, combined, code: "swap_growth", headline: "swap 30 分钟增加 " + g, now: now)
         }
         let pressureText = (pressure ?? .normal).label
-        return verdict(.memory, combined, code: "ok", headline: "内存压力" + pressureText + " · swap " + swapText, now: now)
+        return verdict(.memory, combined, code: "ok", headline: "内存压力" + pressureText + "，swap " + swapText, now: now)
     }
 }
 
@@ -431,16 +431,16 @@ enum PowerHealth {
         struct Candidate { var level: HealthLevel; var since: Date?; var code: String; var headline: String }
         var candidates = [Candidate]()
         if let sleep, sleep.level != .green {
-            let text = "睡眠掉电 " + String(format: "%.1f", sleep.rate) + "%/小时"
+            let text = "睡眠掉电 " + String(format: "%.1f", sleep.rate) + "%/h"
             candidates.append(Candidate(level: sleep.level, since: sleep.since, code: "sleep_drain", headline: text))
         }
         if state.powerAwake.known, state.powerAwake.level != .green {
             let rate = awakeRate(stretch, end: stretch.count - 1)
-            let text = "电池供电 · 掉电 " + (rate.map { String(format: "%.0f", $0) } ?? "—") + "%/小时"
+            let text = "电池供电，掉电 " + (rate.map { String(format: "%.0f", $0) } ?? "—") + "%/h"
             candidates.append(Candidate(level: state.powerAwake.level, since: state.powerAwake.since, code: "awake_drain", headline: text))
         }
         let batteryText = batteryNow.map { String(format: "%.0f%%", $0) } ?? "—"
-        let source = lastPower == .ac ? " · 接电源" : " · 电池供电"
+        let source = lastPower == .ac ? "，接电源" : "，电池供电"
         if candidates.isEmpty {
             if batteryNow == nil && sleep == nil {
                 return collecting(.power, run: run, hasData: run.contains { $0.battery != nil })
