@@ -4,10 +4,14 @@
 // Output: The five menu bar icon states (kind, posture, badge, data mark), the accessibility text, the badge color tokens,
 //         and the 1x legibility metrics (XOR ratio, WCAG contrast) with their gate thresholds (W08, A, M14).
 // Pos: Pure mapping from health to icon; no drawing. Foundation only. Owner WP-E.
+//      v3 (U10, docs/DESIGN_V3.md 4.2): the icon is the runner silhouette (MenuRunner.swift). Health shows only as the mark
+//      (yellow triangle, red square); the data states draw the hollow outline. `MenuPosture` is now only the name of the
+//      level in a state (no head art follows it); it stays until P1 and P3 drop DogGallery and the old icon gates.
 
 import Foundation
 
-enum MenuPosture: String, CaseIterable { case relaxed, raised, pant, hollow }   // Ears relaxed, ears raised, tongue out, hollow
+/// The level name of a state: normal (relaxed), yellow (raised), red (pant), data state (hollow). v3 draws no posture.
+enum MenuPosture: String, CaseIterable { case relaxed, raised, pant, hollow }
 struct MenuBadge: Hashable { var item: HealthItem }   // The category of the worst problem; the posture and the color show the level
 
 /// The mark of the two data states (DESIGN_V2.md 9.2): an 8 x 8 pt three-dot ellipsis (collecting) or a clock (stale).
@@ -43,10 +47,9 @@ enum MenuIconKind: String, CaseIterable {
         }
     }
 
-    /// True: one template image (the whole icon follows the menu bar). False: the badge has its own color, so the image
-    /// is not a template and the head is drawn in the menu bar text color (9.2 rule 2). Collecting and stale draw their
-    /// mark in the menu bar text color, so a template image gives the same look; they stay templates.
-    var isTemplate: Bool { self != .caution && self != .alert }
+    /// v3 (DESIGN_V3.md 4.2): no state is a template image. The body is drawn in the button's `labelColor` and the
+    /// yellow and red marks keep their colors, in every state.
+    var isTemplate: Bool { false }
 
     /// The badge color token (DESIGN_V2.md 3.3), or nil for the menu bar text color.
     var badgeToken: MenuIconPalette.Token? {

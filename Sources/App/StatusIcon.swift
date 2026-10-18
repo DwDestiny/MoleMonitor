@@ -1,159 +1,152 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
-// Input: The menu bar icon state from MenuIconModel (docs/DESIGN_V2.md 9) and its text.
-// Output: The status item image (five states), tooltip and VoiceOver label; the switch animation between health states.
-// Pos: StatusIconController, the only owner of the status item image. Drawing is MenuIconRenderer (DogShapes.swift). Owner WP-E.
-//      v2 (WP-E): the stage 1 code (StatusIcon.makeImage, StatusIconCache, IconBadge, IconState, IconText: a dog.fill
-//      symbol with a 5 pt red dot) had no caller and is removed (DESIGN_V2.md 9.1).
+// Input: The menu bar icon state from MenuIconModel and its text; the CPU percent of each engine tick; the system state
+//        that forbids motion (Reduce Motion, locked screen, sleeping display, hidden icon, Low Power Mode).
+// Output: The status item image (stand frame, or the 4-frame run loop while the CPU is busy), the tooltip and the
+//         VoiceOver label (plus "，CPU 占用高" while busy). At most one run timer, only while the runner runs.
+// Pos: StatusIconController, the only owner of the status item image. Drawing is MenuRunnerRenderer
+//      (MenuRunnerShapes.swift); the run rules are MenuRunLogic (Core/MenuRunner.swift). Owner P-icon.
+//      v3 (U10, docs/DESIGN_V3.md 4.2): the v2 head postures and the switch animation (<= 8 frames, 490 ms) are removed.
 
 import AppKit
 import Foundation
-import QuartzCore
 
-/// The redesigned menu bar icon (docs/DESIGN.md 3, 8.3). I3 owns the status item and calls `apply` on each change.
-/// Still states: one NSImage per state (Bichon head from `DogArt.menuHead`, badge or data mark from `GlyphPaths`), cached,
-/// assigned only when the state changes. Normal, collecting and stale are template images; caution and alert are not
-/// (colored badge, DESIGN_V2.md 9.2 rule 2) and resolve their inks when AppKit draws them. Stage 2 (I2): a change of posture or badge plays one switch animation
-/// (DESIGN.md 3.5): at most 8 frames, 70 ms apart (490 ms), from one Timer made for this play and invalidated after
-/// the last frame. The frames come from MenuMotion (DogRig) and the same MenuIconRenderer, made once per switch and
-/// cached. Reduce Motion, a locked screen, a sleeping display, a hidden icon or the 5 minute throttle switch directly.
-/// No timer exists between plays; the icon never moves on its own.
-/// The button shows the image only (`imagePosition = .imageOnly`, no title text, DESIGN.md 3). Every frame of a play has
-/// the same 24 x 18 pt size as the still images, so the item width never changes during a play. v2 (DESIGN_V2.md 9.2):
-/// the frames are drawn in the inks of the button's appearance (head in labelColor, colored badge) and are not templates,
-/// so the yellow or red badge keeps its color during a play; the frame cache is keyed by light or dark.
-/// The tooltip and the VoiceOver text change at once, not per frame.
+/// The menu bar runner (DESIGN_V3.md 4.2). The icon stands still, or runs a 4-frame loop while the CPU is busy
+/// (>= 35 % starts, 2 ticks < 25 % stop; 4, 6 or 8 fps by CPU). The health mark (yellow triangle, red square) stays
+/// where it is in every frame. Collecting and stale draw the hollow standing dog with their mark and never run.
+/// Timer rule (AGENTS.md): while the runner stands there is no icon timer; while it runs there is exactly one repeating
+/// Timer at the frame interval with a 20 % tolerance, invalidated as soon as the runner stops or motion is forbidden.
+/// Every frame is a cached image of the same 24 x 18 pt, so the status item width never changes.
 @MainActor
 final class StatusIconController {
     private weak var statusItem: NSStatusItem?
-    /// A button to draw into when there is no status item (the dog checks). The status item button wins.
+    /// A button to draw into when there is no status item (the icon checks). The status item button wins.
     weak var fallbackButton: NSButton?
-    private var images = [MenuIconState: NSImage]()
-    private var transitions = [Transition: [NSImage]]()
-    private var transitionOrder = [Transition]()
     private var current: (state: MenuIconState, text: String)?
-    private var lastPlayed = [HealthItem: Date]()
+    private var run = MenuRunState()
     private var timer: Timer?
-    private var playing = [NSImage]()
-    private var playIndex = 0
-    private var playStart: CFTimeInterval = 0
-    private var activity: NSObjectProtocol?
+    private var timerSpeed: MenuRunSpeed?
+    private var frame = 0
+    private var shown: (pose: MenuRunPose, kind: MenuIconKind)?
+    private var images = [ImageKey: NSImage]()
+    private var observers = [(NotificationCenter, NSObjectProtocol)]()
 
-    /// Replaces the motion conditions read at the moment of a switch (the dog checks). Nil reads the system.
+    /// Replaces the system motion conditions (the icon checks). Nil reads the system.
     var conditionsOverride: (() -> MenuMotionConditions)?
-    var clock: () -> Date = { Date() }
-    /// Called after each image the controller puts on the button: frame number (1 to 8) or 0 for a direct switch.
+    /// Called after each image the controller puts on the button: run frame number (1 to 4) or 0 for the still frame.
     var onImage: ((Int) -> Void)?
 
-    private struct Transition: Hashable {
-        var from: MenuIconState
-        var to: MenuIconState
-        var dark: Bool
+    private struct ImageKey: Hashable {
+        var pose: MenuRunPose
+        var kind: MenuIconKind
     }
 
-    /// `statusItem` is nil in a headless run. Not listed in DESIGN.md 8.3 at skeleton time.
+    /// `statusItem` is nil in a headless run.
     init(statusItem: NSStatusItem?) {
         self.statusItem = statusItem
     }
 
-    /// The state last given to `apply` (the target of a play that is still running). Read only (I3 request 3).
+    /// The state last given to `apply`.
     var currentState: MenuIconState? { current?.state }
-
-    /// Timers the controller owns now: 1 while a switch plays, else 0.
+    /// The run state after the last CPU tick.
+    var runState: MenuRunState { run }
+    /// Icon timers the controller owns now: 1 while the runner runs, else 0.
     var timerCount: Int { timer == nil ? 0 : 1 }
-    var isPlaying: Bool { timer != nil }
+    var isRunning: Bool { timer != nil }
+    /// Seconds between two run frames now, nil while standing.
+    var frameInterval: TimeInterval? { timer?.timeInterval }
+    var timerTolerance: TimeInterval? { timer?.tolerance }
 
     private var button: NSButton? { statusItem?.button ?? fallbackButton }
 
-    /// At most 13 states exist (relaxed, 2 postures x 5 badges, 2 data marks), so the cache stays small.
-    func image(for state: MenuIconState) -> NSImage {
-        if let hit = images[state] { return hit }
-        let made = MenuIconRenderer.image(state)
-        images[state] = made
+    /// The cached image of a frame. At most 5 poses x 5 kinds.
+    func image(_ pose: MenuRunPose, kind: MenuIconKind) -> NSImage {
+        let key = ImageKey(pose: pose, kind: kind)
+        if let hit = images[key] { return hit }
+        let made = MenuRunnerFrameCache.shared.image(pose, kind: kind)
+        images[key] = made
         return made
     }
+
+    /// The still image of a state (the stand frame).
+    func image(for state: MenuIconState) -> NSImage { image(.stand, kind: state.kind) }
 
     func apply(_ state: MenuIconState, text: String) {
         if let current, current.state == state, current.text == text { return }
-        let previous = current?.state
         current = (state, text)
-        guard let button = self.button else { return }
-        button.imagePosition = .imageOnly
-        button.toolTip = text
-        button.setAccessibilityLabel(text)
-        if previous == state, button.image != nil { return }
-        show(from: previous, to: state, on: button)
+        startObserving()
+        refresh()
     }
 
-    private func show(from previous: MenuIconState?, to state: MenuIconState, on button: NSButton) {
-        // A switch during a play starts from the state the old play was heading to.
-        stopPlay()
-        let now = clock()
-        guard let item = MenuMotion.play(from: previous, to: state, lastPlayed: lastPlayed, now: now,
-                                         conditions: motionConditions()),
-              let previous else {
-            button.image = image(for: state)
-            onImage?(0)
+    /// One engine tick (every 30 s, plus the warm-up tick): the whole-machine CPU percent, or nil when the tick has none.
+    func cpuTick(_ percent: Double?) {
+        run = MenuRunLogic.next(run, cpu: percent)
+        refresh()
+    }
+
+    /// Reads the conditions again and shows the right image; starts, retimes or stops the run timer.
+    func refresh() {
+        guard let button, let current else {
+            stopTimer()
             return
         }
-        lastPlayed[item] = now
-        playing = frames(from: previous, to: state)
-        playIndex = 0
-        playStart = CACurrentMediaTime()
-        // A menu bar app has no visible window, so App Nap may coalesce its timers. The activity keeps the 70 ms
-        // ticks on time for the 490 ms of the play only; stopPlay ends it.
-        activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical],
-                                                         reason: "Menu bar icon switch animation")
-        button.image = playing[0]
-        onImage?(1)
-        let t = Timer(timeInterval: MenuMotion.frameInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+        button.imagePosition = .imageOnly
+        let kind = current.state.kind
+        let animates = MenuRunLogic.animates(run, state: current.state, conditions: motionConditions())
+        // The busy suffix only while the icon runs (DESIGN_V3.md 4.2).
+        let text = MenuRunLogic.text(current.text, running: animates)
+        if button.toolTip != text {
+            button.toolTip = text
+            button.setAccessibilityLabel(text)
         }
-        t.tolerance = 0
+        if animates, let speed = run.speed {
+            if timer == nil || timerSpeed != speed { startTimer(speed) }
+            show(.run(frame), kind: kind, on: button)
+        } else {
+            stopTimer()
+            frame = 0
+            show(.stand, kind: kind, on: button)
+        }
+    }
+
+    private func show(_ pose: MenuRunPose, kind: MenuIconKind, on button: NSButton) {
+        if let shown, shown.pose == pose, shown.kind == kind, button.image != nil { return }
+        shown = (pose, kind)
+        button.image = image(pose, kind: kind)
+        if case .run(let i) = pose { onImage?(i + 1) } else { onImage?(0) }
+    }
+
+    private func startTimer(_ speed: MenuRunSpeed) {
+        timer?.invalidate()
+        let t = Timer(timeInterval: speed.interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.step() }
+        }
+        t.tolerance = speed.tolerance
         RunLoop.main.add(t, forMode: .common)
         timer = t
+        timerSpeed = speed
     }
 
-    /// Shows the frame that is due now (frame k is due at k x 70 ms). A late tick skips the frames it missed, so a
-    /// slow main thread shortens the play instead of stretching it past 600 ms.
-    private func tick() {
-        let due = Int(((CACurrentMediaTime() - playStart) / MenuMotion.frameInterval).rounded())
-        let next = min(max(due, playIndex + 1), playing.count - 1)
-        guard next > playIndex, let button = self.button else {
-            stopPlay()
-            return
-        }
-        playIndex = next
-        button.image = playing[playIndex]
-        onImage?(playIndex + 1)
-        if playIndex == playing.count - 1 { stopPlay() }
-    }
-
-    private func stopPlay() {
+    private func stopTimer() {
         timer?.invalidate()
         timer = nil
-        playing = []
-        if let activity { ProcessInfo.processInfo.endActivity(activity) }
-        activity = nil
+        timerSpeed = nil
     }
 
-    /// The images of one switch. The last one is the cached still image of the target. At most 8 switches are kept.
-    private func frames(from a: MenuIconState, to b: MenuIconState) -> [NSImage] {
-        let appearance = button?.effectiveAppearance ?? NSApplication.shared.effectiveAppearance
-        let key = Transition(from: a, to: b, dark: MenuIconInk.isDark(appearance))
-        if let hit = transitions[key] { return hit }
-        var made = MenuMotion.frames(from: a, to: b).dropLast().map {
-            MenuIconRenderer.image($0, cached: false, appearance: appearance)
+    /// Next run frame. The conditions are not read here (they come from notifications and ticks), so a frame costs
+    /// one image assignment.
+    private func step() {
+        guard let button, let current else {
+            stopTimer()
+            return
         }
-        made.append(image(for: b))
-        transitions[key] = made
-        transitionOrder.append(key)
-        if transitionOrder.count > 8 { transitions[transitionOrder.removeFirst()] = nil }
-        return made
+        frame = (frame + 1) % MenuRunPose.runFrameCount
+        show(.run(frame), kind: current.state.kind, on: button)
     }
 
-    /// The system state that forbids motion: Reduce Motion, a locked screen, a sleeping main display, an icon that
-    /// is not on screen.
+    // MARK: Conditions
+
+    /// The system state that forbids motion: Reduce Motion, a locked screen, a sleeping main display, Low Power Mode.
     static func systemConditions() -> MenuMotionConditions {
         var c = MenuMotionConditions()
         c.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -161,29 +154,9 @@ final class StatusIconController {
             c.screenLocked = (session["CGSSessionScreenIsLocked"] as? Bool) ?? false
         }
         c.displayAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        c.lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         return c
     }
-
-    /// The conditions read at a switch. In the UITEST build, `DogFrameProbe.forceReduceMotion` (or the environment
-    /// variable MOLEMONITOR_REDUCE_MOTION) replaces Reduce Motion. A controller without `conditionsOverride` (the app's
-    /// own icon) switches directly there unless `uiTestMotion` is true, so the UI regression (A, M14) reads the still
-    /// image of each state at once. The dog checks set `conditionsOverride` and test the motion.
-    private func motionConditions() -> MenuMotionConditions {
-        var c = conditionsOverride?() ?? currentConditions()
-#if UITEST
-        if let forced = DogFrameProbe.forceReduceMotion {
-            c.reduceMotion = forced
-        } else if conditionsOverride == nil, !StatusIconController.uiTestMotion {
-            c.reduceMotion = true
-        }
-#endif
-        return c
-    }
-
-#if UITEST
-    /// Test only: true lets the app's own icon play switches in the UI test build (see `motionConditions`).
-    static var uiTestMotion = false
-#endif
 
     /// The conditions of this controller's button (adds the visibility of the icon).
     func currentConditions() -> MenuMotionConditions {
@@ -194,5 +167,47 @@ final class StatusIconController {
             c.iconVisible = false
         }
         return c
+    }
+
+    /// The conditions read at each refresh. In the UITEST build, the app's own icon (no `conditionsOverride`) never
+    /// runs unless `uiTestMotion` is true, so the UI regression reads still images and counts no icon timer.
+    private func motionConditions() -> MenuMotionConditions {
+        var c = conditionsOverride?() ?? currentConditions()
+#if UITEST
+        if conditionsOverride == nil, !StatusIconController.uiTestMotion { c.reduceMotion = true }
+#endif
+        return c
+    }
+
+#if UITEST
+    /// Test only: true lets the app's own icon run in the UI test build (see `motionConditions`).
+    static var uiTestMotion = false
+#endif
+
+    /// Refreshes on the events that change a condition. The observers cost nothing between events; no polling.
+    private func startObserving() {
+        guard observers.isEmpty else { return }
+        let ws = NSWorkspace.shared.notificationCenter
+        let names: [(NotificationCenter, Notification.Name)] = [
+            (ws, NSWorkspace.screensDidSleepNotification), (ws, NSWorkspace.screensDidWakeNotification),
+            (ws, NSWorkspace.accessibilityDisplayOptionsDidChangeNotification),
+            (ws, NSWorkspace.sessionDidResignActiveNotification), (ws, NSWorkspace.sessionDidBecomeActiveNotification),
+            (DistributedNotificationCenter.default(), Notification.Name("com.apple.screenIsLocked")),
+            (DistributedNotificationCenter.default(), Notification.Name("com.apple.screenIsUnlocked")),
+            (NotificationCenter.default, Notification.Name.NSProcessInfoPowerStateDidChange),
+            (NotificationCenter.default, NSWindow.didChangeOcclusionStateNotification),
+        ]
+        for (center, name) in names {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let windowID = (note.object as? NSWindow).map { ObjectIdentifier($0) }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    // Occlusion changes of other windows (the panel) do not concern the icon.
+                    if let windowID, windowID != self.button?.window.map({ ObjectIdentifier($0) }) { return }
+                    self.refresh()
+                }
+            }
+            observers.append((center, token))
+        }
     }
 }

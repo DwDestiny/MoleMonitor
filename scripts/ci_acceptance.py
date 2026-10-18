@@ -64,6 +64,9 @@ GATES = [
         ("W16", "closed panel costs nothing", "ui"), ("W17", "CPU while open", "ui"), ("W18", "sprite memory", "ui"),
         ("W19", "capacity triple", "ui"), ("W20", "prompt", "core"), ("W21", "memory pressure percent", "core"),
         ("W22", "value alignment", "ui")]],
+    # v3 menu bar runner (docs/DESIGN_V3.md 4.2, U10): UITestIconChecks.swift.
+    {"id": "W29", "name": "menu bar runner frames", "status": "active", "source": "ui"},
+    {"id": "W30", "name": "menu bar runner trigger and timer", "status": "active", "source": "ui"},
 ]
 GATE_EVALUATED_SOURCES = ("ui", "dog", "core")
 # Core gates (source "core"): the sections of the output of scripts/test_core.py ("== <section>" lines, "FAIL (line N): ..." lines).
@@ -170,6 +173,7 @@ def gate_self_test():
     # The legacy lists must keep the exact set the gate has always required.
     expected_ui = list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M19V", "M20", "M21", "M22"]
     expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 22)]
+    expected_ui += ["W29", "W30"]   # v3 menu bar runner (DESIGN_V3.md 4.2)
     if gate_ids("ui", "active") != expected_ui:
         problems.append("active ui gate list changed")
     if gate_ids("dog", "active") != ["DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE", "BF"]:

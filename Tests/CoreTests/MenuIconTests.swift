@@ -87,10 +87,10 @@ func runMenuIconTests() {
     yellow[0].level = .red
     expect(MenuIconModel.kind(yellow, dataState: .fresh) == .alert, "red is alert")
 
-    // 9.2 table: posture, badge, data mark and template flag of each state.
+    // 9.2 table: posture, badge, data mark and template flag of each state (v3: no template image, DESIGN_V3.md 4.2).
     let table: [(MenuIconKind, MenuPosture, Bool, MenuMark?, Bool)] = [
-        (.normal, .relaxed, false, nil, true), (.caution, .raised, true, nil, false), (.alert, .pant, true, nil, false),
-        (.collecting, .hollow, false, .collecting, true), (.stale, .hollow, false, .stale, true),
+        (.normal, .relaxed, false, nil, false), (.caution, .raised, true, nil, false), (.alert, .pant, true, nil, false),
+        (.collecting, .hollow, false, .collecting, false), (.stale, .hollow, false, .stale, false),
     ]
     for (kind, posture, hasBadge, mark, template) in table {
         expect(kind.posture == posture, "\(kind.rawValue): posture \(posture.rawValue)")

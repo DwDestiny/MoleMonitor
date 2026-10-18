@@ -3,7 +3,8 @@
 // Input: Command line arguments and MonitorEngine state (status.json data in the data directory).
 // Output: Menu bar app, or --self-test, --diagnose (headless), --preview (28 static PNG files) and --dog-gallery (PNG gallery) modes.
 // Pos: Entry point and app lifecycle; no cleanup or privileged commands, no Go collector.
-//      The menu bar icon is `StatusIconController` (I2) driven by `MenuIconModel`; the status item has no title text.
+//      The menu bar icon is `StatusIconController` driven by `MenuIconModel` and the CPU of each engine tick (v3 runner,
+//      DESIGN_V3.md 4.2); the status item has no title text.
 //      The status card is hosted here: PanelModel + PanelRoot in a PanelWindow (custom NSPanel, docs/DESIGN_V2.md 10). The window
 //      sets its own height from the layout plan. No NSPopover in the release build.
 import AppKit
@@ -34,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
     /// The last icon state given to the controller (posture and badge). The UI regression reads it.
     private(set) var menuIconState: MenuIconState?
-    private lazy var iconController = StatusIconController(statusItem: statusItem)
+    private(set) lazy var iconController = StatusIconController(statusItem: statusItem)
     /// Model of the open status card. Created on open, released on close.
     private(set) var panelModel: PanelModel?
     private var planObserver: AnyCancellable?
@@ -72,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
         // A tapped notification opens the card and pins the sidebar of the item of the notification (R-14).
         engine.openCardHandler = { [weak self] item in self?.openPanel(pinning: item) }
+        // The menu bar runner runs while the CPU is busy (docs/DESIGN_V3.md 4.2); each engine tick gives it the CPU percent.
+        engine.cpuTickHandler = { [weak self] cpu in self?.iconController.cpuTick(cpu) }
 
         engine.start()
 
