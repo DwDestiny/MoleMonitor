@@ -419,14 +419,14 @@ enum PanelAreaState: Equatable {
     /// "没有异常" with the record entry on the right. `records` is the count of the last 7 days, nil when unknown.
     case quiet(records: Int?)
     case collecting
-    case stale(minutes: Int)
+    case stale(minutes: Int, records: Int?)
     /// A problem row is shown. The record row then holds only the entry "近 7 天 N 条记录 ›".
     case anomalies(records: Int?)
 
     static func make(dataState: DataState, anomalyCount: Int, records: Int?, now: Date) -> PanelAreaState {
         switch dataState {
         case .collecting: return .collecting
-        case .stale(let since): return .stale(minutes: max(1, Int(now.timeIntervalSince(since) / 60)))
+        case .stale(let since): return .stale(minutes: max(1, Int(now.timeIntervalSince(since) / 60)), records: records)
         case .fresh: return anomalyCount > 0 ? .anomalies(records: records) : .quiet(records: records)
         }
     }
@@ -435,7 +435,7 @@ enum PanelAreaState: Equatable {
         switch self {
         case .quiet: return "没有异常"
         case .collecting: return "正在采集第一组数据"
-        case .stale(let minutes): return "数据已过期 \(minutes) 分钟"
+        case .stale: return ""   // the headline subline carries the age (BubbleCopy.subline)
         case .anomalies: return "异常"
         }
     }

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 DwDestiny
 // Input: PanelModel (area state, authorization, sidebar and focus state).
 // Output: The record row of the main column, 28 pt: with problems only the entry "近 7 天 N 条记录 ›", without problems
-//         "✓ 没有异常" on the left and the same entry on the right. Empty while collecting.
+//         "✓ 没有异常" on the left and the same entry on the right. Empty while collecting. Stale: only the entry, the age is in the headline.
 // Pos: Section 3 of the main column (docs/DESIGN_V3.md 5.3). There is no summary line and no fold: the problem rows above carry
 //      the items, their values and their duration. The entry opens the anomaly log in the sidebar.
 
@@ -25,9 +25,9 @@ struct PanelAnomalySection: View {
                 Spacer(minLength: 8)
             case .collecting:
                 Spacer(minLength: 0)
-            case .stale:
-                plainText(state.text)
+            case .stale(_, let records):
                 Spacer(minLength: 8)
+                rightLink(records: records)
             }
         }
         .padding(.horizontal, PanelMetrics.rowInset - Self.entryPadding)
@@ -39,15 +39,6 @@ struct PanelAnomalySection: View {
 
     /// The entry has 8 pt of inner padding for its hit area. The row takes that off its own inset, so the text starts at the row inset.
     private static let entryPadding = 8.0
-
-    private func plainText(_ text: String) -> some View {
-        Text(text)
-            .font(PanelType.rowNote)
-            .foregroundStyle(tok.textSecondary)
-            .lineLimit(1)
-            .padding(.horizontal, Self.entryPadding)
-            .uiTestFrame("txt.anomaly.quiet")
-    }
 
     /// "✓ 没有异常": the check mark is the same gray as the check marks of the quiet rows.
     private var quietMark: some View {
