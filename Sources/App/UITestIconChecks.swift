@@ -253,11 +253,11 @@ extension UITestRunner {
             problems.append("five-state XOR \(String(format: "%.3f", worst.value)) (\(worst.pair)) < \(IconMetrics.fiveStatePass)")
         }
         // Glyph matrices at 1x: category glyphs and data marks >= 0.35, alarm discs >= 0.30.
-        var glyphs = HealthItem.allCases.map { ($0.rawValue, DogGallery.badgeGrid($0, style: GlyphPaths.chosen)) }
-        for mark in MenuMark.allCases { glyphs.append((mark.rawValue, DogGallery.markGrid(mark))) }
+        var glyphs = HealthItem.allCases.map { ($0.rawValue, GlyphGrids.badgeGrid($0, style: GlyphPaths.chosen)) }
+        for mark in MenuMark.allCases { glyphs.append((mark.rawValue, GlyphGrids.markGrid(mark))) }
         let gm = IconMetrics.matrix(glyphs)
         if gm.minimum < IconMetrics.badgePass { problems.append("glyph XOR \(String(format: "%.3f", gm.minimum)) < \(IconMetrics.badgePass)") }
-        let am = IconMetrics.matrix(HealthItem.allCases.map { ($0.rawValue, DogGallery.alarmGrid($0, style: GlyphPaths.chosen)) })
+        let am = IconMetrics.matrix(HealthItem.allCases.map { ($0.rawValue, GlyphGrids.alarmGrid($0, style: GlyphPaths.chosen)) })
         if am.minimum < IconMetrics.alarmPass { problems.append("alarm XOR \(String(format: "%.3f", am.minimum)) < \(IconMetrics.alarmPass)") }
         // Badge contrast against the reference bars.
         var minContrast = Double.infinity

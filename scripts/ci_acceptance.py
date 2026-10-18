@@ -32,7 +32,6 @@ failures = []
 #   status "pending" : the gate is registered but not enforced. It never fails CI and it never counts as passed.
 #                      The summary lists it as inactive (未激活). A result that a pending gate reports is printed as INFO only.
 #   source "ui"      : an item with the same id in ui-report.json (written by `--ui-test`, harness UITestHarness.swift).
-#   source "dog"     : an item with the same id in dog-report.json (written by `--dog-gallery <dir> --dog-checks`).
 #   source "core"    : Core unit test (the "Core and CLI tests" workflow step). No evaluator here, so it cannot be active.
 #   source "script"  : a script run by a later step. No evaluator here, so it cannot be active.
 # To activate a gate, WP-F changes its status to "active" in GATES. The owner of a gate only adds a Swift check file.
@@ -45,27 +44,23 @@ GATES = [
         ("M2", "problem-first order"), ("M3", "height tiers"), ("M4", "refresh and expand keep height"), ("M5", "contrast"),
         ("M6", "large type"), ("M11", "focus ring"), ("M12", "cold start first frame"), ("M13", "copy"),
         ("N1", "copy with real engine input"), ("N2", "history exists on open"), ("M14", "menu bar icon state"),
-        ("M19", "panel dog real render"), ("M19V", "vector dog real render"), ("M20", "bitmap dog follows data points"),
-        ("M21", "problem mode dog and bubble gap"), ("M22", "folded problem card colors")]],
-    *[{"id": i, "name": n, "status": "active", "source": "dog"} for i, n in [
-        ("DA", "dog frames with card open"), ("DB", "no dog callbacks after close"), ("DC", "leg speed across gaits"),
-        ("DD", "menu bar switch"), ("DE", "Reduce Motion no frames"), ("BA", "bitmap dog no body evaluation"),
-        ("BB", "Reduce Motion no crossfade"), ("BC", "bitmap files load"), ("BD", "pose pairwise XOR"),
-        ("BE", "non-background share"), ("BF", "ground shadow")]],
+        ("M19", "panel accessibility tree has no placeholder text"), ("M22", "folded problem card colors")]],
+    # Removed with the dog (U10, 2026-10-18; entries in docs/CI.md): M19V, M20, M21, DA to DE, BA to BF.
     # New gates of v2 (13.3). WP-F2 activated every W gate that has a real check reported as pass in the UI run (CI run 38341738663).
     # W13, W20 and W21 are Core unit test suites. They are read from the log of scripts/test_core.py (CORE_GATE_SUITES below).
-    # W16 (UITestSpriteChecks.swift) was activated after WP-F2; gate L stays next to it.
+    # W16 (UITestPanelChecks.swift since U10) was activated after WP-F2; gate L stays next to it.
+    # Removed with the dog (U10): W04, W11, W12, W14, W15, W17, W18. W08 stays (UITestIconChecks.swift, menu bar icon).
     *[{"id": i, "name": n, "status": "active", "source": src} for i, n, src in [
         ("W01", "preview matrix", "ui"), ("W02", "layout and problem-first", "ui"), ("W03", "open speed and no white flash", "ui"),
-        ("W04", "action mapping and speed continuity", "ui"), ("W05", "sidebar", "ui"), ("W06", "hover intent", "ui"),
+        ("W05", "sidebar", "ui"), ("W06", "hover intent", "ui"),
         ("W07", "drag readout", "ui"), ("W08", "menu bar five states", "ui"), ("W09", "copy", "ui"),
-        ("W10", "Esc layers and close", "ui"), ("W11", "dog strips at run time", "ui"), ("W12", "bubble and dog gap", "ui"),
-        ("W13", "bubble templates", "core"), ("W14", "main thread work per frame", "ui"), ("W15", "Reduce Motion", "ui"),
-        ("W16", "closed panel costs nothing", "ui"), ("W17", "CPU while open", "ui"), ("W18", "sprite memory", "ui"),
+        ("W10", "Esc layers and close", "ui"),
+        ("W13", "bubble templates", "core"),
+        ("W16", "closed panel costs nothing", "ui"),
         ("W19", "capacity triple", "ui"), ("W20", "prompt", "core"), ("W21", "memory pressure percent", "core"),
         ("W22", "value alignment", "ui")]],
 ]
-GATE_EVALUATED_SOURCES = ("ui", "dog", "core")
+GATE_EVALUATED_SOURCES = ("ui", "core")
 # Core gates (source "core"): the sections of the output of scripts/test_core.py ("== <section>" lines, "FAIL (line N): ..." lines).
 # A gate passes only if every listed section appears and no FAIL line follows a listed section. A missing section fails the gate.
 # Mapping from DESIGN_V2.md 13.3: W13 BubbleCopy unit tests, W20 the prompt golden samples (structure, length, golden files),
@@ -147,13 +142,13 @@ def gate_self_test():
     ids = [g["id"] for g in GATES]
     if len(ids) != len(set(ids)):
         problems.append("duplicate gate id")
-    for n in range(1, 23):
+    for n in (1, 2, 3, 5, 6, 7, 8, 9, 10, 13, 16, 19, 20, 21, 22):
         if f"W{n:02d}" not in gate_by_id:
             problems.append(f"W{n:02d} is not registered")
     for g in GATES:
         if g["status"] not in ("active", "pending"):
             problems.append(f"{g['id']}: bad status {g['status']}")
-        if g["source"] not in ("ui", "dog", "core", "script"):
+        if g["source"] not in ("ui", "core", "script"):
             problems.append(f"{g['id']}: bad source {g['source']}")
         if g["status"] == "active" and g["source"] not in GATE_EVALUATED_SOURCES:
             problems.append(f"{g['id']}: active gate has no evaluator for source {g['source']}")
@@ -168,12 +163,10 @@ def gate_self_test():
     if c["fail"] != sum(1 for g in GATES if g["status"] == "active"):
         problems.append("an active gate without result is not counted as failed")
     # The legacy lists must keep the exact set the gate has always required.
-    expected_ui = list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M19V", "M20", "M21", "M22"]
-    expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 22)]
+    expected_ui = list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M22"]
+    expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 5, 6, 7, 8, 9, 10, 16, 19, 22)]
     if gate_ids("ui", "active") != expected_ui:
         problems.append("active ui gate list changed")
-    if gate_ids("dog", "active") != ["DA", "DB", "DC", "DD", "DE", "BA", "BB", "BC", "BD", "BE", "BF"]:
-        problems.append("active dog gate list changed")
     good = "== BubbleCopyTests\n== MemoryTests\n== PromptBuilder: structure (DESIGN_V2.md 8.4)\n== PromptBuilder: length and compression\n== Prompt: golden files\nResult: 10 passed, 0 failed\n"
     if not all(ok for ok, _ in core_gate_results(good).values()):
         problems.append("core gate reader: a good log does not pass")
@@ -257,17 +250,10 @@ version = re.search(r'static\s+let\s+version\s*=\s*"([^"]+)"', (root / "Sources/
 check(info.get("CFBundleShortVersionString") == version, "Info.plist version equals AppInfo.version", str(info.get("CFBundleShortVersionString")))
 check(info.get("LSUIElement") in (True, 1), "Info.plist LSUIElement is true")
 check(info.get("CFBundleIdentifier") == "io.github.dwdestiny.MoleMonitor", "bundle identifier", str(info.get("CFBundleIdentifier")))
-# The Bichon bitmaps of the status card (docs/ASSETS.md): all eight are in the bundle and equal the source files.
-dog_names = ["lie", "stand", "walk", "trot", "sprint", "pant", "alert", "gray"]
-for name in dog_names:
-    source = root / f"Resources/DogArt/dog_{name}.png"
-    bundled = app / f"Contents/Resources/DogArt/dog_{name}.png"
-    check(bundled.exists() and source.exists() and bundled.read_bytes() == source.read_bytes(), f"bundle has Resources/DogArt/dog_{name}.png")
-# The bitmap view draws only when its input changes: no timer, no timeline, no canvas, no display link (docs/DESIGN.md 4.9).
-bitmap_text = re.sub(r"//.*", "", (root / "Sources/App/DogBitmapView.swift").read_text(encoding="utf-8"))
-bitmap_hits = [word for word in ("Timer", "TimelineView", "Canvas", "CADisplayLink", "CVDisplayLink", "DispatchSource", "asyncAfter")
-               if re.search(r"\b" + word + r"\b", bitmap_text)]
-check(not bitmap_hits, "source audit: DogBitmapView.swift has no Timer, TimelineView, Canvas or display link", str(bitmap_hits))
+# The bundle holds no Bichon bitmap or sprite strip any more (U10, 2026-10-18).
+check(not (app / "Contents/Resources/DogArt").exists() and not (app / "Contents/Resources/DogSprites").exists(),
+      "bundle has no Resources/DogArt and no Resources/DogSprites")
+check(not (root / "Resources").exists(), "source tree has no Resources folder")
 
 # 2. Self-test
 st = run([main_bin, "--self-test"])
@@ -281,8 +267,8 @@ os.chmod(data_dir, 0o700)
 env = {"MOLEMONITOR_DATA_DIR": str(data_dir)}
 preview = data_dir / "preview.png"
 PREVIEW_CASES = ("allGreen", "cpuYellow", "diskRed", "powerYellow", "multi", "collecting", "stale")
-# Panel height in points (DESIGN_V2 2.3): 524 in every preview, because the anomaly area has a fixed 36 pt height.
-PREVIEW_HEIGHT_PT = {case: 524 for case in ("allGreen", "collecting", "stale", "cpuYellow", "diskRed", "powerYellow", "multi")}
+# Panel height in points: 436 in every preview (the v2 524 minus the 88 pt the hero lost, 152 to 64, DESIGN_V3.md 4.1, U10). P2 and P3 change it again.
+PREVIEW_HEIGHT_PT = {case: 436 for case in ("allGreen", "collecting", "stale", "cpuYellow", "diskRed", "powerYellow", "multi")}
 preview_names = [f"preview-{case}-{scheme}{suffix}.png"
                  for suffix in ("", "-empty") for case in PREVIEW_CASES for scheme in ("light", "dark")]
 t0 = time.time()
@@ -462,12 +448,12 @@ check(button_total >= 6 and not bad_buttons, "source audit: every Button in Pane
       f"buttons found {button_total}, without both: {bad_buttons}")
 check(not (root / "Sources/App/Panel.swift").exists(), "source audit: the old Panel.swift is gone")
 timer_hits = []
-# DESIGN_V2.md 13.2: the audit covers Panel*.swift (with PanelWindow.swift and its UITEST hooks) and DogSpriteView.swift.
-for file in panel_files + [root / "Sources/App/DogSpriteView.swift"]:
+# DESIGN_V2.md 13.2: the audit covers Panel*.swift (with PanelWindow.swift and its UITEST hooks). DogSpriteView.swift was deleted (U10).
+for file in panel_files:
     text = re.sub(r"//.*", "", file.read_text(encoding="utf-8"))
     if re.search(r"\bTimer\b|TimelineView|Timer\.publish", text):
         timer_hits.append(file.name)
-check(not timer_hits, "source audit: no Timer or TimelineView in the panel files and DogSpriteView.swift", str(timer_hits))
+check(not timer_hits, "source audit: no Timer or TimelineView in the panel files", str(timer_hits))
 # The placeholder text of the skeleton is gone from every view the panel and the menu bar use.
 skeleton_hits = []
 for file in sorted((root / "Sources/App").glob("*.swift")) + [root / "Sources/MoleMonitor.swift"]:
@@ -569,7 +555,7 @@ for gate_id, (ok, detail) in core_gate_results(core_text).items():
         print(f"      {detail}", flush=True)
 
 print()
-print("(summary of the gates read from ui-report.json and the Core test log; the dog gates follow below)", flush=True)
+print("(summary of the gates read from ui-report.json and the Core test log; the release binary audit follows below)", flush=True)
 for line in gate_summary(sources=("ui", "core", "script"))[0]:
     print(line, flush=True)
 if failures:
@@ -577,79 +563,34 @@ if failures:
     sys.exit(1)
 print("ACCEPTANCE PASSED")
 
-# --- dog animation checks (I2)
-# Independent block, owner I2 (docs/DESIGN.md 9.2, stage 2). It runs after the summary above and changes none of the checks
-# above; a failure here exits 1 on its own. It runs the UI test build with `--dog-gallery <dir> --dog-checks`
-# (Sources/App/UITestDogChecks.swift: one small window and one popover with a DogView for about 25 s, temporary output only)
-# and reads <dir>/dog-report.json: DA 60 to 80 frames in 3 s with the card open, DB 0 frame callbacks in 3 s after close,
-# DC leg speed under the natural limit across gait switches, DD menu switch <= 8 frames, <= 600 ms, no timer after it,
-# DE Reduce Motion gives no frames and no timer. DF: the release binary has none of the dog test code.
-# Bitmap stage (docs/DESIGN.md 4.9): DA to DE run with DogView.useBitmapArt = false and judge the vector dog. BA to BE judge the
-# bitmap dog (UITestBitmapChecks.swift): BA no callbacks open or closed, BB Reduce Motion has no crossfade, BC the eight files load,
-# BD pairwise XOR of the poses at 72 x 54 pt (gate 0.20), BE the share of non-background pixels (gray 1.5 %, others 1 %),
-# BF the ground shadow center is within 2 px of the lower edge of each pose.
-def _dog_animation_checks():
-    dog_failures = []
+# --- release binary audit (DF)
+# The release binary has none of the UI test code. The UI test variant has it (positive control).
+def _release_binary_checks():
+    failures_df = []
 
-    def dog_check(ok, name, detail=""):
+    def df_check(ok, name, detail=""):
         print(("PASS  " if ok else "FAIL  ") + name + (f"  [{detail}]" if detail else ""), flush=True)
         if not ok:
-            dog_failures.append(name)
+            failures_df.append(name)
 
-    print("\n---- dog animation checks (I2) ----", flush=True)
+    print("\n---- release binary audit (DF) ----", flush=True)
     release = main_bin.read_bytes()
-    for marker in (b"DogFrameProbe", b"UITestDogChecks", b"--dog-checks", b"DogBitmapProbe", b"UITestBitmapChecks"):
-        dog_check(marker not in release, f"DF release binary does not contain {marker.decode()}")
-    dog_ui_bin = root / "dist-uitest/MoleMonitor.app/Contents/MacOS/MoleMonitor"
-    if not dog_ui_bin.exists():
-        dog_check(False, "dog: dist-uitest/MoleMonitor.app exists")
-        return dog_failures
-    ui_bytes_dog = dog_ui_bin.read_bytes()
-    dog_check(b"DogFrameProbe" in ui_bytes_dog and b"DogBitmapProbe" in ui_bytes_dog,
-              "DF UI test variant contains the dog probes (positive control)")
-    dog_out = Path(os.environ.get("MOLEMONITOR_CI_OUT") or tempfile.gettempdir()) / "molemonitor-dog"
-    dog_out.mkdir(parents=True, exist_ok=True)
-    report_path = dog_out / "dog-report.json"
-    if report_path.exists():
-        report_path.unlink()
-    t0 = time.time()
-    try:
-        dog_run = run([dog_ui_bin, "--dog-gallery", dog_out, "--dog-checks"], timeout=120)
-        print(f"dog checks wall time {time.time() - t0:.1f} s, exit code {dog_run.returncode}", flush=True)
-        print("---- dog checks stdout ----\n" + dog_run.stdout[-3000:], flush=True)
-        if dog_run.stderr.strip():
-            print("---- dog checks stderr (tail) ----\n" + dog_run.stderr[-1000:], flush=True)
-    except subprocess.TimeoutExpired:
-        dog_check(False, "dog checks finished within 120 s")
-    dog_report = json.loads(report_path.read_text()) if report_path.exists() else None
-    dog_check(dog_report is not None, "dog checks wrote dog-report.json")
-    if dog_report:
-        by_id = {item["id"]: item for item in dog_report.get("items", [])}
-        for item_id in gate_ids("dog", "active"):
-            item = by_id.get(item_id)
-            if item is None:
-                dog_check(False, f"dog {item_id} reported")
-                continue
-            dog_check(item["status"] == "pass", f"dog {item_id} {item['name']}", item["note"])
-            gate_record(item_id, "pass" if item["status"] == "pass" else "fail")
-        for item_id, item in sorted(by_id.items()):
-            if gate_by_id.get(item_id, {}).get("status") == "pending":
-                print(f"INFO  dog {item_id} {item['name']} (未激活, not enforced) reported {item['status']}  {item['note']}", flush=True)
-            print(f"      values {json.dumps(item.get('values', {}), sort_keys=True)}", flush=True)
-        print("dog info:", json.dumps(dog_report.get("info", {}), sort_keys=True), flush=True)
-        for sheet in ("bitmap-sheet-light.png", "bitmap-sheet-dark.png", "bitmap-sheet-light-shadow.png", "bitmap-sheet-dark-shadow.png"):
-            path = dog_out / sheet
-            dog_check(path.exists() and path.stat().st_size > 8000, f"BS contact sheet {sheet} is written",
-                      f"{path.stat().st_size if path.exists() else 0} bytes")
-    return dog_failures
+    for marker in (b"DogFrameProbe", b"UITestPanelChecks", b"UITestIconChecks"):
+        df_check(marker not in release, f"DF release binary does not contain {marker.decode()}")
+    ui_bin = root / "dist-uitest/MoleMonitor.app/Contents/MacOS/MoleMonitor"
+    if not ui_bin.exists():
+        df_check(False, "DF: dist-uitest/MoleMonitor.app exists")
+        return failures_df
+    df_check(b"DogFrameProbe" in ui_bin.read_bytes(), "DF UI test variant contains the test probe (positive control)")
+    return failures_df
 
 
-_dog_failures = _dog_animation_checks()
+_df_failures = _release_binary_checks()
 print()
 _final_lines, _final_counts = gate_summary()
 for line in _final_lines:
     print(line, flush=True)
-if _dog_failures:
-    print(f"DOG ANIMATION CHECKS FAILED: {len(_dog_failures)} check(s): " + "; ".join(_dog_failures))
+if _df_failures:
+    print(f"RELEASE BINARY AUDIT FAILED: {len(_df_failures)} check(s): " + "; ".join(_df_failures))
     sys.exit(1)
-print("DOG ANIMATION CHECKS PASSED")
+print("RELEASE BINARY AUDIT PASSED")

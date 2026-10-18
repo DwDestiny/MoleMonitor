@@ -346,7 +346,7 @@ enum UITestHarness {
 
 // MARK: - Check registry (docs/DESIGN_V2.md 13.3, docs/CI.md "v2 门禁登记表")
 
-/// Every extra UI check file (UITestWindowChecks.swift, UITestPanelChecks.swift, UITestSpriteChecks.swift, UITestIconChecks.swift, ...)
+/// Every extra UI check file (UITestWindowChecks.swift, UITestPanelChecks.swift, UITestIconChecks.swift, ...)
 /// adds its checks here. The harness runs the entries in registration order after step M and before step K.
 /// A check file joins the build without a change to this file:
 ///   1. The file declares `enum UITestXxxChecks { @MainActor static func register(into registry: UITestRegistry) { ... } }`.
@@ -936,7 +936,7 @@ final class UITestRunner {
         // Open 2: the full entrance again, with frame captures.
         // The CI VM can report Reduce Motion as on, and under Reduce Motion the full entrance is the same 150 ms fade as a reopen.
         // C and I need the real full entrance (spring, 40 ms stagger, 8 pt rise), so the window and the entrance get motion here.
-        // The hero keeps the system answer (DogSpriteProbe.forceReduceMotion stays nil), so the dog loop does not hide the settle.
+        // The hero is a text block with a static status light, so it has no motion of its own to hide the settle.
         PanelEntranceGate.resetForTest()
         PanelWindow.testReduceMotion = false
         guard let second = await openPanel(offsets: [0, 60, 120, 200, 300, 450, 650, 900], via: .sendAction, holdMs: 1000, prefix: "open1") else {
@@ -1402,5 +1402,20 @@ final class UITestRunner {
         writeReport()
         exit(exitCode)
     }
+}
+// MARK: - Reduce Motion injection
+
+/// Test only. Non-nil replaces the system Reduce Motion setting of the menu bar icon switch (StatusIcon.swift): the injection point of the
+/// icon gates. The environment variable MOLEMONITOR_REDUCE_MOTION=1 (or 0) sets it at launch, so a UI test run can force Reduce Motion
+/// without the system setting. The name is from the dog checks (UITestDogChecks.swift, deleted with the dog by U10); the menu bar icon
+/// work package may rename it together with StatusIcon.swift.
+enum DogFrameProbe {
+    static var forceReduceMotion: Bool? = {
+        switch ProcessInfo.processInfo.environment["MOLEMONITOR_REDUCE_MOTION"] {
+        case "1": return true
+        case "0": return false
+        default: return nil
+        }
+    }()
 }
 #endif
