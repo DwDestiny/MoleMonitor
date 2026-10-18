@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Trend points, 5 minute rollup windows, disk points, current readings, app usage, interface rates and event records (docs/DESIGN_V2.md 6, 7.4).
-// Output: SidebarRange, ChartData (one line or bars, anomaly bands, axis marks, live end point, readout text), SidebarStat and the
+// Output: SidebarRange, ChartData (one line or bars, anomaly bands and the level at a time, axis marks, live end point, readout text,
+//         whether the empty head is marked), SidebarStat and the
 //         one-sentence summary, RankTable, RecordGroup, the 7 day record strip, the entrance offset and the footnotes of the sidebar.
 // Pos: Pure content planning of the v3 sidebar (docs/DESIGN_V3.md 6, 6.1); the SwiftUI views only draw it. Foundation only. Owner P4.
 //      One chart has one line. Only anomaly periods (event records, the disk trigger, an opened record) get bands. Interface strings
@@ -169,6 +170,23 @@ struct ChartData: Equatable {
         let span = window.upperBound.timeIntervalSince(window.lowerBound)
         guard span > 0 else { return 0 }
         return min(1, max(0, firstData.timeIntervalSince(window.lowerBound) / span))
+    }
+
+    /// The smallest empty head (fraction of the plot) that the chart marks with the "no data yet" area.
+    static let emptyHeadMinimum = 0.1
+
+    /// True when the chart draws the empty head area. A head narrower than 10 % of the plot stays blank: a thin grey strip at the
+    /// left edge reads as a clipped remnant, not as "no data yet" (Fable round 1 #8).
+    var marksEmptyHead: Bool {
+        isEmpty || emptyHead >= ChartData.emptyHeadMinimum
+    }
+
+    /// The anomaly level at a time: critical when a critical band holds it, else warning when a warning band holds it, else nil.
+    /// The chart draws the line in the level color inside these bands and the live dot in the color of its own time.
+    func anomalyKind(at t: Date) -> ChartBandKind? {
+        let holding = bands.filter { $0.kind != .highlight && $0.from <= t && t <= $0.to }
+        if holding.contains(where: { $0.kind == .critical }) { return .critical }
+        return holding.isEmpty ? nil : .warning
     }
 
     /// X position (0 to 1) of a time in the window.

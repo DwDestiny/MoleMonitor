@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 DwDestiny
 // Input: Series data of the sidebar (C2) and small helpers shared by the panel.
-// Output: The number transition modifier and the sidebar chart: one line, anomaly areas in the level color, axis numbers outside on
-//         the right, a live end dot that jumps per sample, and the pointer readout (docs/DESIGN_V3.md 6).
+// Output: The number transition modifier and the sidebar chart: one neutral line whose anomaly segments are drawn in the level color,
+//         a faint level-color area (8 % light, 10 % dark) under those segments only, axis numbers outside on the right, a live end dot
+//         that jumps per sample, and the pointer readout (docs/DESIGN_V3.md 6).
 // Pos: Charts of the v3 panel. They are drawn by hand with Path (no Swift Charts), so a static ImageRenderer render matches the live view
 //      and the readout layer can change without a redraw of the main chart (gate W07).
+//      Level color rule (Fable round 1 #8, U5 "动态图表", U6 "不专业"): the line itself carries the level, not a large tinted area.
+//      The old 24 to 28 % area washed the light disk page and muddied the dark CPU page. Contrast of the colored line on its own fill:
+//      light red 3.3:1, light yellow 3.1:1, dark red 3.8:1, dark yellow 5.7:1 (all >= 3:1 for graphics). The normal part of the line
+//      has no fill at all, and a head of missing data narrower than 10 % of the plot stays blank (ChartData.marksEmptyHead).
 
 import Accessibility
 import SwiftUI
@@ -162,9 +167,13 @@ struct ChartMain: View, Equatable {
         a.data == b.data && a.level == b.level
     }
 
-    private func anomalyColor(_ kind: ChartBandKind) -> Color {
-        let base = kind == .critical ? tok.lampDanger : tok.lampWarning
-        return base.opacity(tok.dark ? 0.28 : 0.24)
+    private func levelColor(_ kind: ChartBandKind) -> Color {
+        kind == .critical ? tok.lampDanger : tok.lampWarning
+    }
+
+    /// The faint area under an anomaly segment: 8 % in light, 10 % in dark.
+    private func anomalyFill(_ kind: ChartBandKind) -> Color {
+        levelColor(kind).opacity(tok.dark ? 0.10 : 0.08)
     }
 
     private func axisLabels() -> [String] {
@@ -179,15 +188,27 @@ struct ChartMain: View, Equatable {
         return [text(from), text(mid), text(to)]
     }
 
-    /// The area under the line, or the bars, inside the bands of one kind.
+    /// The faint area under the line inside the bands of one kind. Bars get no area: the bar itself takes the color.
     @ViewBuilder
     private func anomalyArea(_ kind: ChartBandKind) -> some View {
+        if data.bands.contains(where: { $0.kind == kind }), let line = data.lines.first {
+            ChartLineShape(data: data, line: line, style: data.style, closed: true)
+                .fill(anomalyFill(kind))
+                .frame(width: ChartMetrics.width, height: ChartMetrics.plotHeight)
+                .mask { ChartBandMask(data: data, kind: kind).fill(Color.black) }
+        }
+    }
+
+    /// The line, or the bars, inside the bands of one kind, drawn again in the level color over the neutral mark.
+    @ViewBuilder
+    private func anomalyMark(_ kind: ChartBandKind) -> some View {
         if data.bands.contains(where: { $0.kind == kind }) {
             Group {
                 if let line = data.lines.first {
-                    ChartLineShape(data: data, line: line, style: data.style, closed: true).fill(anomalyColor(kind))
+                    ChartLineShape(data: data, line: line, style: data.style, closed: false)
+                        .stroke(levelColor(kind), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 } else {
-                    ChartBarsShape(data: data).fill(anomalyColor(kind))
+                    ChartBarsShape(data: data).fill(levelColor(kind))
                 }
             }
             .frame(width: ChartMetrics.width, height: ChartMetrics.plotHeight)
@@ -198,7 +219,7 @@ struct ChartMain: View, Equatable {
     private var plot: some View {
         let headWidth = CGFloat(data.emptyHead) * ChartMetrics.width
         return ZStack(alignment: .topLeading) {
-            if headWidth > 1 {
+            if data.marksEmptyHead && headWidth > 1 {
                 Rectangle().fill(tok.chartFill).frame(width: headWidth, height: ChartMetrics.plotHeight)
                 if data.isEmpty || headWidth > 90 {
                     Text("还没有数据")
@@ -216,9 +237,7 @@ struct ChartMain: View, Equatable {
                 }
             }
             ChartHorizontalShape(y: ChartMetrics.plotHeight - 0.25).stroke(tok.separator, lineWidth: 0.5)
-            if data.style == .area, let line = data.lines.first {
-                ChartLineShape(data: data, line: line, style: .area, closed: true).fill(tok.chartFill)
-            }
+            // The normal part has no area: one chart, one line (docs/DESIGN_V3.md 6). The disk .area style only differs in its domain.
             ChartBarsShape(data: data).fill(tok.chartLine.opacity(0.45))
             anomalyArea(.warning)
             anomalyArea(.critical)
@@ -226,6 +245,8 @@ struct ChartMain: View, Equatable {
                 ChartLineShape(data: data, line: line, style: data.style, closed: false)
                     .stroke(tok.chartLine, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
             }
+            anomalyMark(.warning)
+            anomalyMark(.critical)
         }
         .frame(width: ChartMetrics.width, height: ChartMetrics.plotHeight, alignment: .topLeading)
     }
@@ -273,10 +294,19 @@ struct ChartMain: View, Equatable {
 
 /// A solid dot on the newest point of the line. It jumps one step when a 2 s sample arrives, settling with motion.move
 /// (about 200 ms). It never moves on its own: no timer, no continuous animation (docs/DESIGN_V3.md 6, 8).
+/// Its color is the color of the line at its time: the level color inside an anomaly band, else text.primary.
 struct ChartLiveDot: View {
     let data: ChartData
     @Environment(\.tok) private var tok
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private func color(at t: Date) -> Color {
+        switch data.anomalyKind(at: t) {
+        case .critical: return tok.lampDanger
+        case .warning: return tok.lampWarning
+        default: return tok.textPrimary
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -284,7 +314,7 @@ struct ChartLiveDot: View {
                 let px = CGFloat(data.x(p.t)) * ChartMetrics.width
                 let py = ChartMetrics.plotHeight - CGFloat(data.y(p.v, line: line)) * ChartMetrics.plotHeight
                 Circle()
-                    .fill(tok.textPrimary)
+                    .fill(color(at: p.t))
                     .frame(width: 6, height: 6)
                     .offset(x: px - 3, y: py - 3)
                     .animation(reduceMotion ? nil : PanelMotion.move, value: py)

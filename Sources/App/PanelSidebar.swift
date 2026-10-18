@@ -5,6 +5,13 @@
 //         a one-sentence summary, the one-line chart, the capacity bar, the top 5 list, and the anomaly log with its 7 day strip.
 // Pos: Right or left column of the panel. It is built only while the sidebar is open, so closing releases it. The content fades in
 //      and rises from the hovered row's height (motion.move; motion.fade under Reduce Motion). No stat blocks, pills or legends.
+//      Column grid (SidebarGrid, Fable round 1 #4): every row of the sidebar starts at the content edge with a 16 pt glyph column
+//      (level shape, app icon or interface icon, left aligned), and every name starts 24 pt in. Hover fills start 8 pt left of the content
+//      edge, the same 8 pt relation as the main column's tint blocks and their glyphs.
+//      App icons in the top 5 list (RankIcon): 16 pt and desaturated. Reason: in this panel color means level (red, yellow) and nothing
+//      else; a full color Chrome or Xcode icon next to a red level shape competes with it and makes a normal list loud. The shape of
+//      an app icon stays recognizable in gray at 16 pt, and the name beside it carries the identity.
+//      The 7 day strip marks today with a 1 pt tick in text.tertiary: the lightest element of the strip, lighter than any anomaly mark.
 
 import AppKit
 import SwiftUI
@@ -59,6 +66,18 @@ struct AppIconView: View {
     }
 }
 
+// MARK: - Grid
+
+/// The column grid of the sidebar rows (see the file header).
+private enum SidebarGrid {
+    /// Width of the glyph column: the 16 pt app icon, and the 8 pt level shapes left aligned in it.
+    static let glyph: CGFloat = 16
+    /// Gap between the glyph column and the name.
+    static let gap: CGFloat = 8
+    /// The x of every name and every ranking bar, from the content edge.
+    static let name: CGFloat = glyph + gap
+}
+
 // MARK: - Header
 
 /// The level shape before the title: ■ red, ▲ yellow, ✓ normal, gray dot for network. The anomaly log and unknown levels have none.
@@ -97,8 +116,11 @@ private struct SidebarHeader: View {
     private var pinned: Bool { model.pinnedItem == state.item }
 
     var body: some View {
-        HStack(spacing: 8) {
-            SidebarLevelMark(state: state)
+        HStack(spacing: 0) {
+            if state.item != .anomalyLog {
+                SidebarLevelMark(state: state)
+                    .frame(width: SidebarGrid.name, alignment: .leading)
+            }
             Text(state.item.label)
                 .font(PanelType.lead)
                 .foregroundStyle(tok.textPrimary)
@@ -106,9 +128,10 @@ private struct SidebarHeader: View {
                 .fixedSize()
                 .accessibilityIdentifier("side.title")
                 .uiTestFrame("side.title")
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             SidebarRangeControl(model: model, state: state)
             if pinned {
+                Spacer().frame(width: 8)
                 Button(action: { model.userClose() }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
@@ -244,12 +267,13 @@ private struct RankIcon: View {
     var body: some View {
         Group {
             if !snapshot, let image = AppIconCache.icon(bundleID: row.bundleID) {
-                Image(nsImage: image).resizable().interpolation(.high)
+                // Desaturated: color in the panel means level only (see the file header).
+                Image(nsImage: image).resizable().interpolation(.high).saturation(0)
             } else {
                 Image(systemName: symbol).font(.system(size: 13, weight: .light)).foregroundStyle(tok.textTertiary)
             }
         }
-        .frame(width: 16, height: 16)
+        .frame(width: SidebarGrid.glyph, height: SidebarGrid.glyph)
         .accessibilityHidden(true)
     }
 }
@@ -261,7 +285,7 @@ private struct RankingView: View {
     let footnotes: [String]
     @Environment(\.tok) private var tok
 
-    private let nameInset: CGFloat = 24
+    private let nameInset: CGFloat = SidebarGrid.name
 
     var body: some View {
         let barWidth = PanelMetrics.sidebarContentWidth - nameInset
@@ -282,7 +306,7 @@ private struct RankingView: View {
             }
             ForEach(Array(table.rows.enumerated()), id: \.offset) { index, row in
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: SidebarGrid.gap) {
                         RankIcon(row: row, table: table)
                         Text(row.name)
                             .font(PanelType.rowName)
@@ -317,7 +341,8 @@ private struct RankingView: View {
 
 // MARK: - Anomaly log
 
-/// The 7 (or 30) day strip: 4 pt high, anomaly periods in the level color, a dot at today (docs/DESIGN_V3.md 6.1).
+/// The 7 (or 30) day strip: 4 pt high, anomaly periods in the level color, a 1 pt tick at today (docs/DESIGN_V3.md 6.1). The tick is
+/// the lightest mark of the strip (text.tertiary), so a short anomaly segment always reads heavier than "today".
 private struct RecordStripView: View {
     let rows: [RecordRow]
     let days: Int
@@ -325,9 +350,9 @@ private struct RecordStripView: View {
     @Environment(\.tok) private var tok
 
     var body: some View {
-        // The band stops 12 pt before the edge so the today dot never covers an ongoing period.
+        // The band runs to the edge: its right end is now. The tick sits on that end and is thinner than any segment.
         let full = PanelMetrics.sidebarContentWidth
-        let width = full - 12
+        let width = full
         let labels = RecordStrip.labels(days: days, now: now, timeZone: TimeZone.current)
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .leading) {
@@ -338,9 +363,10 @@ private struct RecordStripView: View {
                         .frame(width: max(3, CGFloat(seg.to - seg.from) * width), height: 4)
                         .offset(x: CGFloat(seg.from) * width)
                 }
-                Circle().fill(tok.textPrimary).frame(width: 8, height: 8).offset(x: full - 8)
+                Rectangle().fill(tok.textTertiary).frame(width: 1, height: 10).offset(x: full - 1)
+                    .uiTestFrame("rec.today")
             }
-            .frame(width: full, height: 8, alignment: .leading)
+            .frame(width: full, height: 10, alignment: .leading)
             HStack(spacing: 0) {
                 Text(labels.0)
                 Spacer(minLength: 0)
@@ -384,9 +410,9 @@ private struct RecordRowView: View {
 
     var body: some View {
         Button(action: { model.openRecord(row) }) {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: SidebarGrid.gap) {
                 StatusDotView(dot: row.level == .red ? .red : .yellow)
-                    .frame(width: 8, height: 16)
+                    .frame(width: SidebarGrid.glyph, height: 16, alignment: .leading)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(row.title).font(PanelType.rowName).foregroundStyle(tok.textPrimary).lineLimit(1)

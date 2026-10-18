@@ -297,6 +297,19 @@ func runSidebarTests() {
     input.range = .h24
     let c24 = SidebarChart.make(input)
     expect(c24.isEmpty && c24.firstData == nil && c24.emptyHead == 1, "24 h without rollups is empty")
+    expect(!c2.marksEmptyHead && c24.marksEmptyHead, "full history has no head area, an empty chart has one")
+    var narrow = c2
+    narrow.firstData = c2.window.lowerBound.addingTimeInterval(c2.range.seconds * 0.02)
+    expect(!narrow.marksEmptyHead, "a 2 % head stays blank (no grey strip at the left edge)")
+    narrow.firstData = c2.window.lowerBound.addingTimeInterval(c2.range.seconds * 0.25)
+    expect(narrow.marksEmptyHead, "a 25 % head shows the no-data area")
+    var headBands = c2
+    let b0 = now.addingTimeInterval(-3600), b1 = now.addingTimeInterval(-1800)
+    headBands.bands = [ChartTimeBand(from: b0, to: now, kind: .warning), ChartTimeBand(from: b1, to: now, kind: .critical),
+                    ChartTimeBand(from: now.addingTimeInterval(-7000), to: now, kind: .highlight)]
+    expect(headBands.anomalyKind(at: now.addingTimeInterval(-5000)) == nil, "a highlight band is not an anomaly")
+    expect(headBands.anomalyKind(at: now.addingTimeInterval(-2400)) == .warning, "inside the warning band only")
+    expect(headBands.anomalyKind(at: now) == .critical, "critical wins where both bands hold")
     var ws = [RollupWindow]()
     for i in 0..<288 { ws.append(RollupWindow(end: now.addingTimeInterval(-Double(287 - i) * 300), pointCount: 10, cpuMean: 20, cpuPeak: 40)) }
     input.rollups = ws
