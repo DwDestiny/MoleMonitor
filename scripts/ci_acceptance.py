@@ -243,6 +243,8 @@ def panel_height_pt(m, problems, has_battery=True):
     rows = quiet_rows * m["quietRow"]
     if expanded:
         rows += expanded * m["problemRow"] + (expanded - 1) * m["problemRowGap"]
+        if quiet_rows:
+            rows += m["problemToQuietGap"]   # 8 pt between the last problem row and the quiet grid (FABLE round 1, item 10)
     return (m["topPadding"] + m["hero"] + m["heroGap"] + rows + m["rowsToRecordGap"] + m["recordRow"]
             + m["recordToFooterGap"] + m["footer"] + m["bottomPadding"])
 
@@ -324,7 +326,7 @@ def gate_self_test():
             problems.append(f"W25 source audit: {hits[:6]} ({uses} uses)")
         metrics = panel_metrics(root)
         green = panel_height_pt(metrics, 0)
-        if green != 264 or green > ALL_GREEN_MAX_HEIGHT_PT or panel_height_pt(metrics, 1) != 328 or panel_height_pt(metrics, 4) != 436:
+        if green != 264 or green > ALL_GREEN_MAX_HEIGHT_PT or panel_height_pt(metrics, 1) != 344 or panel_height_pt(metrics, 4) != 468:
             problems.append(f"panel height formula: 0 problems {green}, 1 problem {panel_height_pt(metrics, 1)}, 4 problems {panel_height_pt(metrics, 4)}")
     for line in problems:
         print("FAIL  gate self-test: " + line)

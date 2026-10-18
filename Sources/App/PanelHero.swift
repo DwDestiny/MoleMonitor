@@ -4,8 +4,10 @@
 // Output: The headline block: one sentence in `PanelType.lead` (17 pt), left aligned, at most 2 lines, in a fixed 320 x 64 pt slot.
 //         A one-line headline gets a 13 pt `text.secondary` subline 4 pt below it (HeroBrain.subline: the reading clock, the stale age,
 //         or what collecting waits for). A two-line headline has none. The subline hides with the title during the 0.5 s collecting delay.
-//         Behind it the status light: a pre-rendered radial gradient (352 x 96 pt) that is yellow for a yellow problem, red for a
-//         red one, and absent when all is well. A change of level crosses over in 400 ms. While the first readings arrive, the
+//         Behind it, in dark appearance only, the status light: a pre-rendered radial gradient (352 x 96 pt) that is yellow for a
+//         yellow problem, red for a red one, and absent when all is well. A change of level crosses over in 400 ms.
+//         Light appearance has no status light: on the light popover material it read as a formless pink wash (anti-sameness X15,
+//         FABLE round 1, item 3). There the level is carried by the problem rows (shape, tint, curve). Reason in docs/CI.md. While the first readings arrive, the
 //         title reads "正在检查，已完成 N/6 项" and shows only after 0.5 s (HeroBrain.collectingDelay).
 // Pos: First block of the panel. No dog, bubble, prop, stage or ground (U10, 2026-10-18). The text comes from Core/BubbleCopy.swift
 //      through HeroBrain (Core/HeroLogic.swift). The status light is two CGImages per appearance, drawn once with Core Graphics
@@ -95,8 +97,11 @@ private struct HeroGlow: View {
     var body: some View {
         let dark = scheme == .dark
         ZStack(alignment: .topLeading) {
-            layer(.warning, dark: dark)
-            layer(.danger, dark: dark)
+            // Light appearance draws no light (see the file header).
+            if dark {
+                layer(.warning, dark: dark)
+                layer(.danger, dark: dark)
+            }
         }
         .frame(width: HeroGlowImages.size.width, height: HeroGlowImages.size.height, alignment: .topLeading)
         .animation(.easeInOut(duration: 0.4), value: kind)

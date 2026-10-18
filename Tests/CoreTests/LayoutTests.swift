@@ -32,6 +32,7 @@ func runLayoutTests() {
         let quietRows = Double((quietItems + 1) / 2)
         var rowsHeight = quietRows * PanelMetrics.quietRow
         if expanded > 0 { rowsHeight += Double(expanded) * PanelMetrics.problemRow + Double(expanded - 1) * PanelMetrics.problemRowGap }
+        if expanded > 0 && quietItems > 0 { rowsHeight += PanelMetrics.problemToQuietGap }
         return PanelMetrics.topPadding + hero + PanelMetrics.heroGap + rowsHeight + PanelMetrics.rowsToRecordGap
             + PanelMetrics.recordRow + PanelMetrics.recordToFooterGap + PanelMetrics.footer + PanelMetrics.bottomPadding
     }
@@ -59,12 +60,12 @@ func runLayoutTests() {
         expect(top == expected(items: 6, problems: 3, hero: hero), "three problem rows with hero \(hero): \(top)")
     }
     expect(PanelLayout.height(hasBattery: true, problems: 0, hero: 64) == 264, "all green with a 64 pt hero is 264 pt")
-    expect(PanelLayout.height(hasBattery: true, problems: 3, hero: 64) == 436, "three problem rows with a 64 pt hero is 436 pt")
+    expect(PanelLayout.height(hasBattery: true, problems: 3, hero: 64) == 468, "three problem rows with a 64 pt hero is 468 pt")
     expect(plan(Array(all.prefix(4))).height == plan(Array(all.prefix(3))).height, "the fourth problem does not add height")
     // The preview matrix (scripts/ci_acceptance.py, gate M3 and W24): the problem rows of each preview case and the height of its file.
-    // The script holds the same table (PREVIEW_PROBLEMS). The heights are 264, 328 and 436 pt, so the files are 528, 656 and 872 px high.
-    let previewProblems: [(PreviewCase, Int, Double)] = [(.allGreen, 0, 264), (.cpuYellow, 1, 328), (.diskRed, 1, 328), (.powerYellow, 1, 328),
-                                                         (.multi, 4, 436), (.collecting, 0, 264), (.stale, 0, 264)]
+    // The script holds the same table (PREVIEW_PROBLEMS). The heights are 264, 344 and 468 pt, so the files are 528, 688 and 936 px high.
+    let previewProblems: [(PreviewCase, Int, Double)] = [(.allGreen, 0, 264), (.cpuYellow, 1, 344), (.diskRed, 1, 344), (.powerYellow, 1, 344),
+                                                         (.multi, 4, 468), (.collecting, 0, 264), (.stale, 0, 264)]
     for (c, count, height) in previewProblems {
         let f = PreviewScenario.fixture(c, full: true, now: now)
         let battery = PanelRows.hasBattery(f.verdicts)
@@ -76,9 +77,19 @@ func runLayoutTests() {
         expect(PanelLayout.plan(PanelLayoutInput(verdicts: empty.verdicts, hasBattery: battery)).height == height, "preview \(c.rawValue) empty data has the same height")
     }
     expect(PanelMetrics.width == 352 && PanelMetrics.widthWithSidebar == 672, "widths 352 and 672")
-    expect(PanelMetrics.problemRow == 64 && PanelMetrics.quietRow == 28 && PanelMetrics.recordRow == 28 && PanelMetrics.footer == 32, "row heights")
+    expect(PanelMetrics.problemRow == 72 && PanelMetrics.problemToQuietGap == 8 && PanelMetrics.quietRow == 28 && PanelMetrics.recordRow == 28 && PanelMetrics.footer == 32, "row heights")
     expect(PanelMetrics.primaryButtonWidth + PanelMetrics.footerGap + PanelMetrics.moreButtonWidth == PanelMetrics.rowBackgroundWidth,
            "footer line adds up to 336")
+
+    section("SparkFit: problem-row curve uses its own min and max (FABLE round 1, item 1)")
+    let step = SparkFit.domain(values: [85, 85, 87, 87], fixed: 0...100)
+    expect(step.lowerBound == 85 && step.upperBound == 87, "a 2-point memory step fills the band, got \(step)")
+    let flat = SparkFit.domain(values: [40, 40], fixed: 0...100)
+    expect(abs((flat.upperBound - flat.lowerBound) - 2) < 1e-9 && abs((flat.upperBound + flat.lowerBound) / 2 - 40) < 1e-9,
+           "a flat series gets the 2 % minimum span around its value, got \(flat)")
+    expect(SparkFit.domain(values: [], fixed: 0...100) == 0...100, "no values: the fixed domain")
+    let grow = SparkFit.domain(values: [100, 150, 414], fixed: 95...419)
+    expect(grow == 100...414, "disk growth spans its own range, got \(grow)")
 
     section("PanelLayout v2: row order")
     let quiet = plan([])

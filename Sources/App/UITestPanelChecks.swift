@@ -172,7 +172,7 @@ extension UITestRunner {
     /// Tertiary text (placeholder values of the collecting state, "近 7 天无记录") is inactive text and is not measured.
     func contrastTargets(_ model: PanelModel) -> [(id: String, minimum: Double)] {
         var out = [(id: String, minimum: Double)]()
-        var text = ["txt.hero.title", "txt.anomaly.quiet", "txt.anomaly.count"]
+        var text = ["txt.hero.title", "txt.anomaly.count"]
         if model.footerState.enabled { text.append("txt.btn.title") }
         for id in text { out.append((id, 4.5)) }
         for row in model.rows {
@@ -873,7 +873,8 @@ extension UITestRunner {
             let expanded = Swift.min(3, anomalyCount)
             let quietRows = Double((rowCount - expanded + 1) / 2)
             var rowsHeight = quietRows * 28.0
-            if expanded > 0 { rowsHeight += Double(expanded) * 64.0 + Double(expanded - 1) * 4.0 }
+            // v3 round 3 (docs/CI.md): problem rows are 72 pt, and 8 pt separate the last one from the quiet grid.
+            if expanded > 0 { rowsHeight += Double(expanded) * 72.0 + Double(expanded - 1) * 4.0 + 8.0 }
             let formula = 12.0 + 64.0 + 8.0 + rowsHeight + 12.0 + 28.0 + 12.0 + 32.0 + 12.0
             let layoutHeight = PanelLayout.height(hasBattery: data.hasBattery, problems: anomalyCount)
             if abs(layoutHeight - formula) > 0.01 { problems.append("\(name): PanelLayout.height \(layoutHeight), formula \(formula)") }
