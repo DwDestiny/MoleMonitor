@@ -1,28 +1,28 @@
 ---
 title: "MoleMonitor · Claude 接手说明"
 type: handoff
-last_updated: 2026-10-13
+last_updated: 2026-10-18
 ---
 
 # Claude 接手说明
 
-MoleMonitor 的功能代码已经写完，面板 v2 已实现并合并到 `main`（提交 `3dae2ad`）。`Sources/Core/` 与 CLI 在 Linux 上测试。`Sources/App/` 在 CI 的 macOS 虚拟机上构建并通过回归门禁，但没有在用户的 Mac 上人工验收。Linux VPS 可以继续阅读、设计、改源码和写文档。AppKit、SwiftUI、UserNotifications、IOKit 的真机检查必须在 Apple Silicon Mac 上完成。
+MoleMonitor 的功能代码已经写完，面板 v2 已实现并合并到 `main`（提交 `3dae2ad`）。面板 v3（体检单）在分支 `v3/design` 上实现，尚未合并到 `main`。`Sources/Core/` 与 CLI 在 Linux 上测试。`Sources/App/` 在 CI 的 macOS 虚拟机上构建并通过回归门禁，但没有在用户的 Mac 上人工验收。Linux VPS 可以继续阅读、设计、改源码和写文档。AppKit、SwiftUI、UserNotifications、IOKit 的真机检查必须在 Apple Silicon Mac 上完成。
 
-面板、菜单栏图标与比熊的设计真源是 [DESIGN_V2.md](DESIGN_V2.md)。[DESIGN.md](DESIGN.md) 中被取代的章节已有标记，数据层与提示词规则仍有效。产品范围与数据口径见 [PROJECT.md](PROJECT.md)。如果文档冲突，以 DESIGN_V2.md 与 [VERIFICATION.md](VERIFICATION.md) 为准。
+面板与菜单栏图标的设计真源是 [DESIGN_V3.md](DESIGN_V3.md)。DESIGN_V3.md 没写到的内容（数据、规则、提示词正文）以 [DESIGN_V2.md](DESIGN_V2.md) 为准。[DESIGN.md](DESIGN.md) 中被取代的章节已有标记，数据层与提示词规则仍有效。产品范围与数据口径见 [PROJECT.md](PROJECT.md)。如果文档冲突，以 DESIGN_V3.md 与 [VERIFICATION.md](VERIFICATION.md) 为准。
 
 ## 当前状态
 
 | 部分 | 状态 |
 |---|---|
 | 产品方向 | 只读 macOS 14+ 菜单栏健康哨兵。只检测和预警，不做清理 |
-| 状态卡 | 自定义 `NSPanel` 窗口。主列 352 pt 宽，高 524 pt（台式机 484 pt），四段：英雄区、六行分项、异常区、底栏。点击或悬停一行，右侧展开 320 pt 的侧栏。设计见 [DESIGN_V2.md](DESIGN_V2.md) |
+| 状态卡 | 自定义 `NSPanel` 窗口，体检单版式。主列 352 pt 宽，高度随问题行数变化：全绿 264 pt，1 个问题行 344 pt，3 个问题行 468 pt（最大）。结构：64 pt 标题块（一句话，面板里没有比熊）、72 pt 问题行（整行等级底色加行内曲线）、两列 28 pt 正常行、记录行、底部复制按钮。点击或悬停一行，右侧展开 320 pt 的侧栏。设计见 [DESIGN_V3.md](DESIGN_V3.md) |
 | 数据层 | 引擎每 30 秒采样一次，内存保存 2 小时环形缓冲，每 5 分钟写 `trend.json`，另写 5 分钟汇总文件 `rollup-YYYY-MM.ndjson` 与 `events.json`（异常记录）。设计见 [DESIGN.md 第 6 章](DESIGN.md#6-数据层规格)和 [DESIGN_V2.md 第 12 章](DESIGN_V2.md) |
 | 健康规则 | CPU、内存、温度、磁盘、耗电五项都已实现。占用 App 前 5 名已实现 |
-| 提示词 | 状态卡有“复制给 Agent”按钮，生成不超过 3000 字的排查提示词。CLI 命令是 `molemonitor-cli prompt`。提示词禁止 `mo optimize`、`mo uninstall` 和非 dry-run 清理。删除、卸载、清理、结束进程前须经用户确认 |
-| 状态卡比熊 | AI 生成的序列帧动画，10 个动作。CPU 决定奔跑速度，其他状态决定动作。降级链：序列帧，8 张静态位图，矢量比熊（`DogView.useBitmapArt`）。门禁见 [CI.md](CI.md) |
-| 菜单栏图标 | 矢量比熊正面头像剪影加角标，五个状态（正常、留意、异常、采集中、过期）。状态切换有不超过 8 帧的动画 |
-| 素材 | AI 生成，版权归属法律上不确定，不适用 GPL。发布前须由用户确认，见 [ASSETS.md](ASSETS.md) 第 4 节 |
-| `Sources/Core/` | 完成。Linux 上 5127 条断言通过 |
+| 提示词 | 状态卡有“复制排查提示词”按钮（无问题时为“复制日常巡检提示词”），生成不超过 3000 字的排查提示词。CLI 命令是 `molemonitor-cli prompt`。提示词禁止 `mo optimize`、`mo uninstall` 和非 dry-run 清理。删除、卸载、清理、结束进程前须经用户确认 |
+| 面板里的比熊 | 已删除（U10，2026-10-18）。面板没有比熊、气泡、舞台、序列帧和位图。已删除的门禁见 [CI.md](CI.md)「已删除的门禁（U10）」 |
+| 菜单栏图标 | 比熊侧视剪影，矢量绘制。静态 1 帧，CPU 达到 35% 起 4 帧奔跑（35% 至 60% 为 4 fps，60% 至 85% 为 6 fps，85% 以上为 8 fps）。CPU 低于 25% 且连续 2 个 30 秒 tick 后回到静态。黄色 ▲ 表示留意，红色 ■ 表示异常。采集中与过期是空心轮廓。奔跑时才有一个图标计时器 |
+| 素材 | v3 起没有 AI 生成素材，许可风险消失。见 [ASSETS.md](ASSETS.md) |
+| `Sources/Core/` | 完成。Linux 上 5074 条断言通过 |
 | `Sources/cli/`（`molemonitor-cli`） | 完成。Linux 上 124 项检查通过 |
 | `Sources/App/` | 完成，通过 CI 回归门禁。文件划分见 [Sources/README.md](../Sources/README.md) |
 | `Sources/App/UITest*.swift` | 界面回归测试代码。只在 `-D UITEST` 构建中存在 |
@@ -50,16 +50,17 @@ MoleMonitor 的功能代码已经写完，面板 v2 已实现并合并到 `main`
 | 阶段 3 | 温度与热状态规则、自绘比熊、菜单栏图标动画 |
 | 阶段 4 | 睡眠掉电与整机耗电规则 |
 | 状态卡重设计 | 问题优先版面、2 小时趋势、复制给 Agent |
-| 面板 v2 | NSPanel 窗口、侧栏、序列帧比熊、菜单栏五态、气泡。门禁 W01 至 W22（21 项已激活，W16 未激活，见 [CI.md](CI.md)） |
-| 位图比熊 | 8 张位图、淡入、地面阴影、门禁 BA 至 BF |
+| 面板 v2 | NSPanel 窗口、侧栏、序列帧比熊、菜单栏五态、气泡。门禁 W01 至 W22。比熊部分已被 U10 取代 |
+| 位图比熊 | 8 张位图、淡入、地面阴影、门禁 BA 至 BF。已被 U10 取代，素材与门禁已删除 |
+| 面板 v3 | 体检单版式：标题块、72 pt 问题行、两列正常行、爪印章、重做的侧栏与 7 天异常记录页、菜单栏静态与奔跑图标。设计见 [DESIGN_V3.md](DESIGN_V3.md)，在分支 `v3/design` 上，CI 回归门禁全绿 |
 
 ## 未做
 
 | 项 | 说明 |
 |---|---|
-| 真机动画手感与 CPU | 序列帧动画已实现。CI 虚拟机是软件渲染，真机帧率和 CPU 须用户测 |
+| 真机动画手感与 CPU | 菜单栏奔跑图标与面板反馈动效已实现。CI 虚拟机是软件渲染，真机帧率和 CPU 须用户测 |
+| 合并 v3 | 分支 `v3/design` 尚未合并到 `main`，由协调者决定 |
 | 真机验收 | 见下文“下一步”的清单 |
-| 素材版权确认 | 用户须决定 [ASSETS.md](ASSETS.md) 的 A1 至 A5 |
 | 安装、登录启动、公证、Release | 按用户具体授权执行 |
 | 电池基线耗电 | 延后，两周使用后再决定 |
 
@@ -126,17 +127,19 @@ gh run download -n molemonitor-ci
 
 | 编号 | 检查项 |
 |---|---|
-| 1 | 动效手感与 ProMotion 流畅度：面板打开的入场，比熊奔跑与动作切换，侧栏展开 |
-| 2 | 真实通知授权框，以及点击通知后展开状态卡 |
-| 3 | 菜单栏图标在真实壁纸上的观感：1x 下喘气与耳朵抬起的轮廓，温度计与闪电角标偏弱 |
-| 4 | 状态卡打开时，Activity Monitor 里的 CPU 和闲置 CPU。CI 虚拟机是软件渲染，0.02% 不能外推 |
-| 5 | “复制给 Agent”按钮的真实剪贴板路径 |
-| 6 | 真实电池行（台式机没有电池） |
-| 7 | Reduce Motion（系统设置 → 辅助功能 → 显示） |
-| 8 | 提示词里的系统命令 `pmset`、`sysctl`、`vm_stat`、`ps` 在真机上的输出与权限（V23），耗电阈值（V24） |
-| 9 | 红色角标的可辨度门槛是 0.30。原目标 0.35，已决定接受 |
-| 10 | 浅色与深色壁纸下，比熊的地面阴影与边缘（白毛） |
-| 11 | AI 素材的版权与使用条款：[ASSETS.md](ASSETS.md) 第 4 节 A1 至 A5 需要用户确认 |
+| 1 | 爪印章手感：点击“复制排查提示词”或按 ⌘C 后，印章落定的节奏，1500 ms 后的淡出，Reduce Motion 下直接出现 |
+| 2 | 菜单栏奔跑观感：35% 起奔跑，4、6、8 fps 三档速度，停止的迟滞，在真实壁纸上的轮廓，黄 ▲ 与红 ■ 角标 |
+| 3 | 状态光的深色观感：黄级与红级的顶部渐变，状态变化时的 400 ms 淡变，浅色外观没有状态光 |
+| 4 | 侧栏打开动画：窗口加宽的流畅度，新内容从被悬停行淡入并上移 |
+| 5 | 实时点跳步：状态卡打开期间，2 秒采样到达时线端圆点的 200 ms 跳步 |
+| 6 | 灰度应用图标：Dock 与菜单栏以外的灰度外观下，图标仍可辨认 |
+| 7 | 72 pt 问题行在真实弹窗里的观感：等级底色、行内曲线、17 pt 数值的层次，浅色与深色外观 |
+| 8 | 真实通知授权框，以及点击通知后展开状态卡 |
+| 9 | 状态卡打开与关闭时，Activity Monitor 里的 CPU 和闲置 CPU。CI 虚拟机是软件渲染，不能外推 |
+| 10 | “复制排查提示词”按钮的真实剪贴板路径 |
+| 11 | 真实电池行（台式机没有电池） |
+| 12 | Reduce Motion（系统设置 → 辅助功能 → 显示） |
+| 13 | 提示词里的系统命令 `pmset`、`sysctl`、`vm_stat`、`ps` 在真机上的输出与权限（V23），耗电阈值（V24） |
 
 PROJECT.md 第 11 节的验证项（例如 V10、V11、V17、V19、V22）也仍需真机结果。
 

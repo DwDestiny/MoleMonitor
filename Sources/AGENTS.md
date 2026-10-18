@@ -13,7 +13,7 @@
 ## 规则
 
 - 保持后台采样、主线程界面。无界面入口不得创建状态栏或可见窗口。
-- 状态卡关闭时，只允许引擎的 30 秒 tick。实时采样定时器只在状态卡打开期间存在，关闭时取消并清空缓冲。实时点不落盘。
+- 状态卡关闭时，只允许引擎的 30 秒 tick，加菜单栏奔跑图标的一个计时器（不高于 8 Hz，只在奔跑时存在，见 DESIGN_V3.md 4.2）。实时采样定时器只在状态卡打开期间存在，关闭时取消并清空缓冲。实时点不落盘。
 - `Sources/App/Panel*.swift` 不创建 `Timer`，不使用 `TimelineView`。`DogView.swift` 与 `DogBitmapView.swift` 已删除（U10），整个 App 不再有可用 `TimelineView` 的视图。复制按钮的 1.5 秒恢复用一次性 `DispatchWorkItem`。状态卡高度只由 AppKit 通过 `NSPopover.contentSize` 设置，SwiftUI 不做高度动画。
 - 未知或失败的值保持可选值，不补成零。
 - 传感器只读键。不写 SMC，不提权，不控制风扇。不读取完整进程参数。

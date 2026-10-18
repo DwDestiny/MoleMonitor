@@ -1,7 +1,7 @@
 ---
 title: "MoleMonitor Sources"
 type: module
-last_updated: 2026-10-13
+last_updated: 2026-10-18
 ---
 
 # Sources
@@ -80,15 +80,17 @@ last_updated: 2026-10-13
 | `Clipboard.swift` | 把文本写入通用剪贴板，触控板上给一次轻触反馈 |
 | `ProcessSampler.swift` | 用 libproc 读进程列表，输出 `ProcessSample` 与覆盖率。排名在 Core 的 `AppRanking` |
 | `SystemSampler.swift` | 读每核 CPU tick、网卡计数器、内存压力和机器信息。取代旧的 `LiveSampler` |
-| `GlyphPaths.swift` | 类别角标路径，菜单栏角标、气泡和卡片类别图标共用 |
-| `UITestIconChecks.swift` | 菜单栏图标门禁 W08（9 个场景对手写期望表，浅深色头部墨迹与角标颜色，五态两两异或）和门禁 A 的辅助函数 `headInkCheck`。整个文件在 `#if UITEST` 内 |
+| `GlyphPaths.swift` | 矢量路径：类别角标（菜单栏角标和分项类别图标共用）、告警字形、采集中与过期的数据标记，以及复制成功的爪印章 `pawYDown` |
+| `UITestIconChecks.swift` | 菜单栏图标门禁 W08（五态）、W29（站立 1 帧与奔跑 4 帧、角标、联系表）、W30（奔跑起停迟滞、三档速度、Reduce Motion 等退路下 0 个图标计时器），以及门禁 A 的辅助函数 `headInkCheck`。整个文件在 `#if UITEST` 内 |
+| `UITestCpuChecks.swift` | 门禁 W17：面板打开且每 2 秒一个数据点时，进程 60 秒平均 CPU 不超过单核 3%。整个文件在 `#if UITEST` 内 |
+| `UITestStampChecks.swift` | 输出爪印章落定帧的预览图（`preview-stamp-*.png`），供截图评审。不登记门禁。整个文件在 `#if UITEST` 内 |
 | `UITestWindowChecks.swift` | 窗口门禁 W03（打开速度、无白闪）、W05（侧栏窗口动效）、W06（窗口内悬停意图）、W10（Esc 层级与关闭）。整个文件在 `#if UITEST` 内 |
 | `PanelModel.swift` | 状态卡的数据与界面状态：`PanelData`、版面计划、手风琴、复制状态机。引擎适配器 `PanelEngineAdapter` 读取 `MonitorEngine` 的已发布属性，复制调用 `engine.prompt(scope:)` |
-| `PanelRoot.swift` | 面板根视图：主列（352 pt：英雄区、六行、异常区、底栏）和打开时的侧栏（320 pt）。按版面计划渲染，不排序。入场动画：每次启动一次完整入场，之后淡入 |
+| `PanelRoot.swift` | 面板根视图：主列（352 pt：标题块、分项区、记录行、底栏）和打开时的侧栏（320 pt）。按版面计划渲染，不排序。主列没有分隔线，只用间距。入场动画：每次启动一次完整入场，之后淡入 |
 | `PanelWindow.swift` | `PanelWindow`：自定义 `NSPanel`，取代 `NSPopover`。窗口放在菜单栏图标下，开关动效，点击与按键，事件监视器（只在显示时存在），侧栏窗口动画，侧栏悬停规则。无周期定时器，延迟调用是可取消的任务。实现 `PanelChrome`，调用 `PanelPinning` |
 | `PanelChrome.swift` | 窗口与内容之间的两个协议：`PanelChrome`（窗口服务内容）、`PanelPinning`（内容服务窗口）。只有协议，无 AppKit 类型 |
-| `PanelRows.swift` | 主列的六行：状态点、名称与说明、右对齐读数、80 × 24 pt 迷你曲线。行高 40 pt |
-| `PanelAnomaly.swift` | 主列的异常区：固定 36 pt 的一行（安静、统计中、过期或异常摘要） |
+| `PanelRows.swift` | 主列的分项区：最多 3 个问题行（72 pt，等级底色，17 pt 数值，一句人话原因，行内曲线），其下两列正常行（28 pt，✓、名称、数值，无曲线） |
+| `PanelAnomaly.swift` | 主列的记录行，28 pt：只有“近 7 天 N 条记录 ›”，点击打开侧栏的异常记录。采集中为空 |
 | `PanelSidebar.swift` | 侧栏列（320 pt）：标题、范围控件、图表、统计、容量区、排行、脚注、异常记录。只在侧栏打开时构建，关闭即释放 |
 | `PanelHero.swift` | 标题块 320 × 64 pt：一句话，`PanelType.lead`（17 pt），最多 2 行。背后是预渲染的状态光（352 × 96 pt，黄 10%、红 12%、深色 16%，正常无光，等级变化 400 ms 交叉淡变）。采集中超过 0.5 s 才显示标题。签名 `PanelHero(data:quiet:)` |
 | `PanelCharts.swift` | 数字过渡修饰器和面板共用的小工具。侧栏图表用 `Path` 手绘，不用 Swift Charts（W07） |
