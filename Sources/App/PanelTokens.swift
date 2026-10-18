@@ -193,10 +193,26 @@ enum PanelMotion {
     static let hover = Animation.easeOut(duration: 0.12)
     /// Seconds between the start of two entrance groups.
     static let stagger = 0.04
+
+    // v3 motion tokens by role (docs/DESIGN_V3.md 7). Only `arrive` may overshoot (<= 2%).
+    /// Hover, press and number changes.
+    static let feedback = Animation.interpolatingSpring(mass: 0.5, stiffness: 380, damping: 30)
+    /// Sidebar, row reorder, height change, fade-and-rise of new content.
+    static let move = Animation.interpolatingSpring(mass: 0.9, stiffness: 200, damping: 28)
+    /// Paw stamp and bubble pop.
+    static let arrive = Animation.interpolatingSpring(mass: 0.7, stiffness: 320, damping: 24)
+}
+
+/// v3 shape tokens (docs/DESIGN_V3.md 2.2): one control radius and a full radius. The window radius comes from the system.
+enum PanelRadius {
+    static let control: CGFloat = 8
 }
 
 /// Type sizes of the v2 panel (DESIGN_V2.md 3.2). A screen of the main column uses only 17, 13, 11 and 10 pt.
 enum PanelType {
+    /// v3 lead size (docs/DESIGN_V3.md 2.1): bubble text, problem-row value, sidebar title. On an all-green panel it appears only in the bubble.
+    static let lead = Font.system(size: 17, weight: .semibold)
+    static let leadMono = Font.system(size: 17, weight: .semibold).monospacedDigit()
     static let bubble = Font.system(size: 13, weight: .medium)
     static let rowName = Font.system(size: 13, weight: .medium)
     static let rowNote = Font.system(size: 11)
