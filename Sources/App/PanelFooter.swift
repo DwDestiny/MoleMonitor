@@ -339,7 +339,7 @@ private struct CopyStamp: View {
     /// `motion.fade` of DESIGN_V3.md 7.
     static let fadeOut = Animation.easeInOut(duration: 0.16)
     static let fadeIn = Animation.easeOut(duration: 0.12)
-    static let pawSize: CGFloat = 14
+    static let pawSize: CGFloat = 16
     static let pawTilt = -12.0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

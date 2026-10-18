@@ -102,8 +102,8 @@ enum GlyphPaths {
     }
 
     /// The paw stamp (DESIGN_V3.md 5.6), y down, inside (0, 0, box, box). A soft palm pad with a small dip at the bottom, two inner
-    /// toes above it and two outer toes lower and tilted outward. Gaps between the parts stay >= 0.07 box (1 pt at 14 pt), so the
-    /// five parts stay apart at 14 pt and the shape reads as a paw from 10 pt up. Filled with the label color of the button.
+    /// toes above it and two outer toes lower and tilted outward. Gaps between the parts stay >= 0.07 box (1.1 pt at 16 pt), so the
+    /// five parts stay apart at the 16 pt of the copy button and the shape reads as a paw from 10 pt up. Filled with the label color of the button.
     static func pawYDown(box: CGFloat) -> CGPath {
         let path = CGMutablePath()
         func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * box, y: y * box) }
