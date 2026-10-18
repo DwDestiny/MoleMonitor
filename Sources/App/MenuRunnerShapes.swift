@@ -2,7 +2,7 @@
 // Copyright (c) 2026 DwDestiny
 // Input: The runner silhouette of a pose (Core MenuRunnerArt), the icon kind, the inks of a light or dark menu bar.
 // Output: Core Graphics drawing of the v3 menu bar icon (docs/DESIGN_V3.md 4.2): the side-view Bichon in the button ink
-//         (`labelColor`), solid or hollow, with the health mark (yellow triangle, red square) or the data mark (collecting,
+//         (`labelColor`), solid (eye and drooping-ear gap cleared) or hollow (outer contour only, no ear gap), with the health mark (yellow triangle, red square) or the data mark (collecting,
 //         stale) bottom right; frame bitmaps cached by pose, kind, light or dark and scale; the NSImage of a frame.
 // Pos: The one renderer of the menu bar icon. StatusIconController shows its images; UITestIconChecks (W29) draws the
 //      contact sheet from it. Vector paths only, no bitmap assets. Owner P-icon (v3, U10).
