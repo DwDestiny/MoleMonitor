@@ -164,7 +164,7 @@ struct ChartMain: View, Equatable {
 
     private func anomalyColor(_ kind: ChartBandKind) -> Color {
         let base = kind == .critical ? tok.lampDanger : tok.lampWarning
-        return base.opacity(tok.dark ? 0.32 : 0.24)
+        return base.opacity(tok.dark ? 0.28 : 0.24)
     }
 
     private func axisLabels() -> [String] {

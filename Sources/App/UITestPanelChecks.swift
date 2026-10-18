@@ -1132,7 +1132,7 @@ extension UITestRunner {
             model.panelDidClose()
             await closeFixture()
         }
-        return ["sidebar capacity checked: " + (notes.isEmpty ? "none" : notes.joined(separator: ", ")) + " (column edges 96 pt apart, +-0.5 pt)"]
+        return ["sidebar capacity checked: " + (notes.isEmpty ? "none" : notes.joined(separator: ", ")) + " (one bar and one number line, docs/CI.md sidebar v3 entry)"]
     }
 
     // MARK: W07, drag readout
@@ -1173,7 +1173,8 @@ extension UITestRunner {
         if share < 0.95 { problems.append("only \(updated) of 120 moves updated the readout") }
         if worstMs > 8 { problems.append("the slowest move took \(String(format: "%.2f", worstMs)) ms") }
         if draws > 2 { problems.append("the main chart was evaluated \(draws) times during the drag") }
-        if readout.text == nil || readout.text?.contains("·") != true { problems.append("readout text '\(readout.text ?? "nil")'") }
+        // v3 (docs/CI.md, sidebar v3 entry): time and value joined by "，", never a middle dot (DESIGN_V3.md 9 rule 2).
+        if readout.text == nil || readout.text?.contains("，") != true || readout.text?.contains("\u{00B7}") == true { problems.append("readout text '\(readout.text ?? "nil")'") }
         readout.clear()
         await closeFixture()
         var note = "120 synthetic moves at 60 Hz: \(updated) updated the readout (\(Int(share * 100)) %), slowest \(String(format: "%.2f", worstMs)) ms, "

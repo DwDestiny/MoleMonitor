@@ -203,17 +203,17 @@ private struct CapacityArea: View {
                     Capsule().strokeBorder(tok.textTertiary, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 } else {
                     Capsule().fill(tok.chartFill)
-                    Capsule().fill(tok.chartLine).frame(width: max(8, width * usedFraction))
+                    Capsule().fill(tok.chartLine).frame(width: max(6, width * usedFraction))
                 }
             }
-            .frame(width: width, height: 8)
+            .frame(width: width, height: 6)
             .uiTestFrame("cap.bar")
             Text(line)
                 .font(PanelType.rowNote)
                 .monospacedDigit()
                 .foregroundStyle(tok.textSecondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.9)
+                .frame(width: width, alignment: .leading)
                 .uiTestFrame("cap.line")
         }
         .frame(width: width, alignment: .topLeading)
@@ -322,7 +322,9 @@ private struct RecordStripView: View {
     @Environment(\.tok) private var tok
 
     var body: some View {
-        let width = PanelMetrics.sidebarContentWidth
+        // The band stops 12 pt before the edge so the today dot never covers an ongoing period.
+        let full = PanelMetrics.sidebarContentWidth
+        let width = full - 12
         let labels = RecordStrip.labels(days: days, now: now, timeZone: TimeZone.current)
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .leading) {
@@ -333,9 +335,9 @@ private struct RecordStripView: View {
                         .frame(width: max(3, CGFloat(seg.to - seg.from) * width), height: 4)
                         .offset(x: CGFloat(seg.from) * width)
                 }
-                Circle().fill(tok.textPrimary).frame(width: 8, height: 8).offset(x: width - 8)
+                Circle().fill(tok.textPrimary).frame(width: 8, height: 8).offset(x: full - 8)
             }
-            .frame(width: width, height: 8)
+            .frame(width: full, height: 8, alignment: .leading)
             HStack(spacing: 0) {
                 Text(labels.0)
                 Spacer(minLength: 0)
@@ -343,7 +345,7 @@ private struct RecordStripView: View {
             }
             .font(PanelType.axis)
             .foregroundStyle(tok.textTertiary)
-            .frame(width: width)
+            .frame(width: full)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("近 \(days) 天有 \(rows.count) 条异常记录"))

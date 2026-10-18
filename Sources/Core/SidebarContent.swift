@@ -932,8 +932,8 @@ enum SidebarSummary {
             add(1) { "5 天 " + $0 }
             add(2) { "30 天 " + $0 }
         case .network:
+            // Yesterday is left out: the sentence stays on one line.
             add(0) { "今天 " + $0 }
-            add(1) { "昨天 " + $0 }
             add(2) { "近 30 天" + ($0.hasPrefix("至少") ? $0 : " " + $0) }
         case .battery:
             add(0) { "电量 " + $0 }
