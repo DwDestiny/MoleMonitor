@@ -258,7 +258,7 @@ struct PanelFooter: View {
 
     /// The label of the primary button. The three texts stack in one place, so the button keeps its size when the text changes.
     private func label(_ state: PanelFooterState, copied: Bool, failed: Bool) -> some View {
-        ZStack {
+        ZStack(alignment: state.mode == .copyProblems ? .center : .leading) {
             Text(state.title)
                 .font(PanelType.button)
                 .lineLimit(1)

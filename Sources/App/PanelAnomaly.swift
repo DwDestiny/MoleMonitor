@@ -69,16 +69,14 @@ struct PanelAnomalySection: View {
     @ViewBuilder
     private func rightLink(records: Int?) -> some View {
         if model.authorization != "authorized" && model.layoutPlan.quiet {
-            EntryLink(text: "开启通知 \u{203A}", open: false, focused: false, action: { model.onEnableNotifications() })
-                .accessibilityLabel(Text("开启通知"))
-                .accessibilityIdentifier("btn.notifyAuth")
+            EntryLink(text: "开启通知 \u{203A}", label: "开启通知", identifier: "btn.notifyAuth", open: false, focused: false,
+                      action: { model.onEnableNotifications() })
                 .uiTestFrame("btn.notifyAuth")
         } else if let records, records > 0 {
             let text = PanelAreaState.recordsText(records) + " \u{203A}"
-            EntryLink(text: text, open: model.sidebarItem == .anomalyLog, focused: model.keyFocus == .records,
+            EntryLink(text: text, label: "异常记录，" + PanelAreaState.recordsText(records), identifier: "btn.records",
+                      open: model.sidebarItem == .anomalyLog, focused: model.keyFocus == .records,
                       action: { model.userOpen(.anomalyLog) })
-                .accessibilityLabel(Text("异常记录，" + PanelAreaState.recordsText(records)))
-                .accessibilityIdentifier("btn.records")
                 .uiTestFrame("btn.records")
         } else {
             Text(PanelAreaState.recordsText(records ?? 0))
@@ -94,6 +92,8 @@ struct PanelAnomalySection: View {
 /// A text entry of the record row: 11 pt secondary, primary on hover, `fillRowActive` while its sidebar is open.
 private struct EntryLink: View {
     let text: String
+    let label: String
+    let identifier: String
     let open: Bool
     let focused: Bool
     let action: () -> Void
@@ -114,6 +114,8 @@ private struct EntryLink: View {
                 .contentShape(shape)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(label))
+        .accessibilityIdentifier(identifier)
         .onHover { hovering = $0 }
         .animation(PanelMotion.hover, value: hovering)
     }
