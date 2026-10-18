@@ -346,6 +346,14 @@ func runSidebarTests() {
                                                            SidebarStat(label: "峰值", value: "81%")]) == "当前 74%，2 小时均值 56%，峰值 81%", "design example sentence")
     expect(SidebarSummary.sentence(.memory, range: .h2, stats: [SidebarStat(label: "压力", value: "87%"), SidebarStat(label: "swap", value: "9.8 GB"),
                                                               SidebarStat(label: "30 分钟变化", value: "+2.4 GB")]).contains("swap 9.8 GB"), "swap is in the memory sentence")
+    // One line in the 287 pt column: full-width characters count 2 units, the rest 1, at most 40 units (about 2 pt of margin lost at 43).
+    func units(_ text: String) -> Int { text.unicodeScalars.reduce(0) { $0 + ($1.value > 0x2E80 ? 2 : 1) } }
+    let diskSentence = SidebarSummary.sentence(.disk, range: .d7, stats: [SidebarStat(label: "24 小时增长", value: "+35 GB"), SidebarStat(label: "7 天增长", value: "+315 GB"),
+                                                                          SidebarStat(label: "30 天增长", value: "+324 GB")])
+    expect(diskSentence == "24 小时 +35 GB，7 天 +315 GB", "disk sentence keeps two windows, got \(diskSentence)")
+    let memorySentence = SidebarSummary.sentence(.memory, range: .h2, stats: [SidebarStat(label: "压力", value: "87%"), SidebarStat(label: "swap", value: "9.8 GB"),
+                                                                              SidebarStat(label: "30 分钟", value: "+2.4 GB")])
+    expect(units(diskSentence) <= 40 && units(memorySentence) <= 40, "sentences stay on one line: \(units(diskSentence)), \(units(memorySentence))")
     expect(!SidebarSummary.sentence(.network, range: .h2, stats: [SidebarStat(label: "今天", value: "1 GB")]).contains("\u{00B7}"), "no middle dot in the sentence")
     expect(c2.axisMarks.map { $0.text } == ["0", "70", "90"] && c2.axisMarks.filter { $0.threshold }.count == 2, "cpu marks: zero line and thresholds")
     expect(c2.liveEnd?.t == now && c7.liveEnd == nil, "live dot on fresh 2 h data only")

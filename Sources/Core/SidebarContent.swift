@@ -951,11 +951,11 @@ enum SidebarSummary {
         case .memory:
             add(0) { "压力 " + $0 }
             add(1) { "swap " + $0 }
-            add(2) { "30 分钟变化 " + $0 }
+            add(2) { "30 分钟 " + $0 }
         case .disk:
             add(0) { "24 小时 " + $0 }
             add(1) { "7 天 " + $0 }
-            add(2) { "30 天 " + $0 }
+            // 30 days is left out: three windows wrap to two lines in the 287 pt column.
         case .network:
             // Yesterday is left out: the sentence stays on one line.
             add(0) { "今天 " + $0 }
