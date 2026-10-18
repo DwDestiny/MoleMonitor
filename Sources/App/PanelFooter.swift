@@ -4,7 +4,9 @@
 // Output: The footer, one 32 pt line: with problems a solid accent button "复制排查提示词", without problems the text button
 //         "复制日常巡检提示词", hidden while collecting. Then the icon button "…" (32 x 32) with its NSMenu.
 // Pos: Section 4 of the main column (docs/DESIGN_V3.md 5.4; DESIGN_V2.md 8). The copy button is the only primary action: id `btn.copy`.
-//      After a copy the button shows "✓ 已复制" for 1.5 seconds (the paw stamp of 5.6 belongs to another package). The "…" menu lists the CLI commands, the prompt option and the app items.
+//      After a copy the paw stamp lands on the button (5.6, CopyStamp): the paw and "已复制" spring from 1.25x to 1.0x
+//      (`PanelMotion.arrive`), stay for 1.5 s (PanelModel.copiedSeconds) and fade out in 160 ms while the title fades back.
+//      Reduce Motion: fades only. It is the only signature moment of the panel. The "…" menu lists the CLI commands, the prompt option and the app items.
 //      Menu items carry identifiers `menu.*`. The menu is an NSMenu, so the system draws it and VoiceOver reads it.
 
 import AppKit
@@ -256,7 +258,7 @@ struct PanelFooter: View {
         }
     }
 
-    /// The label of the primary button. The three texts stack in one place, so the button keeps its size when the text changes.
+    /// The label of the primary button. The texts stack in one place, so the button keeps its size when the text changes.
     private func label(_ state: PanelFooterState, copied: Bool, failed: Bool) -> some View {
         ZStack(alignment: state.mode == .copyProblems ? .center : .leading) {
             Text(state.title)
@@ -264,17 +266,14 @@ struct PanelFooter: View {
                 .lineLimit(1)
                 .opacity(copied || failed ? 0 : 1)
                 .uiTestFrame("txt.btn.title")
-            Text(state.copiedTitle)
-                .font(PanelType.button)
-                .lineLimit(1)
-                .opacity(copied ? 1 : 0)
+            CopyStamp(text: state.copiedTitle, shown: copied)
                 .uiTestFrame("txt.btn.copied")
             Text("没复制上，再点一次试试")
                 .font(PanelType.button)
                 .lineLimit(1)
                 .opacity(failed ? 1 : 0)
         }
-        .animation(PanelMotion.fadeShort, value: copied)
+        .animation(copied ? CopyStamp.fadeIn : CopyStamp.fadeOut, value: copied)
     }
 
     @ViewBuilder
@@ -324,5 +323,58 @@ struct PanelFooter: View {
             .frame(width: 0, height: 0)
             .opacity(0)
             .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Paw stamp
+
+/// The paw stamp of a successful copy (docs/DESIGN_V3.md 5.6), the one signature moment of the panel.
+/// On arrival the paw and "已复制" start at 1.25x and spring to 1.0x with `PanelMotion.arrive` (overshoot about 1.5%, under 2%),
+/// while the opacity rises in 120 ms. The parent fades it out in 160 ms when the copied state ends. Reduce Motion: no scale, fades only.
+/// A static render (`--preview`) shows the landed frame (scale 1). The keyframe runs only on an arrival, so nothing animates at rest.
+private struct CopyStamp: View {
+    let text: String
+    let shown: Bool
+
+    /// `motion.fade` of DESIGN_V3.md 7.
+    static let fadeOut = Animation.easeInOut(duration: 0.16)
+    static let fadeIn = Animation.easeOut(duration: 0.12)
+    static let pawSize: CGFloat = 16
+    static let pawTilt = -12.0
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var arrivals = 0
+
+    var body: some View {
+        HStack(spacing: 4) {
+            PawShape()
+                .frame(width: CopyStamp.pawSize, height: CopyStamp.pawSize)
+                .rotationEffect(.degrees(CopyStamp.pawTilt))
+                .accessibilityHidden(true)
+            Text(text)
+                .font(PanelType.button)
+                .lineLimit(1)
+        }
+        .keyframeAnimator(initialValue: CGFloat(1), trigger: arrivals) { content, scale in
+            content.scaleEffect(scale)
+        } keyframes: { _ in
+            KeyframeTrack {
+                MoveKeyframe(CGFloat(1.25))
+                SpringKeyframe(CGFloat(1), spring: Spring(mass: 0.7, stiffness: 320, damping: 24))
+            }
+        }
+        .opacity(shown ? 1 : 0)
+        .onChange(of: shown) { _, now in
+            if now && !reduceMotion { arrivals += 1 }
+        }
+    }
+}
+
+/// The paw of `GlyphPaths.pawYDown`, filled with the foreground style (white on the solid button, `text.primary` on the text button).
+private struct PawShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let side = min(rect.width, rect.height)
+        let t = CGAffineTransform(translationX: rect.midX - side / 2, y: rect.midY - side / 2)
+        return Path(GlyphPaths.pawYDown(box: side)).applying(t)
     }
 }

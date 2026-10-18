@@ -5,7 +5,9 @@
 // `badgeYDown` is y down in a box of any size, by default the 8 x 8 pt menu bar box (DogArt.badgeSize).
 // `alarmKnockout` is the glyph cut out of the 9 x 9 pt alarm disc (red level, round 3).
 // `markYDown` is the data mark of collecting (three dots) and stale (clock), y down in the 8 x 8 pt box (DESIGN_V2.md 9.2).
+// `pawYDown` is the paw stamp of a successful copy (docs/DESIGN_V3.md 5.6): one palm pad and four toes, y down, in a square box.
 // Pos: One glyph source for the menu bar badge, the bubble and the card's CategoryGlyph (I3 calls it). Owner WP-E.
+//      The paw is drawn only by the copy button (PanelFooter, CopyStamp). It is the one place the panel shows a paw.
 //
 // Glyphs come from the fixed art in DogArt.badge (8 x 8 pt art), scaled to the box. Letters (the fallback) come from
 // SF Pro Rounded Bold, cap height 0.8 x the box, centered in the box. The menu bar uses `.glyph`: all 10 pairs pass the 1x XOR gate (badge-matrix.json).
@@ -97,6 +99,32 @@ enum GlyphPaths {
             }
         }
         return p
+    }
+
+    /// The paw stamp (DESIGN_V3.md 5.6), y down, inside (0, 0, box, box). A soft palm pad with a small dip at the bottom, two inner
+    /// toes above it and two outer toes lower and tilted outward. Gaps between the parts stay >= 0.07 box (1.1 pt at 16 pt), so the
+    /// five parts stay apart at the 16 pt of the copy button and the shape reads as a paw from 10 pt up. Filled with the label color of the button.
+    static func pawYDown(box: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * box, y: y * box) }
+        // Palm pad: top center, right side, bottom with a dip at the center, left side.
+        path.move(to: p(0.50, 0.47))
+        path.addCurve(to: p(0.79, 0.79), control1: p(0.65, 0.47), control2: p(0.81, 0.65))
+        path.addCurve(to: p(0.50, 0.87), control1: p(0.77, 0.93), control2: p(0.61, 0.91))
+        path.addCurve(to: p(0.21, 0.79), control1: p(0.39, 0.91), control2: p(0.23, 0.93))
+        path.addCurve(to: p(0.50, 0.47), control1: p(0.19, 0.65), control2: p(0.35, 0.47))
+        path.closeSubpath()
+        // Toes: (center x, center y, width, height, tilt in degrees; a negative tilt leans the top to the left).
+        let toes: [(CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)] = [
+            (0.37, 0.22, 0.18, 0.23, -8), (0.63, 0.22, 0.18, 0.23, 8),
+            (0.15, 0.43, 0.16, 0.21, -28), (0.85, 0.43, 0.16, 0.21, 28),
+        ]
+        for (x, y, w, h, tilt) in toes {
+            let rect = CGRect(x: -w * box / 2, y: -h * box / 2, width: w * box, height: h * box)
+            let t = CGAffineTransform(translationX: x * box, y: y * box).rotated(by: tilt * .pi / 180)
+            path.addEllipse(in: rect, transform: t)
+        }
+        return path
     }
 
     /// SF Pro Rounded Bold letter, cap height 0.8 x `box`, centered in the box, y down.

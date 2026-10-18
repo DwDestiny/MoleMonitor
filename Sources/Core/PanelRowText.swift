@@ -468,16 +468,16 @@ struct PanelFooterState: Equatable {
     static func make(dataState: DataState, anomalyCount: Int) -> PanelFooterState {
         if case .collecting = dataState {
             return PanelFooterState(mode: .inspectDisabled, title: "复制日常巡检提示词", enabled: false,
-                                    copiedTitle: "\u{2713} 已复制", copiedBubble: "巡检单已复制，交给 Agent 吧",
+                                    copiedTitle: "已复制", copiedBubble: "巡检单已复制，交给 Agent 吧",
                                     failedBubble: "没复制上，再点一次试试")
         }
         if anomalyCount > 0 {
             return PanelFooterState(mode: .copyProblems, title: "复制排查提示词", enabled: true,
-                                    copiedTitle: "\u{2713} 已复制", copiedBubble: "已复制，去问你的 Agent 吧",
+                                    copiedTitle: "已复制", copiedBubble: "已复制，去问你的 Agent 吧",
                                     failedBubble: "没复制上，再点一次试试")
         }
         return PanelFooterState(mode: .inspect, title: "复制日常巡检提示词", enabled: true,
-                                copiedTitle: "\u{2713} 已复制", copiedBubble: "巡检单已复制，交给 Agent 吧",
+                                copiedTitle: "已复制", copiedBubble: "巡检单已复制，交给 Agent 吧",
                                 failedBubble: "没复制上，再点一次试试")
     }
 }
