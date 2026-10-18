@@ -61,6 +61,20 @@ func runLayoutTests() {
     expect(PanelLayout.height(hasBattery: true, problems: 0, hero: 64) == 264, "all green with a 64 pt hero is 264 pt")
     expect(PanelLayout.height(hasBattery: true, problems: 3, hero: 64) == 436, "three problem rows with a 64 pt hero is 436 pt")
     expect(plan(Array(all.prefix(4))).height == plan(Array(all.prefix(3))).height, "the fourth problem does not add height")
+    // The preview matrix (scripts/ci_acceptance.py, gate M3 and W24): the problem rows of each preview case and the height of its file.
+    // The script holds the same table (PREVIEW_PROBLEMS). The heights are 264, 328 and 436 pt, so the files are 528, 656 and 872 px high.
+    let previewProblems: [(PreviewCase, Int, Double)] = [(.allGreen, 0, 264), (.cpuYellow, 1, 328), (.diskRed, 1, 328), (.powerYellow, 1, 328),
+                                                         (.multi, 4, 436), (.collecting, 0, 264), (.stale, 0, 264)]
+    for (c, count, height) in previewProblems {
+        let f = PreviewScenario.fixture(c, full: true, now: now)
+        let battery = PanelRows.hasBattery(f.verdicts)
+        let layout = PanelLayout.plan(PanelLayoutInput(verdicts: f.verdicts, hasBattery: battery))
+        expect(battery, "preview \(c.rawValue) has a battery row")
+        expect(layout.anomalies.count == count, "preview \(c.rawValue) has \(count) problems, got \(layout.anomalies.count)")
+        expect(layout.height == height, "preview \(c.rawValue) is \(height) pt high, got \(layout.height)")
+        let empty = PreviewScenario.fixture(c, full: false, now: now)
+        expect(PanelLayout.plan(PanelLayoutInput(verdicts: empty.verdicts, hasBattery: battery)).height == height, "preview \(c.rawValue) empty data has the same height")
+    }
     expect(PanelMetrics.width == 352 && PanelMetrics.widthWithSidebar == 672, "widths 352 and 672")
     expect(PanelMetrics.problemRow == 64 && PanelMetrics.quietRow == 28 && PanelMetrics.recordRow == 28 && PanelMetrics.footer == 32, "row heights")
     expect(PanelMetrics.primaryButtonWidth + PanelMetrics.footerGap + PanelMetrics.moreButtonWidth == PanelMetrics.rowBackgroundWidth,

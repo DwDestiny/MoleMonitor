@@ -4,7 +4,8 @@
 // Output: The panel gates of docs/DESIGN_V2.md 13.2.1 and 13.3: M4 stable size, M5 contrast, M6 large type, M11 no focus ring, M12 first frame
 //         with a curve, M13 copy, M19 no placeholder text, M14 icon, N1, N2, and the registered W01 (preview matrix), W02 (layout and problem-first),
 //         W09 (copy), W16 (closed panel costs nothing, moved here from UITestSpriteChecks.swift when the sprite checks were deleted, U10), W19 (capacity,
-//         main column part), W22 (value column). M2 and M3 moved into W02.
+//         main column part), W22 (value column), and the v3 gates W24 (all-green height), W25 (corner radius pixels), W28 (one tint per level).
+//         M2 and M3 moved into W02. v3 rewrites: M11 (no copy button while collecting), M12 (curve of the disk problem row), M14 (runner icon), W01 (stale twin).
 // Pos: Test code. It exists only in the UITEST build. The release binary has none of it (checked by scripts/ci_acceptance.py).
 //      The M gates open the real popover with a fixture model (engine not attached, invented data). The N gates attach the real engine.
 //      The W gates register through `UITestPanelChecks.register(into:)` and run after step M.
@@ -222,7 +223,16 @@ extension UITestRunner {
             let responder = hv.window?.firstResponder
             let responderName = responder.map { String(describing: type(of: $0)) } ?? "nil"
             if responder is NSControl { ringProblems.append("\(name): first responder is \(responderName)") }
+            // DESIGN_V3.md 5.4: while collecting the main button is hidden (not disabled), so it has no frame. That is the expected state.
+            if c == .collecting {
+                if panelRect("btn.copy") == nil {
+                    ringNotes.append("\(name) btn.copy: hidden while collecting (DESIGN_V3.md 5.4), as designed")
+                } else {
+                    ringProblems.append("\(name): btn.copy is visible while collecting")
+                }
+            }
             for id in ["btn.copy", "btn.more", "row.0"] {
+                if c == .collecting && id == "btn.copy" { continue }
                 if let rect = panelRect(id), let shot = capture(hv) {
                     let ring = focusRingPixels(shot, around: rect, margin: 4, outsideOnly: id == "btn.copy")
                     ringNotes.append("\(name) \(id): responder \(responderName), ring pixels \(ring)")
@@ -395,7 +405,9 @@ extension UITestRunner {
 
     // MARK: M14, menu bar icon states
 
-    /// The menu bar icon of each scenario: the state the app gave to `StatusIconController`, the image and the text.
+    /// The menu bar icon of each scenario (v3, DESIGN_V3.md 4.2, U10): the state the app gave to `StatusIconController`, the image and
+    /// the text. No state is a template image. Health shows only as the mark: a yellow triangle (caution) or a red square (alert) in
+    /// the mark box. The mark depends on the level, not on the item, so cpuYellow and powerYellow give the same image.
     /// The real menu bar is not needed. The engine is held back while this runs.
     func stepIcon() async {
         let t0 = now()
@@ -403,6 +415,8 @@ extension UITestRunner {
         var problems = [String]()
         var notes = [String]()
         var hashes = [String: String]()
+        var kinds = [String: MenuIconKind]()
+        var masks = [MenuIconKind: [Bool]]()
         let button = delegate.statusItem?.button
         for c in PreviewCase.allCases {
             let data = PanelModel.fixtureData(c, full: true, now: Date())
@@ -418,13 +432,13 @@ extension UITestRunner {
             if applied?.posture != want.posture || applied?.badge?.item != want.badge {
                 problems.append("\(c.rawValue): the app applied \(applied?.posture.rawValue ?? "nil")/\(applied?.badge?.item.rawValue ?? "-")")
             }
+            let kind = modelState.kind
+            kinds[c.rawValue] = kind
             let text = MenuIconModel.text(data.verdicts, dataState: data.dataState, now: Date())
-            var line = "\(c.rawValue)=\(want.posture.rawValue)/\(want.badge?.rawValue ?? "-")"
+            var line = "\(c.rawValue)=\(kind.rawValue)"
             if let button, let image = button.image {
-                // DESIGN_V2.md 9.2 rule 2: a yellow or red badge makes a colored image; the other states stay templates.
-                if image.isTemplate != (want.badge == nil) {
-                    problems.append("\(c.rawValue): isTemplate is \(image.isTemplate), expected \(want.badge == nil)")
-                }
+                // DESIGN_V3.md 4.2: no state is a template image (the body uses labelColor, the mark keeps its color).
+                if image.isTemplate { problems.append("\(c.rawValue): the icon image is a template") }
                 if abs(Double(image.size.width) - 24) > 0.01 { problems.append("\(c.rawValue): the icon is \(image.size.width) pt wide") }
                 if button.toolTip != text { problems.append("\(c.rawValue): the tooltip differs from the icon text") }
                 if (button.accessibilityLabel() ?? "") != text { problems.append("\(c.rawValue): the accessibility label differs from the icon text") }
@@ -434,6 +448,28 @@ extension UITestRunner {
                     if raster.opaque < 40 { problems.append("\(c.rawValue): the icon image is nearly empty (\(raster.opaque) px)") }
                 } else {
                     problems.append("\(c.rawValue): cannot rasterize the icon image")
+                }
+                // The body keeps the menu bar ink color in the three health states (contrast against the bar is W08).
+                if kind == .normal || kind == .caution || kind == .alert {
+                    let ink = UITestIconChecks.headInkCheck(image)
+                    if !ink.ok { problems.append("\(c.rawValue): body ink \(ink.note)") }
+                }
+                // The mark: absent in the normal state, present with the token color in caution and alert.
+                if let raster = UITestIconChecks.render(image, appearance: UITestIconChecks.light, scale: 2) {
+                    let box = UITestIconChecks.markBox(scale: 2)
+                    var mask = [Bool]()
+                    for y in box.y { for x in box.x { mask.append(raster.alpha(x, y) >= 0.5) } }
+                    let count = mask.filter { $0 }.count
+                    line += " mark \(count) px"
+                    if kind == .normal && count != 0 { problems.append("\(c.rawValue): the normal icon has \(count) px in the mark box") }
+                    if kind.badgeToken != nil {
+                        if count < 6 * 4 { problems.append("\(c.rawValue): the mark has only \(count) px") }
+                        let color = UITestIconChecks.markColorCheck(image, kind: kind)
+                        if !color.ok { problems.append("\(c.rawValue): mark color \(color.note)") }
+                        masks[kind] = mask
+                    }
+                } else {
+                    problems.append("\(c.rawValue): cannot render the icon for the mark check")
                 }
             } else {
                 line += " (no button image here)"
@@ -451,20 +487,27 @@ extension UITestRunner {
             }
             notes.append(line)
         }
-        // Different states need different images.
-        let states: [String: String] = ["allGreen": "allGreen", "collecting": "collecting", "stale": "stale",
-                                        "cpuYellow": "cpuYellow", "diskRed": "diskRed", "powerYellow": "powerYellow", "multi": "diskRed"]
-        var byState = [String: String]()
-        for (name, state) in states {
+        // The caution mark and the alert mark have different shapes (triangle and square).
+        if let caution = masks[.caution], let alert = masks[.alert], caution.count == alert.count {
+            var differ = 0
+            for i in 0..<caution.count where caution[i] != alert[i] { differ += 1 }
+            notes.append("caution and alert marks differ in \(differ) px")
+            if differ < 4 { problems.append("the caution mark and the alert mark have the same shape (\(differ) px differ)") }
+        } else if !hashes.isEmpty {
+            problems.append("the caution or the alert mark could not be compared")
+        }
+        // The same kind gives the same image (cpuYellow = powerYellow, diskRed = multi). Different kinds give different images.
+        var byKind = [MenuIconKind: String]()
+        for (name, kind) in kinds.sorted(by: { $0.key < $1.key }) {
             guard let h = hashes[name] else { continue }
-            if let old = byState[state], old != h { problems.append("the same state \(state) gives different images") }
-            byState[state] = h
+            if let old = byKind[kind], old != h { problems.append("the same state \(kind.rawValue) gives different images (\(name))") }
+            byKind[kind] = h
         }
         if !hashes.isEmpty {
-            let names = byState.keys.sorted()
-            for (i, a) in names.enumerated() {
-                for b in names[(i + 1)...] where byState[a] == byState[b] {
-                    problems.append("two different states give the same image: \(a) and \(b)")
+            let order = MenuIconKind.allCases
+            for (i, a) in order.enumerated() {
+                for b in order[(i + 1)...] {
+                    if let ha = byKind[a], let hb = byKind[b], ha == hb { problems.append("two different states give the same image: \(a.rawValue) and \(b.rawValue)") }
                 }
             }
         }
@@ -572,7 +615,7 @@ extension UITestRunner {
 
     func stepColdFirstFrame(copyBox: UITestTextBox) async {
         let t0 = now()
-        let model = PanelModel.fixture(.allGreen, full: true, now: Date())
+        let model = PanelModel.fixture(.diskRed, full: true, now: Date())
         model.testDrive = true
         model.onCopyText = { text in
             copyBox.value = text
@@ -592,7 +635,7 @@ extension UITestRunner {
         var elapsed = -1.0
         var found = false
         while (now() - ref) * 1000 < 800 {
-            if let hv = hostView, let rect = panelRect("row.cpu.spark"), rect.width > 20, rect.height > 10, let shot = capture(hv) {
+            if let hv = hostView, let rect = panelRect("row.disk.spark"), rect.width > 20, rect.height > 10, let shot = capture(hv) {
                 let surface = UITestContrast.lightSurface
                 if let m = UITestContrast.measure(shot, region: rect, surface: surface) {
                     ink = m.ink
@@ -606,9 +649,9 @@ extension UITestRunner {
         await sleepMs(200)
         await closeFixture()
         let ok = found && elapsed <= 300 && ink >= 30
-        var note = "no frame with line pixels in row.cpu.spark within 800 ms"
+        var note = "no frame with line pixels in row.disk.spark within 800 ms"
         if found {
-            note = "the first frame with line pixels in row.cpu.spark came " + String(format: "%.0f", elapsed)
+            note = "the first frame with line pixels in row.disk.spark (the disk problem row of diskRed, DESIGN_V3.md 5.1) came " + String(format: "%.0f", elapsed)
             note += " ms after the show call (limit 300 ms), \(ink) line pixels"
         }
         let values: [String: Double] = ["firstFrameMs": elapsed, "inkPixels": Double(ink)]
@@ -630,6 +673,9 @@ enum UITestPanelChecks {
         registry.add("W16", "closed panel costs nothing") { runner in await runner.stepW16() }
         registry.add("W19", "capacity text") { runner in await runner.stepW19() }
         registry.add("W22", "value column alignment") { runner in await runner.stepW22() }
+        registry.add("W24", "all-green height") { runner in await runner.stepW24() }
+        registry.add("W25", "corner radius") { runner in await runner.stepW25() }
+        registry.add("W28", "problem row tint") { runner in await runner.stepW28() }
     }
 }
 
@@ -660,8 +706,8 @@ extension UITestRunner {
     // MARK: W16
 
     /// W16: a closed panel costs nothing. 3 s after the close: live sampling off, one engine timer, no Core Animation animation in any
-    /// window, the live buffer empty, and the process CPU below 5 % (best of 3 windows). The sprite-cache assertion was removed with
-    /// the sprites (U10, 2026-10-18). The icon timer rule (0 timers when the CPU is not busy) is P3's to add.
+    /// window, the live buffer empty, 0 icon timers (the CPU is held calm with three cpuTick(5) calls, DESIGN_V3.md 8), and the process CPU
+    /// below 5 % (best of 3 windows). The sprite-cache assertion was removed with the sprites (U10, 2026-10-18).
     func stepW16() async {
         let t0 = now()
         await closePanelQuietly()
@@ -690,6 +736,8 @@ extension UITestRunner {
         await sleepMs(600)
         if let root = hostView?.window?.contentView?.superview?.layer ?? hostView?.layer { walkAnimations(root, 0, &openAnimations) }
         weak var panelWindow = hostView?.window
+        // W16 states "the CPU is not busy" (DESIGN_V3.md 8): three calm ticks put the runner at rest, so the icon timer is gone.
+        for _ in 0..<3 { delegate.iconController.cpuTick(5) }
         await closeFixture()
         var attempts = [String]()
         var best = Double.infinity
@@ -700,6 +748,7 @@ extension UITestRunner {
             let share = (cpuSeconds() - cpu0) / max(0.001, now() - wall0) * 100
             let live = engine.isLiveSampling
             let timers = engine.activeTimerCount
+            let iconTimers = delegate.iconController.timerCount
             let empty = engine.live == .empty
             // The panel window is released after the close. If it is alive, its layer tree is walked, and so are the other windows
             // of the process (the status item window is left out).
@@ -712,10 +761,11 @@ extension UITestRunner {
             }
             if live { failures.append("attempt \(attempt): live sampling on") }
             if timers != 1 { failures.append("attempt \(attempt): \(timers) timers") }
+            if iconTimers != 0 { failures.append("attempt \(attempt): \(iconTimers) icon timers while the CPU is not busy") }
             if animations != 0 { failures.append("attempt \(attempt): \(animations) animations") }
             if !empty { failures.append("attempt \(attempt): live buffer not empty") }
             attempts.append(String(format: "attempt %d cpu %.2f %%", attempt, share)
-                + " (live \(live ? "on" : "off"), timers \(timers), animations \(animations) in \(windows) windows, buffer empty \(empty ? "yes" : "no"))")
+                + " (live \(live ? "on" : "off"), timers \(timers), icon timers \(iconTimers), animations \(animations) in \(windows) windows, buffer empty \(empty ? "yes" : "no"))")
             best = Swift.min(best, share)
             if best < 5 { break }
         }
@@ -738,20 +788,24 @@ extension UITestRunner {
         var hashes = [String: String]()
         var count = 0
         let when = Date()
-        func check(_ data: Data?, _ label: String, widthPx: Int) {
+        // `twin` names the one file that may be equal (docs/CI.md "M1 and W01"): the stale panel has no problem row, no curve and no
+        // record count (DESIGN_V3.md 5.3, 5.5), so "stale full" and "stale empty" render the same pixels. This is the design.
+        func check(_ data: Data?, _ label: String, widthPx: Int, twin: String? = nil) {
             guard let data, let rep = NSBitmapImageRep(data: data) else { problems.append("\(label): no image"); return }
             count += 1
             if data.count < 4000 { problems.append("\(label): only \(data.count) bytes") }
             if abs(rep.pixelsWide - widthPx) > 1 { problems.append("\(label): \(rep.pixelsWide) px wide, expected \(widthPx)") }
             let hash = hexOf(data)
-            if let other = hashes[hash] { problems.append("\(label) equals \(other)") }
-            hashes[hash] = label
+            if let other = hashes[hash], other != twin { problems.append("\(label) equals \(other)") }
+            if hashes[hash] == nil { hashes[hash] = label }
         }
         for empty in [false, true] {
             for c in PreviewCase.allCases {
                 let model = PanelModel.fixture(c, full: !empty, now: when)
                 for dark in [false, true] {
-                    check(PanelPreview.png(model: model, dark: dark), "\(c.rawValue)-\(dark ? "dark" : "light")\(empty ? "-empty" : "")", widthPx: 704)
+                    let scheme = dark ? "dark" : "light"
+                    let twin: String? = (c == .stale && empty) ? "stale-\(scheme)" : nil
+                    check(PanelPreview.png(model: model, dark: dark), "\(c.rawValue)-\(scheme)\(empty ? "-empty" : "")", widthPx: 704, twin: twin)
                 }
             }
         }
@@ -766,7 +820,7 @@ extension UITestRunner {
         let expectedMain = PreviewCase.allCases.count * 4
         if mainCount != expectedMain { problems.append("rendered \(mainCount) main files, expected \(expectedMain)") }
         var note = "\(mainCount) main column files (\(PreviewCase.allCases.count) cases x light and dark x full and empty, 704 px wide) and "
-        note += "\(count - mainCount) sidebar files (1344 px wide); pairwise different sha256: \(hashes.count) of \(count)."
+        note += "\(count - mainCount) sidebar files (1344 px wide); different sha256: \(hashes.count) of \(count) (stale full and stale empty may be equal)."
         if !problems.isEmpty { note += " failures: " + problems.prefix(12).joined(separator: "; ") }
         let values: [String: Double] = ["files": Double(count), "mainFiles": Double(mainCount), "problems": Double(problems.count)]
         record("W01", "预览矩阵", problems.isEmpty && count > 0, since: t0, note, values)
@@ -813,12 +867,16 @@ extension UITestRunner {
             let name = c.rawValue
             let data = model.data
             let plan = model.layoutPlan
-            // Height equals the formula of 2.3 (written out here, not read from PanelLayout.height).
+            // Height equals the formula of DESIGN_V3.md 3.3 (written out here, then compared with PanelLayout.height).
             let anomalyCount = data.problems.filter { $0.item != .power || data.hasBattery }.count
             let rowCount = data.hasBattery ? 6 : 5
-            // The anomaly area is one 36 pt line, so the height changes with the battery row only (design change 2026-10-12).
-            let anomalyArea = 36.0
-            let formula = 12.0 + 64.0 + 8.0 + Double(rowCount) * 40.0 + 12.0 + anomalyArea + 12.0 + 40.0 + 12.0
+            let expanded = Swift.min(3, anomalyCount)
+            let quietRows = Double((rowCount - expanded + 1) / 2)
+            var rowsHeight = quietRows * 28.0
+            if expanded > 0 { rowsHeight += Double(expanded) * 64.0 + Double(expanded - 1) * 4.0 }
+            let formula = 12.0 + 64.0 + 8.0 + rowsHeight + 12.0 + 28.0 + 12.0 + 32.0 + 12.0
+            let layoutHeight = PanelLayout.height(hasBattery: data.hasBattery, problems: anomalyCount)
+            if abs(layoutHeight - formula) > 0.01 { problems.append("\(name): PanelLayout.height \(layoutHeight), formula \(formula)") }
             let height = Double(hv.bounds.height)
             if abs(height - formula) > 1 { problems.append("\(name): height \(height) pt, formula \(formula) pt") }
             if abs(plan.height - formula) > 0.01 { problems.append("\(name): plan height \(plan.height), formula \(formula)") }
@@ -834,35 +892,30 @@ extension UITestRunner {
             }
             // Row order on screen equals 5.2.
             let wanted = expectedRowOrder(data)
-            var onScreen = [(id: String, y: Double)]()
+            // The quiet rows share a line in two columns, so rows on one line (within 1 pt) are ordered by x.
+            var onScreen = [(id: String, y: Double, x: Double)]()
             for id in wanted {
-                if let r = panelRect("row." + id) { onScreen.append((id, Double(r.minY))) }
+                if let r = panelRect("row." + id) { onScreen.append((id, Double(r.minY), Double(r.minX))) }
             }
-            onScreen.sort { $0.y < $1.y }
+            onScreen.sort { a, b in abs(a.y - b.y) > 1 ? a.y < b.y : a.x < b.x }
             if onScreen.map({ $0.id }) != wanted { problems.append("\(name): rows on screen \(onScreen.map { $0.id }) differ from \(wanted)") }
             if model.rows.map({ $0.item.rawValue }) != wanted { problems.append("\(name): model rows differ from \(wanted)") }
-            // Colors: only the first (most severe) problem row carries its level tint. Other problem rows and normal rows have none.
+            // Colors (DESIGN_V3.md 5.1): every expanded problem row carries the tint of its level. The other rows have none.
             for dark in [false, true] {
                 await setAppearance(dark: dark)
                 guard let shot = capture(hv) else { problems.append("\(name): cannot capture"); continue }
                 let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
                 for (rowIndex, row) in model.rows.enumerated() {
                     guard let r = panelRect("row." + row.item.rawValue) else { continue }
-                    let strip = CGRect(x: r.minX + 1, y: r.minY + 12, width: 4, height: 16)
-                    guard let color = regionColor(shot, region: strip, surface: surface) else { continue }
-                    if row.isProblem && rowIndex == 0 {
-                        let alpha = dark ? 0.10 : 0.06
-                        var level: UITestContrast.RGB = (229.0, 48.0, 42.0)
-                        if row.dot == .red {
-                            level = dark ? (255.0, 69.0, 58.0) : (229.0, 48.0, 42.0)
-                        } else {
-                            level = dark ? (255.0, 159.0, 10.0) : (194.0, 100.0, 0.0)
-                        }
-                        let expected: UITestContrast.RGB = (surface.r * (1 - alpha) + level.r * alpha, surface.g * (1 - alpha) + level.g * alpha,
-                                                            surface.b * (1 - alpha) + level.b * alpha)
+                    let tinted = rowIndex < plan.problemRowCount
+                    if tinted {
+                        guard let color = problemTint(shot, rowRect: r, surface: surface) else { continue }
+                        let expected = expectedTint(dot: row.dot, dark: dark, surface: surface)
                         let diff = Swift.max(abs(color.r - expected.r), abs(color.g - expected.g), abs(color.b - expected.b))
                         if diff > 30 { problems.append("\(name) \(dark ? "dark" : "light") \(row.item.rawValue): tint differs by \(Int(diff))") }
                     } else {
+                        let strip = CGRect(x: r.minX + 1, y: r.minY + 8, width: 4, height: 12)
+                        guard let color = regionColor(shot, region: strip, surface: surface) else { continue }
                         let spread = Swift.max(color.r, color.g, color.b) - Swift.min(color.r, color.g, color.b)
                         let surfaceSpread = Swift.max(surface.r, surface.g, surface.b) - Swift.min(surface.r, surface.g, surface.b)
                         if spread - surfaceSpread > 4 { problems.append("\(name) \(dark ? "dark" : "light") \(row.item.rawValue): row without tint has color (spread \(Int(spread)))") }
@@ -889,7 +942,7 @@ extension UITestRunner {
         if sizes.count > 4 || !sizes.isSubset(of: PanelType.allowedSizes) { problems.append("type sizes \(sizes.sorted())") }
         var note = notes.joined(separator: ", ") + "; type sizes \(sizes.sorted())."
         note += " Width 672 pt with the sidebar is judged by WP-B window frames (not in this check)."
-        if !problems.isEmpty { note += " failures: " + problems.prefix(12).joined(separator: "; ") }
+        if !problems.isEmpty { note += " failures: " + problems.prefix(30).joined(separator: "; ") }
         let values: [String: Double] = ["scenarios": Double(PreviewCase.allCases.count), "problems": Double(problems.count), "sizeKinds": Double(sizes.count)]
         record("W02", "版面与问题优先", problems.isEmpty && !notes.isEmpty, since: t0, note, values)
     }
@@ -997,8 +1050,145 @@ extension UITestRunner {
         record("W19", "容量三元组", problems.isEmpty && !notes.isEmpty, since: t0, note, values)
     }
 
+    // MARK: Problem row tint helpers (W02, W25, W28)
+
+    /// The mean color of the top strip of a problem row (above the first text line, so no text, dot or curve is in it).
+    func problemTint(_ shot: UITestShot, rowRect r: CGRect, surface: UITestContrast.RGB) -> UITestContrast.RGB? {
+        regionColor(shot, region: CGRect(x: r.minX + 24, y: r.minY + 2, width: 40, height: 3), surface: surface)
+    }
+
+    /// The tint of a problem row: the level color over the surface (6 % in light, 10 % in dark).
+    func expectedTint(dot: PanelDot, dark: Bool, surface: UITestContrast.RGB) -> UITestContrast.RGB {
+        let alpha = dark ? 0.10 : 0.06
+        var level: UITestContrast.RGB = (229.0, 48.0, 42.0)
+        if dot == .red {
+            level = dark ? (255.0, 69.0, 58.0) : (229.0, 48.0, 42.0)
+        } else {
+            level = dark ? (255.0, 159.0, 10.0) : (194.0, 100.0, 0.0)
+        }
+        let r: Double = surface.r * (1 - alpha) + level.r * alpha
+        let g: Double = surface.g * (1 - alpha) + level.g * alpha
+        let b: Double = surface.b * (1 - alpha) + level.b * alpha
+        return (r, g, b)
+    }
+
+    /// Corner probe (W25): a shape with an 8 pt radius is empty 1 pt in from the corner (probe region 1...2 pt), and filled at
+    /// 2.5...3.5 pt. A radius below 6.83 pt fails the first probe, a radius above 8.54 pt fails the second. Returns a problem or nil.
+    func radiusProblem(_ shot: UITestShot, rect: CGRect, surface: UITestContrast.RGB, label: String) -> String? {
+        func at(_ dx: CGFloat, _ dy: CGFloat) -> UITestContrast.RGB? {
+            regionColor(shot, region: CGRect(x: rect.minX + dx, y: rect.minY + dy, width: 1, height: 1), surface: surface)
+        }
+        func distance(_ a: UITestContrast.RGB, _ b: UITestContrast.RGB) -> Double { abs(a.r - b.r) + abs(a.g - b.g) + abs(a.b - b.b) }
+        guard let fill = at(24, 2), let outside = at(1, 1), let inside = at(2.5, 2.5) else { return "\(label): no pixels" }
+        let span = distance(fill, surface)
+        if span < 6 { return "\(label): the fill differs from the surface by only \(Int(span))" }
+        if distance(outside, surface) > span * 0.35 { return "\(label): the corner is filled 1 pt in (radius below 8 pt)" }
+        if distance(inside, fill) > span * 0.35 { return "\(label): the corner is empty 2.5 pt in (radius above 8 pt)" }
+        return nil
+    }
+
+    // MARK: W24
+
+    /// W24 (DESIGN_V3.md 3.3, U9): the all-green panel is at most 290 pt high. The real window height equals the formula (264 pt).
+    func stepW24() async {
+        let t0 = now()
+        var problems = [String]()
+        let copyBox = UITestTextBox()
+        var height = 0.0
+        if let model = await openFixture(.allGreen, copyBox: copyBox), let hv = hostView {
+            height = Double(hv.bounds.height)
+            let want = PanelLayout.height(hasBattery: model.data.hasBattery, problems: 0)
+            if height > 290 { problems.append("height \(height) pt, limit 290 pt") }
+            if abs(height - want) > 1 { problems.append("height \(height) pt, PanelLayout.height \(want) pt") }
+            if abs(model.layoutPlan.height - want) > 0.01 { problems.append("plan height \(model.layoutPlan.height), PanelLayout.height \(want)") }
+            model.panelDidClose()
+            await closeFixture()
+        } else {
+            problems.append("the panel did not open")
+        }
+        var note = "all green: \(Int(height)) pt (limit 290 pt)."
+        if !problems.isEmpty { note += " failures: " + problems.joined(separator: "; ") }
+        record("W24", "全绿高度不超过 290 pt", problems.isEmpty, since: t0, note, ["heightPt": height, "problems": Double(problems.count)])
+    }
+
+    // MARK: W25
+
+    /// W25 (DESIGN_V3.md 5.1, 5.4): the corner radius is 8 pt. Real pixels: the corners of the problem rows and of the main button.
+    /// The source audit of the radius values runs in scripts/ci_acceptance.py.
+    func stepW25() async {
+        let t0 = now()
+        var problems = [String]()
+        var probed = 0
+        let copyBox = UITestTextBox()
+        for c in [PreviewCase.diskRed, PreviewCase.multi] {
+            guard let model = await openFixture(c, copyBox: copyBox), let hv = hostView else { problems.append("\(c.rawValue): the panel did not open"); continue }
+            for dark in [false, true] {
+                await setAppearance(dark: dark)
+                guard let shot = capture(hv) else { problems.append("\(c.rawValue): cannot capture"); continue }
+                let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
+                var targets = [(String, CGRect)]()
+                for (index, row) in model.rows.enumerated() where index < model.layoutPlan.problemRowCount {
+                    if let r = panelRect("row." + row.item.rawValue) { targets.append(("row." + row.item.rawValue, r)) }
+                }
+                if let r = panelRect("btn.copy") { targets.append(("btn.copy", r)) }
+                if targets.isEmpty { problems.append("\(c.rawValue): no rounded shape found") }
+                for (id, r) in targets {
+                    probed += 1
+                    if let p = radiusProblem(shot, rect: r, surface: surface, label: "\(c.rawValue) \(dark ? "dark" : "light") \(id)") { problems.append(p) }
+                }
+            }
+            resetAppearance()
+            model.panelDidClose()
+            await closeFixture()
+        }
+        var note = "\(probed) corners probed (problem rows and the main button), radius 8 pt."
+        if !problems.isEmpty { note += " failures: " + problems.prefix(8).joined(separator: "; ") }
+        record("W25", "圆角只有 8 pt 与全圆", problems.isEmpty && probed > 0, since: t0, note, ["probed": Double(probed), "problems": Double(problems.count)])
+    }
+
+    // MARK: W28
+
+    /// W28 (DESIGN_V3.md 5.1): all problem rows of one level have the same tint, in light and in dark. In `multi` two rows are red.
+    func stepW28() async {
+        let t0 = now()
+        var problems = [String]()
+        var notes = [String]()
+        let copyBox = UITestTextBox()
+        for c in [PreviewCase.multi, PreviewCase.cpuYellow] {
+            guard let model = await openFixture(c, copyBox: copyBox), let hv = hostView else { problems.append("\(c.rawValue): the panel did not open"); continue }
+            for dark in [false, true] {
+                await setAppearance(dark: dark)
+                guard let shot = capture(hv) else { problems.append("\(c.rawValue): cannot capture"); continue }
+                let surface = dark ? UITestContrast.darkSurface : UITestContrast.lightSurface
+                var byLevel = [String: [UITestContrast.RGB]]()
+                for (index, row) in model.rows.enumerated() where index < model.layoutPlan.problemRowCount {
+                    guard let r = panelRect("row." + row.item.rawValue), let color = problemTint(shot, rowRect: r, surface: surface) else {
+                        problems.append("\(c.rawValue): no tint for \(row.item.rawValue)")
+                        continue
+                    }
+                    byLevel[String(describing: row.dot), default: []].append(color)
+                }
+                for (level, colors) in byLevel {
+                    guard let first = colors.first else { continue }
+                    var worst = 0.0
+                    for color in colors { worst = Swift.max(worst, abs(color.r - first.r), abs(color.g - first.g), abs(color.b - first.b)) }
+                    notes.append("\(c.rawValue) \(dark ? "dark" : "light") \(level): \(colors.count) rows, spread \(String(format: "%.1f", worst))")
+                    if worst > 3 { problems.append("\(c.rawValue) \(dark ? "dark" : "light") \(level): the tints of the rows differ by \(String(format: "%.1f", worst))") }
+                }
+            }
+            resetAppearance()
+            model.panelDidClose()
+            await closeFixture()
+        }
+        var note = notes.joined(separator: ", ")
+        if !problems.isEmpty { note += " failures: " + problems.prefix(8).joined(separator: "; ") }
+        record("W28", "同级问题行同一底色", problems.isEmpty && !notes.isEmpty, since: t0, note, ["problems": Double(problems.count)])
+    }
+
     // MARK: W22
 
+    /// W22 (DESIGN_V3.md 5.1, 5.2): the values of the problem rows end at one right edge. The quiet rows have two columns, so the
+    /// values of a column end at one right edge, and the right column ends where the problem rows end.
     func stepW22() async {
         let t0 = now()
         var problems = [String]()
@@ -1006,17 +1196,23 @@ extension UITestRunner {
         let copyBox = UITestTextBox()
         for c in [PreviewCase.allGreen, PreviewCase.multi, PreviewCase.diskRed] {
             guard let model = await openFixture(c, copyBox: copyBox) else { problems.append("\(c.rawValue): the panel did not open"); continue }
-            var edges = [Double]()
-            for row in model.rows {
+            let expanded = model.layoutPlan.problemRowCount
+            var groups = [String: [Double]]()
+            for (index, row) in model.rows.enumerated() {
                 guard let r = panelRect("row." + row.item.rawValue + ".value") else { problems.append("\(c.rawValue): no value frame for \(row.item.rawValue)"); continue }
-                edges.append(Double(r.maxX))
+                let key = index < expanded ? "problem" : ((index - expanded) % 2 == 0 ? "left" : "right")
+                groups[key, default: []].append(Double(r.maxX))
             }
-            if let low = edges.min(), let high = edges.max() {
-                if high - low > 0.5 { problems.append("\(c.rawValue): value right edges differ by \(String(format: "%.2f", high - low)) pt") }
-                notes.append("\(c.rawValue) edges \(String(format: "%.1f", low))...\(String(format: "%.1f", high))")
-            } else {
-                problems.append("\(c.rawValue): no value frames")
+            for (key, edges) in groups {
+                if let low = edges.min(), let high = edges.max() {
+                    if high - low > 0.5 { problems.append("\(c.rawValue): \(key) value right edges differ by \(String(format: "%.2f", high - low)) pt") }
+                    notes.append("\(c.rawValue) \(key) edges \(String(format: "%.1f", low))...\(String(format: "%.1f", high))")
+                }
             }
+            if let p = groups["problem"]?.first, let q = groups["right"]?.first, abs(p - q) > 0.5 {
+                problems.append("\(c.rawValue): the problem values end at \(p) pt, the right quiet column at \(q) pt")
+            }
+            if groups.isEmpty { problems.append("\(c.rawValue): no value frames") }
             model.panelDidClose()
             await closeFixture()
         }

@@ -1,7 +1,7 @@
 ---
 title: "MoleMonitor · CI 回归门禁"
 type: ci
-last_updated: 2026-10-13
+last_updated: 2026-10-18
 ---
 
 # CI 回归门禁
@@ -89,18 +89,18 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 | J | 深浅色 | 浅色与深色外观的截图都非空白，且彼此不同 |
 | K | 退出 | 点击“退出”按钮，进程以退出码 0 结束，`status.json` 在退出时被写入 |
 | L | 关闭面板零成本 | 关闭 3 秒后，实时采样为关，只剩 1 个定时器（5 分钟 tick），缓冲为空，CPU 小于 5% 单核 |
-| M1 | 场景互不相同 | 7 个场景的预览图两两不同（sha256） |
+| M1 | 场景互不相同 | 28 个主列预览两两不同（sha256），stale 满数据与空数据的两对除外（v3） |
 | M2 | 问题优先排序（v2：由 W02 取代，见下文） | 区块的纵向顺序等于 `ProblemOrder`，灯的顺序与区块一致 |
-| M3 | 高度分档（v2：由 W02 取代，v3 高度固定 436 pt） | 弹窗高度为 332（安静）、560（单项或双项问题）、620（多项问题） |
+| M3 | 高度分档（v2：由 W02 取代。v3 高度随问题行数变化，见“v3 门禁改动”） | 弹窗高度为 332（安静）、560（单项或双项问题）、620（多项问题） |
 | M4 | 刷新与展开不改高度 | 10 次刷新、点击行、展开占用 App 与更多后，弹窗高度变化为 0 |
 | M5 | 对比度 | 浅色与深色下，正文对比度不低于 4.5，灯与曲线不低于 3 |
 | M6 | 大字号 | 字号放大到 1.25 倍后，`PanelSlots.all` 中没有文字被截断 |
-| M11 | 焦点环 | 第一响应者不是 NSControl，`btn.quit` 周围 4 pt 内没有焦点环像素 |
-| M12 | 冷启动首帧 | 首个 `chart.cpu` 折线像素在 300 ms 内出现 |
+| M11 | 焦点环 | 第一响应者不是 NSControl，`btn.copy`、`btn.more`、`row.0` 周围 4 pt 内没有焦点环像素。collecting 场景 `btn.copy` 必须不存在（v3） |
+| M12 | 冷启动首帧 | diskRed 场景磁盘问题行 `row.disk.spark` 的线条像素在 300 ms 内出现（v3） |
 | M13 | 复制 | 复制的文字等于 PromptBuilder 的文字，不含家目录与用户名，按钮显示“已复制”后在 1.5 秒（误差 0.3 秒）内恢复 |
 | N1 | 真实引擎复制 | 引擎驱动的面板，复制文字等于 `PromptBuilder` 对引擎输入的结果，长度不超过 3000，不含家目录与用户名，含“磁盘” |
 | N2 | 打开即有历史 | 用 `trendSeed` 模拟重启后恢复的 2 小时趋势，面板打开的同一刻模型已有不少于一半的种子点 |
-| M14 | 菜单栏图标状态 | 7 个场景下，`MenuIconModel` 与 `AppDelegate` 交给 `StatusIconController` 的姿态和角标等于手写期望表。图标是 24 pt 宽的模板图像，提示文字等于无障碍文字，问题项顺序等于 `ProblemOrder`，不同状态的图像互不相同 |
+| M14 | 菜单栏图标状态 | 7 个场景下，`MenuIconModel` 与 `AppDelegate` 交给 `StatusIconController` 的姿态和角标等于手写期望表。v3 改写见“v3 门禁改动”：非模板图，标记只按等级区分 |
 | M19 | 面板无占位文本 | 无障碍树（allGreen 与 diskRed 两个场景）不含骨架占位文本。原 M19 的比熊像素检查已删除，见“已删除的门禁” |
 | M22 | 浅深色折叠问题卡（G2 第 1、2 轮。v2：由 W02 取代，见下文） | multi，浅色与深色各验。3 张折叠问题行的底与面板底色相差 ≤ 20，色相（通道最大差）≤ 4，左缘 3 pt 色条与本级灯色相差 ≤ 30 并比另一级更近。第一张问题卡有淡底（色相 ≥ 6） |
 
@@ -141,7 +141,59 @@ UI 测试每个门禁结束时先输出一行 `GATE <编号> <状态> <毫秒> m
 | W03（探针） | 点击到比熊区域就绪 ≤150 ms，首帧比熊墨迹 ≥1% | 探针对象由比熊区域改为标题块文字区域（`txt.hero.title`），门槛 ≤150 ms 与 ≥1% 不变，输出值改名为 `headlineReadyMs`、`headlineSharePercent` |
 | W05（探针） | 侧栏漂移测量使用比熊区域做图块 | 图块改为标题块文字区域，门槛不变 |
 
-P3 负责新门禁。W16 在 P3 处还要加一条：CPU 不忙时 0 个图标计时器。
+## v3 门禁改动（2026-10-18，P3）
+
+面板 v3 的设计改变了版面，因此一批 v2 门禁的期望值过时。本节为每条改动写一个条目：旧值、新值、理由。每条先查证原因，再改门禁。没有一条靠放宽阈值通过。引用的用户原话：
+
+- U9：“我现在认为整体视觉需要大优化，可以一定程度损失一些性能，只要不过分就行了”。
+- U10：“还有这个比熊，动画的效果始终达不到我想要的效果，实在不好弄，我觉得可以删除，另外，关于状态栏，可以做成简单的静态、奔跑，以这种简单的帧动画来体现系统的状态”。
+
+基线是 v3/design 上的 CI run 39127149810。它的失败项都来自设计改变，没有回归。
+
+### 改写的门禁
+
+| 编号 | 旧值 | 新值 | 理由 |
+|---|---|---|---|
+| M3 预览高度 | 每个预览 436 pt（像素高 872）。所有预览同高 | 每个预览的期望高度来自 `PanelLayout.height` 的公式：全绿 264 pt，每个问题行加 64 pt 与 4 pt 间隙，最多 3 行。`scripts/ci_acceptance.py` 从 `PanelLayout.swift` 读取 `PanelMetrics`，按每个预览的问题数求值：allGreen、collecting、stale 为 264 pt，cpuYellow、diskRed、powerYellow 为 328 pt，multi 为 436 pt。同一场景的 4 个文件（浅、深、满数据、空数据）必须同高。预览是 2 倍像素，容差 2 px 不变 | U9、DESIGN_V3.md 3.3：高度随问题行数变化。run 39127149810 实测 528、656、872 px，等于 264、328、436 pt。Core 测试 `LayoutTests.swift` 用 `PreviewScenario` 固定每个场景的问题数和高度，因此脚本里的问题数表不会悄悄漂移 |
+| M3 同高 | “每个预览同高” | 删除，由上一行的“同一场景同高”取代 | 高度随问题数变化是设计要求（DESIGN_V3.md 3.3 规则） |
+| W02（含别名 M2、M3、M22）高度 | 公式 12 + 64 + 8 + 项数 × 40 + 12 + 36 + 12 + 40 + 12 = 436 pt | 公式按 3.3 逐项写出：正常行 28 pt 两列，问题行 64 pt 加 4 pt 间隙，最多 3 行。同时与 `PanelLayout.height` 与 `plan.height` 比较，差值 ≤0.01 pt | 同上。旧公式是 v2 的固定高度 |
+| W02 底色 | 只有第 1 个问题行有等级底色，其余行无色 | 前 `problemRowCount` 个问题行都有各自等级的底色（浅色 6%、深色 10%，容差 30 不变）。其余行无色（色相差 ≤4 不变） | DESIGN_V3.md 5.1：所有问题行都有底色。run 39127149810 的 multi 里内存与电池行有底色，旧检查误报 |
+| W22 右缘 | 所有行的数值右缘相差 ≤0.5 pt | 分三组：问题行、正常行左列、正常行右列，每组右缘相差 ≤0.5 pt。问题行右缘等于正常行右列右缘（±0.5 pt）。等宽数字检查不变 | DESIGN_V3.md 5.2：正常行分两列，左列数值止于 160 pt，右列止于 328 pt。旧检查要求单一右缘，v3 版面不可能满足 |
+| M1 / W01 两两不同 | 28 个主列预览两两不同（sha256） | 同上，但“stale 满数据”与“stale 空数据”（浅、深各一对）允许相同。这两个文件仍必须与其余 26 个文件不同。`scripts/ci_acceptance.py` 与 `stepW01` 都按此执行 | 查证：stale 面板没有问题行，没有曲线，记录行只写过期文字（DESIGN_V3.md 5.3），正常行的数值取自当前读数而不是趋势。满数据与空数据的差别（趋势、App、睡眠记录）只出现在侧栏，因此主列像素相同。collecting 的两个版本不同（满数据时 CPU 与电池有数值），所以不豁免。阈值没有改 |
+| M11 焦点环 | 对 `btn.copy`、`btn.more`、`row.0` 取框，缺一个框就失败 | collecting 场景改为断言 `btn.copy` 不存在（按钮隐藏）。其余场景和对象不变，焦点环像素必须为 0，第一响应者不是 NSControl | 查证：不是回归。run 39127149810 的失败原因只有“collecting: no frame for btn.copy”。DESIGN_V3.md 5.4 和 5.5 规定采集中隐藏主按钮。日志里的 “ring pixels 0” 是通过的数值。`PanelRows.swift`、`PanelFooter.swift`、`PanelAnomaly.swift` 没有改 |
+| M12 首帧曲线 | 目标 `row.cpu.spark`（场景 allGreen），300 ms 内有 ≥30 个线条像素 | 目标 `row.disk.spark`（场景 diskRed 的磁盘问题行），阈值不变：300 ms，≥30 个线条像素 | DESIGN_V3.md 5.1、5.2：只有问题行有曲线，正常项是静区 |
+| M14 菜单栏图标状态 | 图标必须是模板图（仅无角标时），不同状态的图像两两不同，五态按分项区分 | 所有状态都是非模板图。normal、collecting、stale 三态与 caution、alert 两态的图像互不相同。caution 与 alert 的标记在标记框里都存在，形状不同（至少 4 个像素不同）。normal 的标记框为空。标记颜色符合令牌，主体墨色等于 `labelColor`（容差沿用 W08）。同一等级同一图像：cpuYellow 与 powerYellow 相同，diskRed 与 multi 相同。宽 24 pt、提示文字等于无障碍文字、问题项顺序不变 | U10、DESIGN_V3.md 4.2：图标是比熊剪影，非模板图，标记只按等级区分（黄色三角，红色方块），不再按分项区分。run 39127149810 的失败项是“isTemplate is false”和“cpuYellow 与 powerYellow 同图”，两者都是新设计的预期行为 |
+| W16 | 关闭 3 s 后：实时采样关、1 个引擎计时器、0 个 CA 动画、缓冲空、CPU <5%（最好的一个窗口） | 以上全部不变，另加：0 个图标计时器。检查前用 `cpuTick(5)` 三次使 CPU 为不忙状态 | DESIGN_V3.md 第 8 章：CPU 不忙时 0 个图标计时器。没有放宽任何一项 |
+
+### 新增的门禁
+
+| 编号 | 检查 | 来源 | 理由 |
+|---|---|---|---|
+| W24 | 全绿 6 项面板高度 ≤290 pt。运行时取真实窗口高度，必须等于 `PanelLayout.height`（264 pt）。脚本另检查 allGreen 的 4 个预览，像素高 ÷ 2 ≤290 | UI 与预览 | U9、DESIGN_V3.md 3.3 |
+| W25 | 圆角取值只有 8 pt 与全圆。运行时：对问题行和主按钮的角做像素探测，距角 1 pt 处必须是空的，距角 2.5 pt 处必须有填充（半径落在 6.83 至 8.54 pt 内）。源码审计：`PanelRows`、`PanelAnomaly`、`PanelFooter`、`PanelHero`、`PanelRoot` 里每个 `cornerRadius:` 的值是 `PanelRadius.control`，且 `PanelRadius` 只有值 8 | UI 与源码审计 | DESIGN_V3.md 2、5.4 |
+| W26 | 界面字符串不含“ · ”。源码审计扫描 `Sources/**/*.swift` 的字符串字面量。`Sources/Core/Prompt.swift` 永久排除（提示词正文，DESIGN_V3.md 9.2） | 源码审计 | DESIGN_V3.md 9.2 |
+| W27 | 17 pt 字只出现在标题块。源码审计：`PanelType.lead`、`PanelType.leadMono` 只在 `PanelHero.swift`（标题块）、`PanelSidebar.swift` 和 `PanelWindow.swift`（侧栏标题）使用。`PanelType.rowValue` 只在 `PanelRows.swift` 的 `ProblemRowView` 里使用。`Panel*.swift` 里没有字面量 `size: 17` | 源码审计 | DESIGN_V3.md 4.1、5.1：全绿面板只有标题块是 17 pt |
+| W28 | 同一等级的问题行有同一底色。运行时在 multi（两个红色行）与 cpuYellow 取每个问题行上缘的像素，同级各行的通道差 ≤3，浅色与深色各验 | UI | DESIGN_V3.md 5.1 |
+
+W27 只做源码审计，没有运行时部分。原因：运行时无法按字号区分像素。全绿截图的字号由 W02 的字号集合检查（≤4 种）补充。
+
+### W26 待清理清单
+
+W26 对下列文件暂时豁免。这些文件里的“ · ”由 P4 与 P6 清理。清理后 P6 从 `scripts/ci_acceptance.py` 的 `DOT_JOIN_PENDING` 里删除对应文件。运行 CI 时，日志会打印豁免命中数。
+
+| 文件 | 命中行 | 负责 |
+|---|---|---|
+| `Sources/Core/HealthRules.swift` | 281、288、439、443 | P6（DESIGN_V3.md 9.2） |
+| `Sources/Core/Brief.swift` | 33 | P6（DESIGN_V3.md 9.2） |
+| `Sources/Core/PreviewScenario.swift` | 362 至 390 | P6（DESIGN_V3.md 9.2） |
+| `Sources/Core/SidebarContent.swift` | 176、186、842 | P4（DESIGN_V3.md 9.2） |
+| `Sources/App/PanelTokens.swift` | 372（网络流量文字） | P4。DESIGN_V3.md 9.2 没有列出，W26 新发现 |
+| `Sources/Core/NotificationPlanner.swift` | 56、102（通知标题“ · 已持续 ”） | P6。DESIGN_V3.md 9.2 没有列出，W26 新发现 |
+
+### 侧栏门禁
+
+名称里带 side 或 sidebar 的预览与检查（W05、W07、M10b、`preview-side-*`）不在 P3 范围，本节没有改动。它们在 P4 之后的变化由 P4 处理。
+
 
 ## v2 门禁登记表
 
@@ -202,6 +254,7 @@ W08 的检查在 UI 测试变体里运行，因此来源从 `dog` 改为 `ui`。
 |---|---|
 | 实时采样定时器 | 关 |
 | 引擎定时器 | 1 个（30 秒 tick） |
+| 图标定时器 | 0 个（CPU 不忙，v3，DESIGN_V3.md 第 8 章） |
 | Core Animation 动画 | 0 个（进程内除状态栏窗口外的全部窗口图层树） |
 | 实时曲线缓冲 | 空 |
 

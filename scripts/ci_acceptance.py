@@ -4,7 +4,8 @@
 # Input: dist/MoleMonitor.app built by scripts/build.py on arm64 macOS.
 # Output: Headless acceptance checks (self-test, signature, real sampling, CLI read-back, static preview) and the UI regression gate
 #         (dist-uitest/MoleMonitor.app --ui-test: status item, popover, motion, hover, close, quit); exit code 0 means all passed.
-#      `--self-test` checks the gate registry logic on any OS and exits. The registry GATES lists W01 to W22 and the old gates:
+#      `--self-test` checks the gate registry logic and the source audits (W25 to W27, run on the repo sources) on any OS and exits.
+#      The registry GATES lists W01 to W30 and the old gates:
 #      pending gates are shown as inactive (未激活), never counted as passed (docs/CI.md, "v2 门禁登记表").
 # Pos: Runs in GitHub Actions and on a Mac. It installs nothing and changes no login item. The UI gate shows a popover on the
 #      runner for a few minutes (time budget 420 s, docs/CI.md "UI 测试总时长"), with temporary data; the gate needs `python3 scripts/build.py --ui-test` first.
@@ -34,6 +35,7 @@ failures = []
 #   source "ui"      : an item with the same id in ui-report.json (written by `--ui-test`, harness UITestHarness.swift).
 #   source "core"    : Core unit test (the "Core and CLI tests" workflow step). No evaluator here, so it cannot be active.
 #   source "script"  : a script run by a later step. No evaluator here, so it cannot be active.
+#   source "audit"   : a source audit that this script runs itself on Sources/ (W26, W27). It needs no build, so --self-test runs it too.
 # To activate a gate, WP-F changes its status to "active" in GATES. The owner of a gate only adds a Swift check file.
 GATES = [
     # Gates that exist today (13.2: kept, updated, or tightened; 13.2.1 lists the selector changes)
@@ -62,8 +64,14 @@ GATES = [
     # v3 menu bar runner (docs/DESIGN_V3.md 4.2, U10): UITestIconChecks.swift.
     {"id": "W29", "name": "menu bar runner frames", "status": "active", "source": "ui"},
     {"id": "W30", "name": "menu bar runner trigger and timer", "status": "active", "source": "ui"},
+    # v3 panel gates (docs/DESIGN_V3.md 3.3, 5.1, 9.2; entries in docs/CI.md, section "v3 门禁改动"). W25 also has a source audit below.
+    {"id": "W24", "name": "all-green panel height <= 290 pt", "status": "active", "source": "ui"},
+    {"id": "W25", "name": "corner radius set {8, full}", "status": "active", "source": "ui"},
+    {"id": "W26", "name": "no ' · ' in UI strings", "status": "active", "source": "audit"},
+    {"id": "W27", "name": "17 pt type only in the headline block", "status": "active", "source": "audit"},
+    {"id": "W28", "name": "problem rows of one level share one tint", "status": "active", "source": "ui"},
 ]
-GATE_EVALUATED_SOURCES = ("ui", "core")
+GATE_EVALUATED_SOURCES = ("ui", "core", "audit")
 # Core gates (source "core"): the sections of the output of scripts/test_core.py ("== <section>" lines, "FAIL (line N): ..." lines).
 # A gate passes only if every listed section appears and no FAIL line follows a listed section. A missing section fails the gate.
 # Mapping from DESIGN_V2.md 13.3: W13 BubbleCopy unit tests, W20 the prompt golden samples (structure, length, golden files),
@@ -139,6 +147,115 @@ def gate_summary(results=None, sources=None):
     return lines, counts
 
 
+# --- Source audits and layout numbers (read from Sources/, no build needed; --self-test runs them too)
+SWIFT_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+# W26 (DESIGN_V3.md 9.2): no " · " join in an interface string. Prompt.swift holds the prompt body and stays out for good.
+# The files in DOT_JOIN_PENDING still hold hits that P4 and P6 clean up (docs/CI.md, "W26 待清理清单"). P6 empties this dict.
+DOT_JOIN_EXEMPT = {"Sources/Core/Prompt.swift"}
+DOT_JOIN_PENDING = {
+    "Sources/Core/HealthRules.swift", "Sources/Core/Brief.swift", "Sources/Core/PreviewScenario.swift",
+    "Sources/Core/SidebarContent.swift",   # listed in DESIGN_V3.md 9.2
+    "Sources/App/PanelTokens.swift", "Sources/Core/NotificationPlanner.swift",   # found by W26 on 2026-10-18, not in 9.2
+}
+# W27 (DESIGN_V3.md 4.1, 2.1): 17 pt type (PanelType.lead, leadMono, rowValue) only in the headline block, the sidebar title
+# and the value of a problem row. On an all-green panel only the headline block shows 17 pt.
+# PanelWindow.swift holds the 17 pt title of the sidebar detail view (a sidebar title, DESIGN_V3.md 6).
+LARGE_TYPE_FILES = {"Sources/App/PanelHero.swift", "Sources/App/PanelSidebar.swift", "Sources/App/PanelWindow.swift"}
+RADIUS_FILES = ("PanelRows.swift", "PanelAnomaly.swift", "PanelFooter.swift", "PanelHero.swift", "PanelRoot.swift")
+
+
+def read_swift_sources(base):
+    """{relative path: text} of every Swift file under Sources/."""
+    return {str(f.relative_to(base)): f.read_text(encoding="utf-8") for f in sorted((base / "Sources").rglob("*.swift"))}
+
+
+def code_lines(text):
+    """(line number, line) of the lines that are not comment lines."""
+    return [(i, l) for i, l in enumerate(text.splitlines(), 1) if not l.strip().startswith("//")]
+
+
+def audit_dot_join(files, pending=None):
+    """Hits of a string literal that contains ' · ' (also written \\u{00B7}). Returns (enforced hits, waived hits)."""
+    pending = DOT_JOIN_PENDING if pending is None else pending
+    hits, waived = [], []
+    for path, text in files.items():
+        if path in DOT_JOIN_EXEMPT:
+            continue
+        for number, line in code_lines(text):
+            for literal in SWIFT_STRING.findall(line):
+                if " · " in literal or " \\u{00B7} " in literal or " \\u{B7} " in literal:
+                    (waived if path in pending else hits).append(f"{path}:{number}")
+    return hits, waived
+
+
+def audit_large_type(files):
+    """Hits of 17 pt type outside the places that DESIGN_V3.md allows."""
+    hits = []
+    for path, text in files.items():
+        name = Path(path).name
+        if not (path.startswith("Sources/App/Panel") and name.startswith("Panel")) or name == "PanelTokens.swift":
+            continue
+        quiet_start = next((n for n, l in code_lines(text) if "struct QuietRowView" in l), None)
+        for number, line in code_lines(text):
+            if re.search(r"PanelType\.(lead|leadMono)\b", line) and path not in LARGE_TYPE_FILES:
+                hits.append(f"{path}:{number} PanelType.lead outside the headline block")
+            if re.search(r"PanelType\.rowValue\b", line):
+                inside_problem_row = name == "PanelRows.swift" and quiet_start is not None and number < quiet_start
+                if not inside_problem_row and path not in LARGE_TYPE_FILES:
+                    hits.append(f"{path}:{number} PanelType.rowValue outside a problem row")
+            if re.search(r"\bsize:\s*17\b", line) and path not in LARGE_TYPE_FILES:
+                hits.append(f"{path}:{number} a literal 17 pt font")
+    return hits
+
+
+def audit_radius(files):
+    """W25: the corner radius values are 8 (PanelRadius.control) or full (Capsule, Circle). Returns (hits, number of uses)."""
+    hits = []
+    uses = 0
+    tokens = files.get("Sources/App/PanelTokens.swift", "")
+    body = re.search(r"enum PanelRadius \{(.*?)\n\}", tokens, re.S)
+    values = re.findall(r"static let (\w+):\s*CGFloat\s*=\s*([0-9.]+)", body.group(1)) if body else []
+    if [v for _, v in values] != ["8"] and [float(v) for _, v in values] != [8.0]:
+        hits.append(f"PanelRadius holds {values}, expected only 8")
+    for path, text in files.items():
+        if Path(path).name not in RADIUS_FILES or not path.startswith("Sources/App/"):
+            continue
+        for number, line in code_lines(text):
+            for m in re.finditer(r"cornerRadius:\s*([^,)]+)", line):
+                uses += 1
+                value = m.group(1).strip()
+                if value not in ("PanelRadius.control", "8", "8.0"):
+                    hits.append(f"{path}:{number} cornerRadius {value}")
+            if re.search(r"\.cornerRadius\(|cornerSize:|UnevenRoundedRectangle|RoundedCorner", line):
+                hits.append(f"{path}:{number} a radius form that the audit does not know")
+    return hits, uses
+
+
+def panel_metrics(base):
+    """The numbers of PanelMetrics, read from Sources/Core/PanelLayout.swift (the layout formula is checked against them)."""
+    text = (base / "Sources/Core/PanelLayout.swift").read_text(encoding="utf-8")
+    body = re.search(r"enum PanelMetrics \{(.*?)\n\}", text, re.S).group(1)
+    body = "\n".join(l for l in body.splitlines() if not l.strip().startswith("//"))
+    return {k: float(v) for k, v in re.findall(r"\b([A-Za-z]+) = ([0-9]+(?:\.[0-9]+)?)\b", body)}
+
+
+def panel_height_pt(m, problems, has_battery=True):
+    """DESIGN_V3.md 3.3, written out here (not read from PanelLayout.height): the panel height in pt."""
+    items = 6 if has_battery else 5
+    expanded = min(int(m["maxProblemRows"]), max(0, problems))
+    quiet_rows = (items - expanded + int(m["quietColumns"]) - 1) // int(m["quietColumns"])
+    rows = quiet_rows * m["quietRow"]
+    if expanded:
+        rows += expanded * m["problemRow"] + (expanded - 1) * m["problemRowGap"]
+    return (m["topPadding"] + m["hero"] + m["heroGap"] + rows + m["rowsToRecordGap"] + m["recordRow"]
+            + m["recordToFooterGap"] + m["footer"] + m["bottomPadding"])
+
+
+# Problem rows of each preview case (the anomaly count of PreviewScenario; Tests/CoreTests/LayoutTests.swift checks it). Every case has a battery.
+PREVIEW_PROBLEMS = {"allGreen": 0, "cpuYellow": 1, "diskRed": 1, "powerYellow": 1, "multi": 4, "collecting": 0, "stale": 0}
+ALL_GREEN_MAX_HEIGHT_PT = 290   # W24, DESIGN_V3.md 3.3
+
+
 def gate_self_test():
     """Local self-test of the registry logic (runs on any OS): python3 scripts/ci_acceptance.py --self-test"""
     problems = []
@@ -151,7 +268,7 @@ def gate_self_test():
     for g in GATES:
         if g["status"] not in ("active", "pending"):
             problems.append(f"{g['id']}: bad status {g['status']}")
-        if g["source"] not in ("ui", "core", "script"):
+        if g["source"] not in ("ui", "core", "script", "audit"):
             problems.append(f"{g['id']}: bad source {g['source']}")
         if g["status"] == "active" and g["source"] not in GATE_EVALUATED_SOURCES:
             problems.append(f"{g['id']}: active gate has no evaluator for source {g['source']}")
@@ -169,6 +286,9 @@ def gate_self_test():
     expected_ui = list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M22"]
     expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 5, 6, 7, 8, 9, 10, 16, 19, 22)]
     expected_ui += ["W29", "W30"]   # v3 menu bar runner (DESIGN_V3.md 4.2)
+    expected_ui += ["W24", "W25", "W28"]   # v3 panel gates (DESIGN_V3.md 3.3, 5.1)
+    if gate_ids("audit", "active") != ["W26", "W27"]:
+        problems.append("active audit gate list changed")
     if gate_ids("ui", "active") != expected_ui:
         problems.append("active ui gate list changed")
     good = "== BubbleCopyTests\n== MemoryTests\n== PromptBuilder: structure (DESIGN_V2.md 8.4)\n== PromptBuilder: length and compression\n== Prompt: golden files\nResult: 10 passed, 0 failed\n"
@@ -181,6 +301,34 @@ def gate_self_test():
         problems.append("core gate reader: a missing suite passes")
     if core_gate_results("")["W20"][0]:
         problems.append("core gate reader: an empty log passes")
+    # The audits: positive controls on synthetic text, then the real sources.
+    hits, waived = audit_dot_join({"Sources/App/A.swift": 'let x = "a · b"', "Sources/Core/Prompt.swift": 'let y = "a · b"',
+                                   "Sources/Core/Brief.swift": 'let z = "a · b"', "Sources/App/B.swift": '// "a · b"\nlet q = "ab"'})
+    if hits != ["Sources/App/A.swift:1"] or waived != ["Sources/Core/Brief.swift:1"]:
+        problems.append(f"W26 audit logic is wrong: {hits} {waived}")
+    if not audit_large_type({"Sources/App/PanelFoo.swift": "Text(x).font(PanelType.lead)"}):
+        problems.append("W27 audit logic: a stray PanelType.lead is not found")
+    if audit_large_type({"Sources/App/PanelHero.swift": "Text(x).font(PanelType.lead)"}):
+        problems.append("W27 audit logic: the headline block is flagged")
+    radius_ok = {"Sources/App/PanelTokens.swift": "enum PanelRadius {\n    static let control: CGFloat = 8\n}\n",
+                 "Sources/App/PanelRows.swift": "RoundedRectangle(cornerRadius: PanelRadius.control)"}
+    if audit_radius(radius_ok)[0] or not audit_radius(dict(radius_ok, **{"Sources/App/PanelRows.swift": "RoundedRectangle(cornerRadius: 12)"}))[0]:
+        problems.append("W25 audit logic is wrong")
+    if (root / "Sources").exists():
+        sources = read_swift_sources(root)
+        hits, waived = audit_dot_join(sources)
+        if hits:
+            problems.append(f"W26 hits in the sources: {hits[:6]}")
+        hits = audit_large_type(sources)
+        if hits:
+            problems.append(f"W27 hits in the sources: {hits[:6]}")
+        hits, uses = audit_radius(sources)
+        if hits or uses < 6:
+            problems.append(f"W25 source audit: {hits[:6]} ({uses} uses)")
+        metrics = panel_metrics(root)
+        green = panel_height_pt(metrics, 0)
+        if green != 264 or green > ALL_GREEN_MAX_HEIGHT_PT or panel_height_pt(metrics, 1) != 328 or panel_height_pt(metrics, 4) != 436:
+            problems.append(f"panel height formula: 0 problems {green}, 1 problem {panel_height_pt(metrics, 1)}, 4 problems {panel_height_pt(metrics, 4)}")
     for line in problems:
         print("FAIL  gate self-test: " + line)
     if not problems:
@@ -271,8 +419,10 @@ os.chmod(data_dir, 0o700)
 env = {"MOLEMONITOR_DATA_DIR": str(data_dir)}
 preview = data_dir / "preview.png"
 PREVIEW_CASES = ("allGreen", "cpuYellow", "diskRed", "powerYellow", "multi", "collecting", "stale")
-# Panel height in points: 436 in every preview (the v2 524 minus the 88 pt the hero lost, 152 to 64, DESIGN_V3.md 4.1, U10). P2 and P3 change it again.
-PREVIEW_HEIGHT_PT = {case: 436 for case in ("allGreen", "collecting", "stale", "cpuYellow", "diskRed", "powerYellow", "multi")}
+# Panel height of each preview in points: PanelLayout.height (DESIGN_V3.md 3.3) from the problem count of the case, with the numbers read
+# from PanelMetrics (panel_metrics, panel_height_pt). 264 pt all green, +64 pt per problem row (+4 pt gap), at most 3 rows.
+PM = panel_metrics(root)
+PREVIEW_HEIGHT_PT = {case: panel_height_pt(PM, count) for case, count in PREVIEW_PROBLEMS.items()}
 preview_names = [f"preview-{case}-{scheme}{suffix}.png"
                  for suffix in ("", "-empty") for case in PREVIEW_CASES for scheme in ("light", "dark")]
 t0 = time.time()
@@ -397,7 +547,9 @@ print(f"CLI --status --brief on this runner: p50={p50:.1f} ms p95={p95:.1f} ms (
 check(p50 <= 50, "CLI p50 under 50 ms (runner VM, informational limit)", f"{p50:.1f}")
 
 # 6. M1 and M3: static previews. 7 cases x light and dark x full and empty data = 28 main column files, 352 pt wide at scale 2.
-#    All files have one height (v2). Every file is a non-empty PNG, and no two files are equal.
+#    The height of a file follows its problem count (v3, DESIGN_V3.md 3.3, docs/CI.md "M3"). Every file is a non-empty PNG.
+#    Two files are never equal, except the pair "stale full" and "stale empty" (docs/CI.md "M1 and W01"): the stale panel shows no problem
+#    row, no curve and no record count, so the full and the empty data render the same pixels. This is the design, not a defect.
 def png_size(data):
     if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
         return None
@@ -408,6 +560,7 @@ import hashlib
 
 sizes = {}
 digests = {}
+case_heights = {}
 for name in preview_names:
     path = data_dir / name
     data = path.read_bytes() if path.exists() else b""
@@ -417,15 +570,27 @@ for name in preview_names:
         sizes[name] = size
         digests.setdefault(hashlib.sha256(data).hexdigest(), []).append(name)
         case = name.split("-")[1]
+        case_heights.setdefault(case, set()).add(size[1])
         print(f"  {name}: {size[0]}x{size[1]} px, {len(data)} bytes", flush=True)
         check(size[0] == 704, f"M3 preview {name} is 352 pt wide", str(size[0]))
-        check(abs(size[1] - 2 * PREVIEW_HEIGHT_PT[case]) <= 2, f"M3 preview {name} has the tier height {PREVIEW_HEIGHT_PT[case]} pt", str(size[1]))
-duplicates = [names for names in digests.values() if len(names) > 1]
-check(len(preview_names) == 28 and not duplicates, "M1 the 28 previews are pairwise different", str(duplicates))
+        check(abs(size[1] - 2 * PREVIEW_HEIGHT_PT[case]) <= 2,
+              f"M3 preview {name} has the height {PREVIEW_HEIGHT_PT[case]:g} pt (PanelLayout.height, {PREVIEW_PROBLEMS[case]} problem rows)", str(size[1]))
+        if case == "allGreen":
+            check(size[1] / 2 <= ALL_GREEN_MAX_HEIGHT_PT, f"W24 preview {name} is at most {ALL_GREEN_MAX_HEIGHT_PT} pt high", str(size[1] / 2))
+
+
+def stale_twin(names):
+    """True for the pair (stale full, stale empty) of one color scheme."""
+    return len(names) == 2 and all(n.startswith("preview-stale-") for n in names) \
+        and sorted(n.replace("-empty", "") for n in names)[0] == sorted(n.replace("-empty", "") for n in names)[1]
+
+
+duplicates = [names for names in digests.values() if len(names) > 1 and not stale_twin(names)]
+check(len(preview_names) == 28 and not duplicates, "M1 the 28 previews are pairwise different (stale full and stale empty may be equal)", str(duplicates))
 if report:
     check(not report.get("staticPreviewError"), "no preview error", str(report.get("staticPreviewError")))
-all_heights = {sizes[n][1] for n in sizes}
-check(len(all_heights) == 1 and bool(sizes), "M3 every preview has the same height (it does not change with the anomaly count)", str(all_heights))
+check(bool(case_heights) and all(len(h) == 1 for h in case_heights.values()),
+      "M3 the files of one case have one height (light, dark, full and empty)", str(case_heights))
 
 # 7. Release binary has no test code; the UI regression variant has it (positive control)
 release_bytes = main_bin.read_bytes()
@@ -467,6 +632,17 @@ for file in sorted((root / "Sources/App").glob("*.swift")) + [root / "Sources/Mo
 check(not skeleton_hits, "source audit: no SKELETON string literal in the app sources", str(skeleton_hits))
 # The release binary does not draw the placeholder either.
 check(b"SKELETON" not in release_bytes, "release binary does not contain the SKELETON placeholder text")
+# W25 (source part), W26, W27: audits of Sources/ (docs/CI.md "v3 门禁改动").
+swift_sources = read_swift_sources(root)
+_hits, _waived = audit_dot_join(swift_sources)
+check(not _hits, "W26 audit: no ' · ' in UI strings", str(_hits))
+gate_record("W26", "fail" if _hits else "pass")
+print(f"      W26 waived hits (to clean up, docs/CI.md): {len(_waived)} in {sorted({h.split(':')[0] for h in _waived})}", flush=True)
+_hits = audit_large_type(swift_sources)
+check(not _hits, "W27 audit: 17 pt type only in the headline block, the sidebar title and problem-row values", str(_hits))
+gate_record("W27", "fail" if _hits else "pass")
+_hits, _uses = audit_radius(swift_sources)
+check(not _hits and _uses >= 6, "W25 audit: corner radius is PanelRadius.control (8) in the main column files", f"{_hits} ({_uses} uses)")
 ui_app = root / "dist-uitest/MoleMonitor.app"
 ui_bin = ui_app / "Contents/MacOS/MoleMonitor"
 skipped_ui = []
@@ -560,7 +736,7 @@ for gate_id, (ok, detail) in core_gate_results(core_text).items():
 
 print()
 print("(summary of the gates read from ui-report.json and the Core test log; the release binary audit follows below)", flush=True)
-for line in gate_summary(sources=("ui", "core", "script"))[0]:
+for line in gate_summary(sources=("ui", "core", "script", "audit"))[0]:
     print(line, flush=True)
 if failures:
     print(f"ACCEPTANCE FAILED: {len(failures)} check(s): " + "; ".join(failures))
