@@ -44,7 +44,7 @@ last_updated: 2026-10-13
 | `HealthAlerts.swift` | 判定对应的一句证据和一句给 Agent 的提示 |
 | `HealthPipeline.swift` | 引擎的纯逻辑部分：每次评估得出五项判定、问题顺序和补全的读数 |
 | `ProblemOrder.swift` | 灯、卡片、图标角标和提示共用的问题顺序 |
-| `PanelLayout.swift` | v2 面板版面计划：行顺序、异常项和面板高度（524 pt，台式机 484 pt）。异常区固定 36 pt，异常数量不改变高度 |
+| `PanelLayout.swift` | v2 面板版面计划：行顺序、异常项和面板高度（436 pt，台式机 396 pt）。异常区固定 36 pt，异常数量不改变高度 |
 | `PanelRowText.swift` | 主列全部文字的唯一来源：行状态（点、名称、读数）、异常条、底栏、异常区的一行、迷你曲线数据。缺失、统计中、过期和测得的零值显示不同 |
 | `PanelWindowGeometry.swift` | 面板窗口的纯几何：菜单栏图标位置和屏幕可见区得出窗口框（侧栏关闭与打开）、动效常量、点击策略 |
 | `HoverIntent.swift` | 侧栏悬停意图状态机（W06 的 Core 部分）：静止 350 ms 打开，快速移动重新计时，固定后忽略指针。无时钟、无定时器，调用方传入时间 |

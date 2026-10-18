@@ -818,7 +818,7 @@ extension UITestRunner {
             let rowCount = data.hasBattery ? 6 : 5
             // The anomaly area is one 36 pt line, so the height changes with the battery row only (design change 2026-10-12).
             let anomalyArea = 36.0
-            let formula = 12.0 + 152.0 + 8.0 + Double(rowCount) * 40.0 + 12.0 + anomalyArea + 12.0 + 40.0 + 12.0
+            let formula = 12.0 + 64.0 + 8.0 + Double(rowCount) * 40.0 + 12.0 + anomalyArea + 12.0 + 40.0 + 12.0
             let height = Double(hv.bounds.height)
             if abs(height - formula) > 1 { problems.append("\(name): height \(height) pt, formula \(formula) pt") }
             if abs(plan.height - formula) > 0.01 { problems.append("\(name): plan height \(plan.height), formula \(formula)") }
