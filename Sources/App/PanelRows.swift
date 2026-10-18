@@ -267,7 +267,6 @@ struct ProblemRowView: View {
         }
         .frame(width: PanelMetrics.rowBackgroundWidth, height: PanelMetrics.problemRow)
         .clipShape(shape)
-        .overlay(shape.fill(context.selected ? tok.fillRowActive : (context.hovered ? tok.fillHover : Color.clear)))
         .rowChrome(row, context, tok: tok, width: PanelMetrics.rowBackgroundWidth, height: PanelMetrics.problemRow)
     }
 }
@@ -282,7 +281,7 @@ struct QuietRowView: View {
     @Environment(\.tok) private var tok
 
     private var id: String { row.id }
-    static let width = PanelMetrics.rowBackgroundWidth / CGFloat(PanelMetrics.quietColumns)
+    static let width = CGFloat(PanelMetrics.rowBackgroundWidth) / CGFloat(PanelMetrics.quietColumns)
 
     /// The check mark marks a measured healthy item. Network has no health level, so it keeps a gray dot.
     private var showsCheck: Bool { row.dot == .normal && row.item != .network }
@@ -308,7 +307,7 @@ struct QuietRowView: View {
                 .uiTestFrame("txt.row.name." + id)
             Spacer(minLength: 4)
             Text(row.status == .collecting ? PanelRows.dash : row.quietValue)
-                .font(PanelType.body)
+                .font(PanelType.quietValue)
                 .foregroundStyle(row.valueColor(tok))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -320,11 +319,12 @@ struct QuietRowView: View {
     }
 }
 
-private extension PanelType {
-    static let body = Font.system(size: 13).monospacedDigit()
-}
-
 // MARK: - Section
+
+private struct IndexedRow {
+    let offset: Int
+    let element: PanelRowState
+}
 
 struct PanelRowsSection: View {
     @ObservedObject var model: PanelModel
@@ -342,13 +342,24 @@ struct PanelRowsSection: View {
             .accessibilityAction { model.rowClicked(row.item) }
     }
 
+    /// The rows after the problem rows, cut into lines of `quietColumns`. `offset` is the index in the whole list.
+    private static func quietLines(_ rows: [PanelRowState], after expanded: Int) -> [[IndexedRow]] {
+        var indexed = [IndexedRow]()
+        for (offset, row) in rows.enumerated() where offset >= expanded { indexed.append(IndexedRow(offset: offset, element: row)) }
+        var lines = [[IndexedRow]]()
+        var start = 0
+        while start < indexed.count {
+            let end = min(start + PanelMetrics.quietColumns, indexed.count)
+            lines.append(Array(indexed[start..<end]))
+            start = end
+        }
+        return lines
+    }
+
     var body: some View {
         let rows = model.rows
         let expanded = min(model.layoutPlan.problemRowCount, rows.filter { $0.isProblem }.count)
-        let quiet = Array(rows.enumerated().dropFirst(expanded))
-        let lines = stride(from: 0, to: quiet.count, by: PanelMetrics.quietColumns).map {
-            Array(quiet[$0..<min($0 + PanelMetrics.quietColumns, quiet.count)])
-        }
+        let lines = Self.quietLines(rows, after: expanded)
         VStack(spacing: 0) {
             if expanded > 0 {
                 VStack(spacing: PanelMetrics.problemRowGap) {

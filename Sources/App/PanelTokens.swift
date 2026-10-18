@@ -561,6 +561,11 @@ extension PanelTokens {
     var veilHover: Color { Color.white.opacity(0.10) }
 }
 
+extension PanelType {
+    /// Value of a quiet row (DESIGN_V3.md 5.2): 13 pt, tabular digits.
+    static let quietValue = Font.system(size: 13).monospacedDigit()
+}
+
 /// Sizes of the v3 row glyphs in pt (docs/DESIGN_V3.md 5.2).
 enum PanelRowGlyph {
     /// The check mark of a quiet row.

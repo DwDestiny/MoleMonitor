@@ -254,7 +254,7 @@ final class PanelModel: ObservableObject, PanelPinning {
     /// The breakdown rows in plan order.
     var rows: [PanelRowState] { PanelRows.make(order: layoutPlan.rows, input: rowsInput) }
 
-    /// The one line of the anomaly area when there are anomalies: "异常 4 项，最久已持续 3 小时".
+    /// "异常 4 项，最久已持续 3 小时". The panel no longer draws it (DESIGN_V3.md 5.3). The UI regression still reads it.
     var anomalySummary: String {
         PanelAnomalies.summary(items: layoutPlan.anomalies, verdicts: data.verdicts, now: data.now)
     }
@@ -421,7 +421,7 @@ final class PanelModel: ObservableObject, PanelPinning {
     private var focusOrder: [PanelFocus] {
         var out: [PanelFocus] = layoutPlan.rows.map { .row($0) }
         out.append(.records)
-        out.append(.primary)
+        if !footerState.hidden { out.append(.primary) }
         out.append(.more)
         if let item = sidebarItem {
             if SidebarRange.options(for: item).count > 1 { out.append(.sidebarRange) }
