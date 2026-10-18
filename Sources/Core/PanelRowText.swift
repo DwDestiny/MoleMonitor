@@ -27,7 +27,7 @@ struct PanelRowState: Equatable, Identifiable {
     var name: String
     var dot: PanelDot
     var level: HealthLevel
-    /// 11 pt prefix of the value: "压力", "可用", "swap", or a clock time when the value is stale.
+    /// 11 pt prefix of the value: "压力", "可用", "swap", .
     var valuePrefix: String?
     /// 17 pt value: "23%", "+314 GB", "正常", "—", "采集中".
     var value: String
@@ -127,13 +127,21 @@ enum PanelRows {
         }
         switch input.dataState {
         case .collecting:
-            state.status = .collecting
+            // A row that already has its reading shows it as measured. Only a row without a reading is "in progress",
+            // so the rows agree with the headline count "已完成 N/6 项".
             if state.value == dash { state.value = "采集中" }
-            if state.value == "采集中" || state.note.hasSuffix(dash) { state.note = "正在采集" }
+            if state.value == "采集中" {
+                state.status = .collecting
+                state.note = "正在采集"
+            } else {
+                state.status = .measured
+                state.dot = .normal
+                if state.note.hasSuffix(dash) { state.note = "正在采集" }
+            }
         case .stale(let since):
             state.status = .stale
-            // Only memory and disk show the clock time before the value. The other rows say it in the note.
-            if item == .memory || item == .disk { state.valuePrefix = TextFormat.clock(since, timeZone: input.timeZone) }
+            // No clock before the value: the prefix keeps its normal word and the value keeps its column width.
+            // The headline subline names the clock of the last reading. Memory and disk keep their own note.
             if item != .memory && item != .disk { state.note = "停在 " + TextFormat.clock(since, timeZone: input.timeZone) }
         case .fresh:
             if state.dot == .missing { state.status = .missing } else if state.dot == .collecting { state.status = .collecting }
@@ -177,29 +185,32 @@ enum PanelRows {
         case .disk:
             switch code {
             case "growth_1d", "growth_5d", "growth_30d":
-                let days = code == "growth_1d" ? "1" : (code == "growth_5d" ? "5" : "30")
+                let word = PanelAnomalies.reasonWord(item: .disk, code: code)
                 let amount = state.value.hasPrefix("+") ? String(state.value.dropFirst()) : state.value
-                return state.value == dash ? days + " 天胖了" : days + " 天胖了 " + amount
-            default: return "快满了，可用空间不足"
+                return state.value == dash ? word : word + " " + amount
+            default: return PanelAnomalies.reasonWord(item: .disk, code: "low_space")
             }
         case .memory:
-            return code == "swap_growth" ? "喘不过气，swap 在涨" : "喘不过气"
+            return PanelAnomalies.reasonWord(item: .memory, code: code)
         case .battery:
-            if code == "sleep_drain", let rate = sleepRate(c.lastSleep) { return "掉电太快，睡眠每小时 " + String(format: "%.1f%%", rate) }
-            if code == "awake_drain", let rate = c.awakeDrainPerHour { return "掉电太快，每小时 " + String(format: "%.0f%%", rate) }
-            return "掉电太快"
+            let word = PanelAnomalies.reasonWord(item: .power, code: code)
+            if code == "sleep_drain", let rate = sleepRate(c.lastSleep) { return word + "，睡眠每小时 " + String(format: "%.1f%%", rate) }
+            if code == "awake_drain", let rate = c.awakeDrainPerHour { return word + "，每小时 " + String(format: "%.0f%%", rate) }
+            return word
         case .cpu:
             if code == "app_saturated" {
                 let full = state.note
                 let pct = full.split(separator: " ").last.map(String.init) ?? ""
                 let name = String(full.dropLast(pct.count)).trimmingCharacters(in: .whitespaces)
-                if name.isEmpty || pct.isEmpty || !pct.hasSuffix("%") { return "跑太久" }
-                return clipped(name) + " 跑太久 " + pct
+                let word = PanelAnomalies.reasonWord(item: .cpu, code: code)
+                if name.isEmpty || pct.isEmpty || !pct.hasSuffix("%") { return word }
+                return clipped(name) + " " + word + " " + pct
             }
-            return "跑太久，" + state.note
+            return PanelAnomalies.reasonWord(item: .cpu, code: code) + "，" + state.note
         case .thermal:
-            if let t = c.smcCPUTemperature { return "发烫，CPU " + String(format: "%.0f", t) + " \u{00B0}C" }
-            return "发烫，热状态" + state.value
+            let word = PanelAnomalies.reasonWord(item: .thermal, code: code)
+            if let t = c.smcCPUTemperature { return word + "，CPU " + String(format: "%.0f", t) + " \u{00B0}C" }
+            return word + "，热状态" + state.value
         case .network, .anomalyLog:
             return state.note
         }
@@ -348,24 +359,42 @@ struct AnomalyBar: Equatable, Identifiable {
 }
 
 enum PanelAnomalies {
-    /// Reason word for a reason code. It carries no measured value. A time window ("5 天") is allowed (DESIGN_V2.md 7.3).
+    /// The plain reason phrase of a reason code, the one source for the main column and the record page (DESIGN_V3.md 9).
+    /// It carries no measured value. Level does not change it: the marker and the tint carry the level.
+    /// "5 天胖了", "喘不过气", "掉电太快", "跑太久", "发烫", "快满了，可用空间不足".
     static func reasonWord(item: HealthItem, code: String) -> String {
         switch (item, code) {
-        case (.disk, "growth_1d"): return "1 天增长"
-        case (.disk, "growth_5d"): return "5 天增长"
-        case (.disk, "growth_30d"): return "30 天增长"
-        case (.disk, "low_space"): return "可用空间不足"
-        case (.memory, "pressure_warning"): return "压力警告"
-        case (.memory, "pressure_critical"): return "压力严重"
-        case (.memory, "swap_growth"): return "swap 30 分钟增长"
-        case (.cpu, "app_saturated"): return "App 持续占用"
-        case (.cpu, _): return "持续高负载"
-        case (.thermal, "thermal_fair"): return "热状态偏高"
-        case (.thermal, "thermal_serious"): return "热状态严重"
-        case (.thermal, "thermal_critical"): return "热状态临界"
-        case (.power, "sleep_drain"): return "睡眠掉电偏快"
-        case (.power, "awake_drain"): return "掉电偏快"
+        case (.disk, "growth_1d"): return "1 天胖了"
+        case (.disk, "growth_5d"): return "5 天胖了"
+        case (.disk, "growth_30d"): return "30 天胖了"
+        case (.disk, "low_space"): return "快满了，可用空间不足"
+        case (.memory, "swap_growth"): return "喘不过气，swap 在涨"
+        case (.memory, _): return "喘不过气"
+        case (.cpu, _): return "跑太久"
+        case (.thermal, _): return "发烫"
+        case (.power, _): return "掉电太快"
         default: return "需要处理"
+        }
+    }
+
+    /// The measured value that the record page appends to the reason phrase ("5 天胖了 314 GB", "喘不过气，峰值 87%",
+    /// "掉电太快，每小时 34%"). Number style: no space before "%".
+    static func recordEvidence(item: HealthItem, code: String, value: Double?, unit: String?) -> String {
+        let word = reasonWord(item: item, code: code)
+        guard let v = value, v.isFinite else { return word }
+        let n = String(format: "%.0f", v)
+        switch item {
+        case .disk:
+            return code == "low_space" ? "快满了，可用 \(n) GB" : word + " " + n + " " + (unit ?? "GB")
+        case .memory:
+            return unit == "%" ? word + "，峰值 " + n + "%" : word + "，swap " + n + " " + (unit ?? "GB")
+        case .cpu:
+            return word + "，峰值 " + n + "%"
+        case .power:
+            let rate = code == "sleep_drain" ? String(format: "%.1f", v) : n
+            return word + (code == "sleep_drain" ? "，睡眠每小时 " : "，每小时 ") + rate + "%"
+        case .thermal:
+            return word
         }
     }
 

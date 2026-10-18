@@ -128,7 +128,7 @@ struct HeroBrain {
     /// The headline text. Only a change of state (data state, problem set, collected count) changes it at once.
     /// A number alone changes it at most every 30 s.
     private mutating func refreshText(force: Bool) {
-        let next = BubbleCopy.text(for: facts.bubble)
+        let next = BubbleCopy.text(for: facts.bubble, now: facts.now)
         var state = ""
         switch facts.bubble.dataState {
         case .fresh: state = "fresh"

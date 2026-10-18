@@ -82,11 +82,10 @@ enum BubbleCopy {
     /// Number of readings the collecting title counts (CPU, memory, disk, network, battery, temperature).
     static let readingCount = 6
 
-    static func text(for input: BubbleInput) -> BubbleText {
+    /// `now` only matters for stale data: the headline names how many minutes nothing new arrived.
+    static func text(for input: BubbleInput, now: Date = Date()) -> BubbleText {
         if case .stale(let at) = input.dataState {
-            let c = input.calendar.dateComponents([.hour, .minute], from: at)
-            let hhmm = String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
-            return BubbleText(main: "数据停在 \(hhmm)，不是最新的")
+            return BubbleText(main: "数据已经 \(duration(now.timeIntervalSince(at)))没更新")
         }
         if case .collecting = input.dataState { return BubbleText(main: collectingText(done: input.collected)) }
         if let first = input.problems.first {
@@ -103,16 +102,18 @@ enum BubbleCopy {
     // MARK: Subline
 
     /// The 13 pt second line under a one-line headline (DESIGN_V3.md 4.1). It adds a fact the headline does not say:
-    /// fresh data gives the clock of the last reading ("10:42 更新"), stale data gives how long nothing new arrived
-    /// ("已经 25 分钟没有新数据"), collecting says what comes next. A two-line headline has no subline, and fresh data
-    /// without a reading time has none either. The clock uses the calendar of the input, like the stale headline.
+    /// fresh data gives the clock of the last reading ("10:42 更新"), stale data gives the clock of the last reading
+    /// ("最后一次读数在 13:40", the headline has the age). Collecting has no subline: no new fact is available, the view leaves
+    /// the space empty. A two-line headline has no subline, and fresh data without a reading time has none either.
+    /// The clock uses the calendar of the input.
     static func subline(for input: BubbleInput, headline: BubbleText, sampledAt: Date?, now: Date) -> String? {
         guard !wrapped(headline.main).contains("\n") else { return nil }
         switch input.dataState {
         case .collecting:
-            return "数据到齐后在这里给出结论"
+            return nil
         case .stale(let at):
-            return "已经 \(duration(now.timeIntervalSince(at)))没有新数据"
+            let c = input.calendar.dateComponents([.hour, .minute], from: at)
+            return String(format: "最后一次读数在 %02d:%02d", c.hour ?? 0, c.minute ?? 0)
         case .fresh:
             guard let at = sampledAt else { return nil }
             let c = input.calendar.dateComponents([.hour, .minute], from: at)
@@ -267,7 +268,7 @@ enum BubbleCopy {
     /// Every template of 4.11 at its worst value, with a name. Problem templates are marked.
     static var allTemplates: [(name: String, text: BubbleText, problem: Bool)] {
         var out = [(String, BubbleText, Bool)]()
-        func add(_ name: String, _ input: BubbleInput, problem: Bool = false) { out.append((name, text(for: input), problem)) }
+        func add(_ name: String, _ input: BubbleInput, problem: Bool = false) { out.append((name, text(for: input, now: Date(timeIntervalSince1970: 86340 + 3540)), problem)) }
         func p(_ item: HealthItem, _ level: HealthLevel, _ code: String, number: Double? = nil, app: String? = nil,
                bytes: Int64? = nil, seconds: Double? = nil) -> BubbleInput {
             BubbleInput(problems: [BubbleProblem(item: item, level: level, reasonCode: code, number: number, app: app,

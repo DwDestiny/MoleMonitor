@@ -369,7 +369,7 @@ enum PanelFormat {
     static func traffic(_ t: TrafficTotals?) -> String {
         guard let t, let rx = t.rx, let tx = t.tx else { return "统计中" }
         let prefix = (t.status == .ok) ? "" : "至少 "
-        return "\(prefix)↓ \(trafficBytes(rx)) · ↑ \(trafficBytes(tx))"
+        return "\(prefix)↓ \(trafficBytes(rx))，↑ \(trafficBytes(tx))"
     }
 
     /// Short level word: 正常, 需留意, 异常, 统计中, 已过期.

@@ -8,7 +8,7 @@
 #      The registry GATES lists W01 to W30 and the old gates:
 #      pending gates are shown as inactive (未激活), never counted as passed (docs/CI.md, "v2 门禁登记表").
 # Pos: Runs in GitHub Actions and on a Mac. It installs nothing and changes no login item. The UI gate shows a popover on the
-#      runner for a few minutes (time budget 420 s, docs/CI.md "UI 测试总时长"), with temporary data; the gate needs `python3 scripts/build.py --ui-test` first.
+#      runner for a few minutes (time budget 500 s, docs/CI.md "UI 测试总时长"), with temporary data; the gate needs `python3 scripts/build.py --ui-test` first.
 from pathlib import Path
 import json
 import os
@@ -51,14 +51,14 @@ GATES = [
     # New gates of v2 (13.3). WP-F2 activated every W gate that has a real check reported as pass in the UI run (CI run 38341738663).
     # W13, W20 and W21 are Core unit test suites. They are read from the log of scripts/test_core.py (CORE_GATE_SUITES below).
     # W16 (UITestPanelChecks.swift since U10) was activated after WP-F2; gate L stays next to it.
-    # Removed with the dog (U10): W04, W11, W12, W14, W15, W17, W18. W08 stays (UITestIconChecks.swift, menu bar icon).
+    # Removed with the dog (U10): W04, W11, W12, W14, W15, W18. W17 is back in UITestCpuChecks.swift (Q2). W08 stays (UITestIconChecks.swift, menu bar icon).
     *[{"id": i, "name": n, "status": "active", "source": src} for i, n, src in [
         ("W01", "preview matrix", "ui"), ("W02", "layout and problem-first", "ui"), ("W03", "open speed and no white flash", "ui"),
         ("W05", "sidebar", "ui"), ("W06", "hover intent", "ui"),
         ("W07", "drag readout", "ui"), ("W08", "menu bar five states", "ui"), ("W09", "copy", "ui"),
         ("W10", "Esc layers and close", "ui"),
         ("W13", "bubble templates", "core"),
-        ("W16", "closed panel costs nothing", "ui"),
+        ("W16", "closed panel costs nothing", "ui"), ("W17", "CPU while open", "ui"),
         ("W19", "capacity triple", "ui"), ("W20", "prompt", "core"), ("W21", "memory pressure percent", "core"),
         ("W22", "value alignment", "ui")]],
     # v3 menu bar runner (docs/DESIGN_V3.md 4.2, U10): UITestIconChecks.swift.
@@ -150,13 +150,9 @@ def gate_summary(results=None, sources=None):
 # --- Source audits and layout numbers (read from Sources/, no build needed; --self-test runs them too)
 SWIFT_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 # W26 (DESIGN_V3.md 9.2): no " · " join in an interface string. Prompt.swift holds the prompt body and stays out for good.
-# The files in DOT_JOIN_PENDING still hold hits that P4 and P6 clean up (docs/CI.md, "W26 待清理清单"). P6 empties this dict.
 DOT_JOIN_EXEMPT = {"Sources/Core/Prompt.swift"}
-DOT_JOIN_PENDING = {
-    "Sources/Core/HealthRules.swift", "Sources/Core/Brief.swift", "Sources/Core/PreviewScenario.swift",
-    "Sources/Core/SidebarContent.swift",   # listed in DESIGN_V3.md 9.2
-    "Sources/App/PanelTokens.swift", "Sources/Core/NotificationPlanner.swift",   # found by W26 on 2026-10-18, not in 9.2
-}
+# DOT_JOIN_PENDING is empty since Q2 (2026-10-18): every pending file is clean. A hit in any non-exempt file fails W26.
+DOT_JOIN_PENDING = set()
 # W27 (DESIGN_V3.md 4.1, 2.1): 17 pt type (PanelType.lead, leadMono, rowValue) only in the headline block, the sidebar title
 # and the value of a problem row. On an all-green panel only the headline block shows 17 pt.
 # PanelWindow.swift holds the 17 pt title of the sidebar detail view (a sidebar title, DESIGN_V3.md 6).
@@ -284,7 +280,7 @@ def gate_self_test():
         problems.append("an active gate without result is not counted as failed")
     # The legacy lists must keep the exact set the gate has always required.
     expected_ui = list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M22"]
-    expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 5, 6, 7, 8, 9, 10, 16, 19, 22)]
+    expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 5, 6, 7, 8, 9, 10, 16, 17, 19, 22)]
     expected_ui += ["W29", "W30"]   # v3 menu bar runner (DESIGN_V3.md 4.2)
     expected_ui += ["W24", "W25", "W28"]   # v3 panel gates (DESIGN_V3.md 3.3, 5.1)
     if gate_ids("audit", "active") != ["W26", "W27"]:
@@ -303,7 +299,8 @@ def gate_self_test():
         problems.append("core gate reader: an empty log passes")
     # The audits: positive controls on synthetic text, then the real sources.
     hits, waived = audit_dot_join({"Sources/App/A.swift": 'let x = "a · b"', "Sources/Core/Prompt.swift": 'let y = "a · b"',
-                                   "Sources/Core/Brief.swift": 'let z = "a · b"', "Sources/App/B.swift": '// "a · b"\nlet q = "ab"'})
+                                   "Sources/Core/Brief.swift": 'let z = "a · b"', "Sources/App/B.swift": '// "a · b"\nlet q = "ab"'},
+                                  pending={"Sources/Core/Brief.swift"})
     if hits != ["Sources/App/A.swift:1"] or waived != ["Sources/Core/Brief.swift:1"]:
         problems.append(f"W26 audit logic is wrong: {hits} {waived}")
     if not audit_large_type({"Sources/App/PanelFoo.swift": "Text(x).font(PanelType.lead)"}):
@@ -664,7 +661,7 @@ else:
     os.chmod(ui_data, 0o700)
     t0 = time.time()
     # Time budget of the whole UI run, not a quality limit: v2 adds about 20 gates (docs/CI.md, "UI 测试总时长").
-    ui_budget = 420
+    ui_budget = 500
     ui_stdout, ui_stderr, ui_code = run_streaming([ui_bin, "--ui-test", "--ui-test-out", ui_out],
                                                   env={"MOLEMONITOR_DATA_DIR": str(ui_data)}, timeout=ui_budget)
     print(f"ui-test wall time {time.time() - t0:.1f} s, exit code {ui_code}", flush=True)

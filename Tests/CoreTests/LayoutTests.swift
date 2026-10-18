@@ -153,22 +153,26 @@ func runLayoutTests() {
 
     let col = PanelRows.row(.cpu, PanelRowsInput(verdicts: verdicts([]), current: CurrentReadings(), dataState: .collecting, now: now))
     expect(col.dot == .collecting && col.status == .collecting, "collecting row")
+    var halfDone = CurrentReadings(); halfDone.cpuPercent = 23
+    let colCPU = PanelRows.row(.cpu, PanelRowsInput(verdicts: verdicts([]), current: halfDone, dataState: .collecting, now: now))
+    expect(colCPU.value == "23%" && colCPU.status == .measured && colCPU.dot == .normal, "collecting: a finished reading shows its value, got \(colCPU)")
+    expect(col.value == "采集中" && col.note == "正在采集", "collecting: an unfinished row says 采集中")
     let st = PanelRows.row(.cpu, PanelRowsInput(verdicts: verdicts([]), current: c, dataState: .stale(now.addingTimeInterval(-3600)),
                                                 now: now, timeZone: TimeZone(identifier: "UTC")!))
     expect(st.dot == .stale && st.valuePrefix == nil && st.note == "停在 11:00", "stale cpu row has the clock time in the note, got \(String(describing: st.valuePrefix)) \(st.note)")
     let stm = PanelRows.row(.memory, PanelRowsInput(verdicts: verdicts([]), current: c, dataState: .stale(now.addingTimeInterval(-3600)),
                                                     now: now, timeZone: TimeZone(identifier: "UTC")!))
-    expect(stm.valuePrefix == "11:00", "stale memory row carries the clock time, got \(String(describing: stm.valuePrefix))")
+    expect(stm.valuePrefix != "11:00" && stm.valuePrefix != "10:00", "stale memory row has no clock prefix, got \(String(describing: stm.valuePrefix))")
 
     section("PanelAnomalies: bars, reasons, start times")
     let utc = TimeZone(identifier: "UTC")!
     expect(PanelAnomalies.startText(now.addingTimeInterval(-3600), now: now, timeZone: utc) == "开始 11:00", "same day start")
     expect(PanelAnomalies.startText(now.addingTimeInterval(-14 * 3600), now: now, timeZone: utc) == "开始 昨天 22:00", "yesterday start")
-    let reasons: [(HealthItem, String, String)] = [(.disk, "growth_1d", "1 天增长"), (.disk, "growth_5d", "5 天增长"), (.disk, "growth_30d", "30 天增长"),
-        (.disk, "low_space", "可用空间不足"), (.memory, "pressure_warning", "压力警告"), (.memory, "pressure_critical", "压力严重"),
-        (.memory, "swap_growth", "swap 30 分钟增长"), (.cpu, "cpu_mean_10m", "持续高负载"), (.cpu, "app_saturated", "App 持续占用"),
-        (.thermal, "thermal_fair", "热状态偏高"), (.thermal, "thermal_serious", "热状态严重"), (.thermal, "thermal_critical", "热状态临界"),
-        (.power, "sleep_drain", "睡眠掉电偏快"), (.power, "awake_drain", "掉电偏快")]
+    let reasons: [(HealthItem, String, String)] = [(.disk, "growth_1d", "1 天胖了"), (.disk, "growth_5d", "5 天胖了"), (.disk, "growth_30d", "30 天胖了"),
+        (.disk, "low_space", "快满了，可用空间不足"), (.memory, "pressure_warning", "喘不过气"), (.memory, "pressure_critical", "喘不过气"),
+        (.memory, "swap_growth", "喘不过气，swap 在涨"), (.cpu, "cpu_mean_10m", "跑太久"), (.cpu, "app_saturated", "跑太久"),
+        (.thermal, "thermal_fair", "发烫"), (.thermal, "thermal_serious", "发烫"), (.thermal, "thermal_critical", "发烫"),
+        (.power, "sleep_drain", "掉电太快"), (.power, "awake_drain", "掉电太快")]
     for (item, code, word) in reasons { expect(PanelAnomalies.reasonWord(item: item, code: code) == word, "reason \(code)") }
     let sv = [lv(.disk, .red, code: "growth_5d", since: 192), lv(.memory, .yellow, code: "pressure_warning", since: 20)]
     expect(PanelAnomalies.summary(items: [.disk, .memory], verdicts: sv, now: now) == "异常 2 项，最久已持续 3 小时 12 分", "summary: \(PanelAnomalies.summary(items: [.disk, .memory], verdicts: sv, now: now))")
@@ -386,10 +390,23 @@ func runSidebarTests() {
     expect(groups.count == 2 && groups[0].title == "今天" && groups[1].title == "昨天", "groups today and yesterday, got \(groups.map { $0.title })")
     expect(groups[0].rows[0].span.hasSuffix(" 起，进行中") && groups[0].rows[0].ongoing, "ongoing record, got \(groups[0].rows[0].span)")
     expect(!groups[1].rows[0].evidence.contains("\u{00B7}"), "no middle dot in the evidence")
+    // One wording per fact: the record page starts with the phrase of the main column and writes the percent without a space.
+    expect(groups[0].rows[0].evidence == "1 天胖了 314 GB", "record disk evidence, got \(groups[0].rows[0].evidence)")
+    expect(PanelAnomalies.recordEvidence(item: .power, code: "awake_drain", value: 34, unit: "%/h") == "掉电太快，每小时 34%", "record power evidence")
+    expect(PanelAnomalies.recordEvidence(item: .memory, code: "pressure_critical", value: 87, unit: "%") == "喘不过气，峰值 87%", "record memory evidence")
+    expect(PanelAnomalies.recordEvidence(item: .cpu, code: "cpu_mean_5m", value: nil, unit: nil) == "跑太久", "record without a value is the phrase")
     let strip = RecordStrip.segments(groups.flatMap { $0.rows }, days: 7, now: now)
     expect(strip.count == 2 && strip.last?.level == .red && strip.last?.to == 1, "strip: red last and the ongoing record reaches today")
     expect(strip.allSatisfy { $0.to - $0.from >= 0.008 - 1e-9 }, "short records stay visible on the strip")
     expect(groups[1].rows[0].duration.hasPrefix("约 ") && groups[1].rows[0].evidence.contains("Xcode"), "estimated end and app name")
+    // Disk stat windows are the control windows (24 小时, 7 天, 30 天); the 30 day growth is not below the 7 day growth.
+    let dfix = PreviewScenario.fixture(.diskRed, full: true, now: now)
+    let dstats = SidebarStats.make(SidebarInput(item: .disk, range: .d7, trend: .empty, rollups: [], diskSeries: dfix.diskSeries, diskTrigger: nil, sleeps: [],
+                                                current: dfix.current, verdicts: [], status: dfix.status, now: now, timeZone: utc))
+    expect(dstats.map { $0.label } == ["24 小时增长", "7 天增长", "30 天增长"], "disk stat labels follow the control, got \(dstats.map { $0.label })")
+    func gbOf(_ t: String) -> Double? { Double(t.replacingOccurrences(of: " GB", with: "").replacingOccurrences(of: "+", with: "")) }
+    if let d7 = gbOf(dstats[1].value), let d30 = gbOf(dstats[2].value) { expect(d30 >= d7, "30 day growth \(d30) is not below 7 day growth \(d7)") }
+    else { expect(false, "disk stats have values, got \(dstats.map { $0.value })") }
     expect(SidebarRecords.dayTitle(20000, today: 20010).contains("月") && SidebarRecords.dayTitle(20000, today: 20010).contains("周"), "older day title")
     let rstats = SidebarStats.make(SidebarInput(item: .anomalyLog, range: .d7, trend: .empty, rollups: [], diskSeries: [], diskTrigger: nil, sleeps: [],
                                                 current: CurrentReadings(), verdicts: [], status: nil, now: now, timeZone: utc), events: [e1, e2])

@@ -53,7 +53,7 @@ enum NotificationPlanner {
         func add(_ key: String, _ v: ItemVerdict, title: String, cooldown: TimeInterval) {
             guard let alert = v.alert, due(key, cooldown: cooldown) else { return }
             let spent = TextFormat.duration(since: v.since, now: now)
-            out.append(PlannedNotification(key: key, item: v.item, level: v.level, title: title + " · 已持续 " + spent,
+            out.append(PlannedNotification(key: key, item: v.item, level: v.level, title: title + "，已持续 " + spent,
                                            body: alert.message + bodyTail, alert: alert,
                                            topic: ProblemOrder.topic(for: v.item) ?? .disk))
             state.lastSent[key] = now
@@ -99,7 +99,7 @@ enum NotificationPlanner {
             let v: ItemVerdict? = verdicts.first { $0.item == .disk }
             let spent = TextFormat.duration(since: v?.since ?? p.alert.since, now: now)
             out.append(PlannedNotification(key: p.alert.type + ":" + p.alert.subject, item: .disk, level: p.alert.level,
-                                           title: p.title + " · 已持续 " + spent, body: p.alert.message + bodyTail,
+                                           title: p.title + "，已持续 " + spent, body: p.alert.message + bodyTail,
                                            alert: p.alert, topic: .disk))
         }
 
