@@ -586,6 +586,7 @@ runHeroLogicTests()
 runMenuIconTests()
 runMenuRunnerTests()
 runCapacityTests()
+runPreviewConsistencyTests()
 
 // MARK: - Summary
 

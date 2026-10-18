@@ -118,6 +118,9 @@ struct ChartData: Equatable {
     /// Earliest time with data in the window. Nil when the window has no data.
     var firstData: Date?
     var now: Date
+    /// Lowest and highest value of the drawn series, for the labels of a scale with padding (used space). The labels then
+    /// name the real extremes, so their difference is the growth of the window. Nil: the labels name the domain edges.
+    var axisSpan: ClosedRange<Double>?
 
     var isEmpty: Bool { lines.allSatisfy { $0.pointCount == 0 } && bars.isEmpty }
 
@@ -144,6 +147,10 @@ struct ChartData: Equatable {
         }
         if unit == .thermal {
             return (0...3).map { ChartAxisMark(y: y(Double($0)), text: text(Double($0)), threshold: false) }
+        }
+        if unit == .gigabytes, let span = axisSpan {
+            return [ChartAxisMark(y: y(span.lowerBound), text: text(span.lowerBound), threshold: false),
+                    ChartAxisMark(y: y(span.upperBound), text: text(span.upperBound), threshold: false)]
         }
         var out = [ChartAxisMark(y: 0, text: (unit == .bytesPerSecond) ? "0" : text(domain.lowerBound), threshold: false)]
         if unit == .percent && !thresholds.isEmpty {
@@ -498,6 +505,7 @@ enum SidebarChart {
         let span = max(10, (high - low) * 1.2)
         let mid = (high + low) / 2
         d.domain = (mid - span / 2)...(mid + span / 2)
+        if !values.isEmpty { d.axisSpan = low...high }
         if let trigger = input.diskTrigger, trigger.level == .red || trigger.level == .yellow {
             d.bands = [ChartTimeBand(from: max(start, trigger.from), to: input.now, kind: trigger.level == .red ? .critical : .warning)]
         }

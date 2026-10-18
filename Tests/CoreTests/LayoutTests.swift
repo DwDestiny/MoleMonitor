@@ -210,7 +210,7 @@ func runLayoutTests() {
                                            diskGrowth: growth, topApps: apps, now: now, timeZone: utc))
     }
     let nd = note(.disk, .disk, .red, "growth_5d", c, growth: growth)
-    expect(nd.problemNote == "5 天胖了 314 GB，已持续 3 小时", "disk note: \(String(describing: nd.problemNote))")
+    expect(nd.problemNote == "已持续 3 小时，可用 402 GB", "disk note: \(String(describing: nd.problemNote))")
     var pressure = c
     pressure.memoryPressurePercent = 87
     let nm = note(.memory, .memory, .red, "pressure_critical", pressure, minutes: 25)

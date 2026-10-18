@@ -17,7 +17,9 @@ enum PreviewScenario {
 
     /// Invented used space in GB, `daysAgo` days before now (30 down to 0).
     static func usedGB(_ level: PreviewLevel, daysAgo d: Double) -> Double {
-        let wobble = 1.2 * sin(d * 0.9) + 0.4 * sin(d * 2.3)
+        // Small enough that the series never falls while it grows (the slope is at least 0.3 GB a day): a window growth is
+        // then the last point minus the first point of the window, in every scenario.
+        let wobble = 0.15 * sin(d * 0.9) + 0.05 * sin(d * 2.3)
         switch level {
         case .green:
             return 568 + 0.5 * (30 - d) + wobble   // ends at about 583 GB used (DESIGN_V2.md 2.5)
@@ -26,7 +28,7 @@ enum PreviewScenario {
             return 450 + 0.3 * (30 - d) + 105 * ramp + wobble
         case .red:
             let ramp = max(0, min(1, (4.8 - d) / 4.8))
-            return 553 + 0.4 * (30 - d) + 310 * ramp * ramp * (3 - 2 * ramp) + wobble   // ends at about 875 GB used (DESIGN_V2.md 2.4)
+            return 551 + 0.4 * (30 - d) + 312 * ramp * ramp * (3 - 2 * ramp) + wobble   // ends at 875 GB used, 5 days earlier 561 GB: +314 GB
         }
     }
 
@@ -168,6 +170,27 @@ extension PreviewScenario {
                               status: status, diskSeries: diskSeries, diskTrigger: diskTrigger, dogInput: dog, events: events)
     }
 
+    // MARK: Episodes (one start per problem)
+
+    /// Minutes before `now` at which the open problem of an item started. The main column duration, the record page and the
+    /// trend shapes all read this one table, so they cannot disagree. Nil when the item has no problem in the scenario.
+    static func episodeMinutes(_ c: PreviewCase, _ item: HealthItem) -> Double? {
+        switch (c, item) {
+        case (.cpuYellow, .cpu): return 18
+        case (.diskRed, .disk), (.multi, .disk): return 180
+        case (.powerYellow, .power): return 130
+        case (.multi, .memory): return 50
+        case (.multi, .power), (.multi, .cpu): return 40
+        default: return nil
+        }
+    }
+
+    /// The 5 day growth of the red disk series in whole GB, as the engine computes it (the main column and the record page).
+    static func diskGrowth5dGB(now: Date) -> Double? {
+        guard let bytes = result(.red, now: now).result.items.disk.growth["5d"]?.bytes else { return nil }
+        return Double(bytes) / 1e9
+    }
+
     // MARK: Anomaly records (DESIGN_V2.md 7.4)
 
     /// Invented records. Problems that are open in the scenario have `end == nil`. The app name is a fictional one.
@@ -182,24 +205,36 @@ extension PreviewScenario {
         // Two closed records of the last week: shown in every scenario with data (DESIGN_V2.md 2.5: "近 7 天 2 条记录").
         let cpuOld = record(.cpu, .yellow, .yellow, "cpu_mean_5m", start: 2 * day + 600, end: 2 * day + 540, value: 82, unit: "%")
         let memOld = record(.memory, .yellow, .yellow, "pressure_warning", start: 4 * day + 300, end: 4 * day + 270, value: 71, unit: "%")
-        var open = [EventRecord]()
+        // Peak values come from the series of the scenario: the trend maximum since the start, the 5 day disk growth of the
+        // engine, the drain of the current readings. Nothing is typed in a second time.
+        let trend = fixtureTrend(c, now: now).segments.flatMap { $0 }
+        let current = fixtureCurrent(c, at: now)
+        func peak(_ since: Double, _ value: (TrendPoint) -> Double?) -> Double? {
+            let from = now.addingTimeInterval(-since * 60)
+            return trend.filter { $0.t >= from }.compactMap(value).max()
+        }
+        func episode(_ item: HealthItem, _ first: HealthLevel, _ top: HealthLevel, _ reason: String, value: Double?, unit: String?) -> [EventRecord] {
+            guard let start = episodeMinutes(c, item) else { return [] }
+            return [record(item, first, top, reason, start: start, end: nil, value: value, unit: unit)]
+        }
+        var opened = [EventRecord]()
         switch c {
         case .allGreen, .stale, .collecting:
             break
         case .cpuYellow:
-            open = [record(.cpu, .yellow, .yellow, "cpu_mean_5m", start: 18, end: nil, value: 76, unit: "%")]
+            opened = episode(.cpu, .yellow, .yellow, "cpu_mean_5m", value: peak(18) { $0.cpu }, unit: "%")
         case .diskRed:
-            open = [record(.disk, .yellow, .red, "growth_5d", start: 192, end: nil, value: 314, unit: "GB")]
+            opened = episode(.disk, .yellow, .red, "growth_5d", value: diskGrowth5dGB(now: now), unit: "GB")
         case .powerYellow:
-            open = [record(.power, .yellow, .yellow, "sleep_drain", start: 130, end: nil, value: 3.3, unit: "%/h")]
+            opened = episode(.power, .yellow, .yellow, "sleep_drain", value: PanelRows.sleepRate(current.lastSleep), unit: "%/h")
         case .multi:
-            open = [record(.disk, .yellow, .red, "growth_5d", start: 192, end: nil, value: 314, unit: "GB"),
-                    record(.memory, .yellow, .red, "pressure_critical", start: 50, end: nil, value: 87, unit: "%"),
-                    record(.power, .yellow, .yellow, "awake_drain", start: 40, end: nil, value: 34, unit: "%/h"),
-                    record(.cpu, .yellow, .yellow, "cpu_mean_5m", start: 40, end: nil, value: 74, unit: "%")]
+            opened = episode(.disk, .yellow, .red, "growth_5d", value: diskGrowth5dGB(now: now), unit: "GB")
+                + episode(.memory, .yellow, .red, "pressure_critical", value: peak(50) { $0.pressurePercent.map { Double($0) } }, unit: "%")
+                + episode(.power, .yellow, .yellow, "awake_drain", value: current.awakeDrainPerHour, unit: "%/h")
+                + episode(.cpu, .yellow, .yellow, "cpu_mean_5m", value: peak(40) { $0.cpu }, unit: "%")
         }
         if c == .collecting { return [] }
-        return open + [cpuOld, memOld]
+        return opened + [cpuOld, memOld]
     }
 
     // MARK: Rollup windows (DESIGN_V2.md 12.2 D1)
@@ -208,18 +243,22 @@ extension PreviewScenario {
     static func fixtureRollups(_ c: PreviewCase, hours: Int, now: Date) -> [RollupWindow] {
         guard c != .collecting else { return [] }
         let current = fixtureCurrent(c, at: now)
+        let shape = trendShape(c)
         let count = hours * 12
         var out = [RollupWindow]()
         for i in 0..<count {
             let ago = Double(count - 1 - i) * RollupStore.windowSeconds
             let h = ago / 3600
-            let cpu = max(2, (current.cpuPercent ?? 10) + 6 * sin(h * 1.3) + 3 * sin(h * 4.1))
-            let pp = Double(current.memoryPressurePercent ?? 23) + 5 * sin(h * 0.9)
-            out.append(RollupWindow(end: now.addingTimeInterval(-ago), pointCount: 10, cpuMean: cpu, cpuPeak: min(100, cpu + 15),
-                                    pressureMean: max(0, min(100, pp)), pressurePeak: max(0, min(100, pp + 8)),
-                                    swapMB: Int64((current.swapUsed ?? 0) / 1_000_000), pressure: current.pressure,
-                                    thermal: current.thermal, batteryPercent: current.batteryPercent,
-                                    power: current.powerSource, rxKBps: 450 + 300 * (sin(h * 2.1) + 1),
+            let m0 = ago / 60
+            // Ten points of 30 seconds inside the window, read from the same series as the 2 hour trend.
+            let ms = (0..<10).map { m0 + Double($0) * 0.5 }
+            let cpus = ms.map { min(100, max(0, shape.cpu($0))) }
+            let pps = ms.map { Double(shape.pressurePercent($0)) }
+            out.append(RollupWindow(end: now.addingTimeInterval(-ago), pointCount: 10, cpuMean: cpus.reduce(0, +) / 10, cpuPeak: cpus.max(),
+                                    pressureMean: pps.reduce(0, +) / 10, pressurePeak: pps.max(),
+                                    swapMB: shape.swap(m0) / 1_000_000, pressure: shape.pressure(m0),
+                                    thermal: current.thermal, batteryPercent: shape.battery(m0),
+                                    power: shape.power(m0), rxKBps: 450 + 300 * (sin(h * 2.1) + 1),
                                     txKBps: 70 + 50 * (sin(h * 3.7) + 1)))
         }
         return out
@@ -372,23 +411,23 @@ extension PreviewScenario {
         }
 
         let growth5d = engine.items.disk.growth["5d"]?.bytes ?? 0
-        let diskProblem = problem(.disk, .red, "growth_5d", "5 天多占用 " + ByteText.gb(growth5d), ago: 180,
+        let diskProblem = problem(.disk, .red, "growth_5d", "5 天多占用 " + ByteText.gb(growth5d), ago: episodeMinutes(c, .disk) ?? 180,
                                   alert: engine.activeAlerts.first)
         var problems = [ItemVerdict]()
         switch c {
         case .allGreen, .collecting, .stale:
             break
         case .cpuYellow:
-            problems = [problem(.cpu, .yellow, "cpu_mean_5m", "5 分钟均值 76%", ago: 18)]
+            problems = [problem(.cpu, .yellow, "cpu_mean_5m", "5 分钟均值 76%", ago: episodeMinutes(c, .cpu) ?? 18)]
         case .diskRed:
             problems = [diskProblem]
         case .powerYellow:
-            problems = [problem(.power, .yellow, "sleep_drain", "睡眠掉电 3.3%/h", ago: 130)]
+            problems = [problem(.power, .yellow, "sleep_drain", "睡眠掉电 3.3%/h", ago: episodeMinutes(c, .power) ?? 130)]
         case .multi:
             problems = [diskProblem,
-                        problem(.memory, .red, "pressure_critical", "压力严重，swap 9.8 GB", ago: 25),
-                        problem(.power, .yellow, "awake_drain", "电池供电，掉电 34%/h", ago: 40),
-                        problem(.cpu, .yellow, "cpu_mean_5m", "5 分钟均值 74%", ago: 40)]
+                        problem(.memory, .red, "pressure_critical", "压力严重，swap 9.8 GB", ago: episodeMinutes(c, .memory) ?? 50),
+                        problem(.power, .yellow, "awake_drain", "电池供电，掉电 34%/h", ago: episodeMinutes(c, .power) ?? 40),
+                        problem(.cpu, .yellow, "cpu_mean_5m", "5 分钟均值 74%", ago: episodeMinutes(c, .cpu) ?? 40)]
         }
         let problemItems: [HealthItem] = problems.map { $0.item }
         var restItems = [HealthItem]()
@@ -401,34 +440,40 @@ extension PreviewScenario {
 
     // MARK: Trend (2 hours: 30 s points, then 2 s points for the last 5 minutes)
 
-    private static func fixtureTrend(_ c: PreviewCase, now: Date) -> TrendSeries {
-        func calm(_ m: Double) -> Double {
-            let slow: Double = 4.0 * sin(m * 0.35)
-            let fast: Double = 3.0 * sin(m * 1.1)
-            let burst: Double = 25.0 * exp(-pow((m - 70.0) / 3.0, 2.0))
-            return max(2.0, 8.0 + slow + fast + burst)
+    private static func trendCalm(_ m: Double) -> Double {
+        let slow: Double = 4.0 * sin(m * 0.35)
+        let fast: Double = 3.0 * sin(m * 1.1)
+        let burst: Double = 25.0 * exp(-pow((m - 70.0) / 3.0, 2.0))
+        return max(2.0, 8.0 + slow + fast + burst)
+    }
+
+    private static func trendWave(_ base: Double, _ amp: Double, _ m: Double) -> Double {
+        let first: Double = amp * sin(m * 0.9)
+        let second: Double = 0.4 * amp * sin(m * 2.7)
+        return base + first + second
+    }
+
+    private static func trendFlatSwap(_ gb: Double) -> (Double) -> Int64 {
+        return { (m: Double) -> Int64 in
+            let wobble: Double = 0.03 * sin(m * 0.5)
+            return Int64((gb + wobble) * 1_073_741_824.0)
         }
-        func wave(_ base: Double, _ amp: Double, _ m: Double) -> Double {
-            let first: Double = amp * sin(m * 0.9)
-            let second: Double = 0.4 * amp * sin(m * 2.7)
-            return base + first + second
-        }
-        func flatSwap(_ gb: Double) -> (Double) -> Int64 {
-            return { (m: Double) -> Int64 in
-                let wobble: Double = 0.03 * sin(m * 0.5)
-                return Int64((gb + wobble) * 1_073_741_824.0)
-            }
-        }
+    }
+
+    /// The one series of a scenario: value at `m` minutes before now, for every minute (also beyond the 2 hour trend). The trend,
+    /// the rollup windows, the peaks of the records and the sidebar statistics are all read from it.
+    private static func trendShape(_ c: PreviewCase) -> TrendShape {
+        let calm = trendCalm
+        let wave = trendWave
+        let flatSwap = trendFlatSwap
         var shape = TrendShape(cpu: calm, swap: flatSwap(1.2), pressure: { _ in .normal },
                                battery: { _ in 83 }, power: { _ in .ac })
-        var end = now
-        var fine = true
         switch c {
-        case .allGreen:
+        case .allGreen, .collecting, .stale:
             break
         case .cpuYellow:
             shape.pressurePercent = { _ in 31 }
-            shape.cpu = { (m: Double) -> Double in m <= 22.0 ? wave(76, 6, m) : wave(20, 7, m) }
+            shape.cpu = { (m: Double) -> Double in m <= 18.0 ? wave(76, 6, m) : wave(20, 7, m) }
             shape.swap = flatSwap(2.1)
         case .diskRed:
             shape.cpu = { (m: Double) -> Double in max(5.0, wave(23, 8, m)) }
@@ -452,16 +497,28 @@ extension PreviewScenario {
                 }
                 return Int64(bytes)
             }
-            shape.pressure = { m in m <= 25 ? .critical : (m <= 60 ? .warning : .normal) }
-            shape.pressurePercent = { (m: Double) -> Int in m <= 25 ? 87 : (m <= 60 ? 64 : 41) }
+            // Normal before the memory problem starts, warning from the start, critical for the last 25 minutes.
+            shape.pressure = { m in m <= 25 ? .critical : (m <= 50 ? .warning : .normal) }
+            shape.pressurePercent = { (m: Double) -> Int in m <= 25 ? 87 : (m <= 50 ? 64 : 41) }
             shape.battery = { (m: Double) -> Double in m <= 70.0 ? 42.0 + 34.0 * m / 60.0 : 82.0 }
             shape.power = { m in m <= 70 ? .battery : .ac }
+        }
+        return shape
+    }
+
+    private static func fixtureTrend(_ c: PreviewCase, now: Date) -> TrendSeries {
+        let shape = trendShape(c)
+        var end = now
+        var fine = true
+        switch c {
         case .collecting:
             // A trend file restored from the last run: coarse points only, ending 12 minutes ago.
             end = now.addingTimeInterval(-12 * 60)
             fine = false
         case .stale:
             end = now.addingTimeInterval(-25 * 60)
+        default:
+            break
         }
 
         func point(_ secondsAgo: Double) -> TrendPoint {

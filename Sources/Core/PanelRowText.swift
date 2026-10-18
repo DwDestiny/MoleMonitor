@@ -160,7 +160,17 @@ enum PanelRows {
     /// "人话原因，已持续 N". The plain word is 胖了 (disk), 喘不过气 (memory), 掉电太快 (battery), 跑太久 (CPU) or 发烫 (temperature).
     /// The measured number stays in the text.
     static func problemNote(_ item: SidebarItem, _ state: PanelRowState, code: String, since: Date?, _ input: PanelRowsInput) -> String {
-        reason(item, state, code: code, input) + lasting(since: since, now: input.now)
+        // The disk growth note carries new facts: how long, and how much is left. The headline and the value already
+        // say how much it grew, so the note does not repeat it (DESIGN_V3.md 5.1).
+        if item == .disk, ["growth_1d", "growth_5d", "growth_30d"].contains(code) {
+            let cap = CapacityFormat.disk(input.current)
+            var free = ""
+            if !cap.isMissing { free = "，可用 " + cap.available } else if let a = input.current.diskAvailable { free = "，可用 " + ByteText.gb(a) }
+            guard let since else { return String(free.dropFirst()) }
+            let text = TextFormat.duration(since: since, now: input.now)
+            return (text == "刚刚" ? "刚刚开始" : "已持续 " + text) + free
+        }
+        return reason(item, state, code: code, input) + lasting(since: since, now: input.now)
     }
 
     /// "，已持续 3 小时", "，刚刚开始" below one minute, empty without a start time.
