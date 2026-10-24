@@ -10,6 +10,8 @@ MoleMonitor 是 macOS 菜单栏上的轻量状态监测与预警工具。它只�
 
 > **注意**：功能代码已经写完。`Sources/Core/` 与 CLI 已在 Linux 上测试。`Sources/App/` 已在 GitHub Actions 的 macOS 虚拟机上通过回归门禁（见 [docs/CI.md](docs/CI.md)），但尚未在用户的 Mac 上人工验收。面板 v2（NSPanel 窗口、侧栏）已合并到 `main`。面板 v3（体检单版式，删除面板里的比熊，菜单栏图标改为静态与奔跑）在分支 `v3/design` 上，设计见 [docs/DESIGN_V3.md](docs/DESIGN_V3.md)。v3 没写到的内容见 [docs/DESIGN_V2.md](docs/DESIGN_V2.md)。旧设计见 [docs/DESIGN.md](docs/DESIGN.md)（被取代的章节有标记）。产品范围见 [docs/PROJECT.md](docs/PROJECT.md)，验证范围见 [docs/VERIFICATION.md](docs/VERIFICATION.md)。
 
+当前 CI 范围：Mac mini 运行编译、Core/CLI 测试和 `--ci-headless` 无界面门禁（含离屏静态预览）。两项实体容量范围诊断仍执行并如实报告；其失败不计入软件门禁通过，也不能称完整验收通过。历史完整 GUI 自动化入口保留，但不属于 CI。无界面 CI 通过不等于图形或实机验收通过；后者在对应版本中用 computer use 在本机 Mac 实测。详见 [CI 范围](docs/CI.md)。
+
 ## 功能
 
 MoleMonitor 是只读的 macOS 14+ 菜单栏健康哨兵。它检查 CPU、内存、温度、磁盘和耗电五个健康项。有问题时，状态卡突出问题名与证据，正常项靠后。

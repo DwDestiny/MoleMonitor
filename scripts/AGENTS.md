@@ -12,6 +12,6 @@
 - 改 `build.py` 后，必须在 Mac 或 CI 上实际构建，核验 App 与 CLI 的签名，并运行 `--self-test`。在 macOS 构建之前，`build.py` 只算未验证。
 - `--ui-test` 只写 `dist-uitest/`，不改动 `dist/`。`dist-uitest/` 不得分发。
 - `ci_acceptance.py` 不安装 App，不修改登录项，不联网。它只在 arm64 macOS 上运行。
-- 改 `ci_acceptance.py` 后，在 CI 上跑一遍。不得为了通过而放宽阈值。放宽时必须在 [docs/CI.md](../docs/CI.md) 写明原因。
-- `.github/workflows/build-mac.yml` 的成本约束：不得加 `schedule`，不得加多系统或多版本矩阵，保持单作业，保持 `timeout-minutes: 15`，保持路径过滤和并发取消。改动前先读 [docs/CI.md](../docs/CI.md)。
+- 改 `ci_acceptance.py` 后，运行 `--self-test` 并在 CI 上跑显式 `--ci-headless`。两项具名实体容量范围诊断单列，缺失、类型错误、越界或 API 状态失败仍阻断 CI；默认完整流程和 `--headless-only` 仍严格执行原阈值。默认完整 GUI 路径保留；不在 CI 运行，不以缺少图形会话为由计作通过。不得为了通过而放宽阈值。放宽时必须在 [docs/CI.md](../docs/CI.md) 写明原因。
+- `.github/workflows/build-mac.yml` 的成本约束：不得加 `schedule`，不得加多系统或多版本矩阵，保持单作业，保持现有 `timeout-minutes: 30`，保持路径过滤和并发取消。改动前先读 [docs/CI.md](../docs/CI.md)。
 - 改测试脚本后，运行该脚本并确认全部通过。
