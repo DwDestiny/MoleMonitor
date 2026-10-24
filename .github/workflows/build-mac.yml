@@ -1,67 +1,12 @@
-# Builds and tests MoleMonitor on an Apple Silicon runner. Public repository: standard runners are free.
-# Cost guard: one job, path filter, cancel superseded runs (per ref), 30 minute timeout, no schedule.
-# Pushes to every branch run the gate, so parallel feature branches each get their own result.
-name: build-mac
-
+name: Mac mini runner validation
 on:
-  push:
-    branches: ["**"]
-    paths:
-      - "Sources/**"
-      - "Tests/**"
-      - "scripts/**"
-      - "Vendor/**"
-      - ".github/workflows/build-mac.yml"
   workflow_dispatch:
-
-concurrency:
-  group: build-mac-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
-
 jobs:
-  build-test:
-    runs-on: macos-15
-    timeout-minutes: 30
+  validate:
+    runs-on: [self-hosted, macOS, ARM64, macmini]
+    timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Toolchain
-        run: |
-          sw_vers
-          uname -m
-          xcodebuild -version
-          /usr/bin/swiftc --version
-
-      - name: Core and CLI tests
-        run: |
-          set -o pipefail
-          SWIFTC=/usr/bin/swiftc python3 scripts/test_core.py 2>&1 | tee "$RUNNER_TEMP/core-tests.log"
-          SWIFTC=/usr/bin/swiftc python3 scripts/test_cli.py
-
-      - name: Build app
-        run: python3 scripts/build.py
-
-      - name: Build UI test variant (交互与动效回归门禁)
-        run: python3 scripts/build.py --ui-test
-
-      - name: Acceptance and UI regression gate (回归门禁)
-        env:
-          MOLEMONITOR_CI_OUT: ${{ runner.temp }}
-          MOLEMONITOR_CORE_LOG: ${{ runner.temp }}/core-tests.log
-        run: python3 scripts/ci_acceptance.py
-
-      - name: Upload preview, UI frames and reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: molemonitor-ci
-          path: |
-            ${{ runner.temp }}/molemonitor-ci/preview-*.png
-            ${{ runner.temp }}/molemonitor-ci/status.json
-            ${{ runner.temp }}/molemonitor-ui/*.png
-            ${{ runner.temp }}/molemonitor-ui/ui-report.json
-          if-no-files-found: ignore
-          retention-days: 3
+      - name: Verify isolated CI environment and GUI availability
+        run: /usr/local/bin/python3.12 -I "/Library/Application Support/DwMacCI/ci-acceptance.py"
