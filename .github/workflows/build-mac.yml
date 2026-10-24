@@ -1,4 +1,4 @@
-name: Mac mini runner validation
+name: Read-only CI disk capacity probe
 on:
   workflow_dispatch:
 permissions:
@@ -8,5 +8,40 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, macmini]
     timeout-minutes: 8
     steps:
-      - name: Verify isolated CI environment and GUI availability
-        run: /usr/local/bin/python3.12 -I "/Library/Application Support/DwMacCI/ci-acceptance.py"
+      - name: Query Foundation disk capacity without reading file contents
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/disk-capacity-probe.swift" <<'SWIFT'
+          import Foundation
+          import Darwin
+          
+          func value<T>(_ item: T?) -> Any { item.map { $0 as Any } ?? NSNull() }
+          let fm = FileManager.default
+          var paths = [("system", "/"), ("data", "/System/Volumes/Data"), ("home", fm.homeDirectoryForCurrentUser.path)]
+          if CommandLine.arguments.count == 2 { paths.append(("ci", CommandLine.arguments[1])) }
+          for (label, path) in paths {
+              for directoryHint in [false, true] {
+                  let url = directoryHint ? URL(fileURLWithPath: path, isDirectory: true) : URL(fileURLWithPath: path)
+                  var row: [String: Any] = ["label": label, "uid": getuid(), "euid": geteuid(), "directoryHint": directoryHint]
+                  do {
+                      let all = try url.resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityKey,
+                          .volumeAvailableCapacityForImportantUsageKey, .volumeIsReadOnlyKey])
+                      let only = try URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+                      row["total"] = value(all.volumeTotalCapacity)
+                      row["available"] = value(all.volumeAvailableCapacity)
+                      row["important"] = value(all.volumeAvailableCapacityForImportantUsage)
+                      row["importantOnly"] = value(only.volumeAvailableCapacityForImportantUsage)
+                      row["readOnly"] = value(all.volumeIsReadOnly)
+                      let attrs = try fm.attributesOfFileSystem(forPath: path)
+                      row["fileManagerFree"] = value(attrs[.systemFreeSize] as? NSNumber)
+                  } catch let error as NSError {
+                      row["errorDomain"] = error.domain
+                      row["errorCode"] = error.code
+                  }
+                  let bytes = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
+                  print(String(decoding: bytes, as: UTF8.self))
+              }
+          }
+          
+          SWIFT
+          /usr/bin/xcrun swift "$RUNNER_TEMP/disk-capacity-probe.swift" /Volumes/MacMiniData/CI
