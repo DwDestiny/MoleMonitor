@@ -1,7 +1,7 @@
 ---
 title: "MoleMonitor scripts"
 type: module
-last_updated: 2026-10-18
+last_updated: 2026-10-24
 ---
 
 # scripts
@@ -11,7 +11,7 @@ last_updated: 2026-10-18
 | 脚本 | 平台 | 用途 |
 |---|---|---|
 | `build.py` | 仅 Mac（arm64，macOS 14+） | 编译 App 与 CLI，组装并签名 `dist/MoleMonitor.app`。加 `--ui-test` 则构建 `dist-uitest/MoleMonitor.app` |
-| `ci_acceptance.py` | 仅 arm64 macOS | 回归门禁：对已构建的 App 做签名、自检、真实采样、CLI 读回、预览图和界面回归检查，并按门禁登记表汇总 |
+| `ci_acceptance.py` | 仅 arm64 macOS | CI 显式 `--ci-headless`：签名、自检、真实采样、CLI 读回、离屏静态预览和审计；默认完整 GUI 自动化入口历史保留 |
 | `test_core.py` | Linux 与 Mac | 编译并运行 `Tests/CoreTests/`，共 5074 条断言 |
 | `test_cli.py` | Linux 与 Mac | 编译 `molemonitor-cli`，运行 124 项检查 |
 
@@ -35,23 +35,15 @@ last_updated: 2026-10-18
 
 ## ci_acceptance.py
 
-在 arm64 macOS 上，先运行 `python3 scripts/build.py` 和 `python3 scripts/build.py --ui-test`，再运行 `python3 scripts/ci_acceptance.py`。其他平台上脚本直接退出。例外：`python3 scripts/ci_acceptance.py --self-test` 在任何系统上检查门禁登记表（见 [CI.md](../docs/CI.md) 的“v2 门禁登记表”）。`build.py --ui-test` 还会生成 UI 检查登记文件，`build.py` 在 `Resources/DogSprites` 存在时把它复制进应用包。环境变量 `MOLEMONITOR_CI_OUT` 指定输出目录，默认是系统临时目录。环境变量 `MOLEMONITOR_CORE_LOG` 指向 Core 测试日志，W13、W20、W21 读取它。
+CI 在 arm64 macOS 上构建普通 App 后运行 `python3 scripts/ci_acceptance.py --ci-headless`。该模式不要求 `dist-uitest/`，不启动窗口、状态栏交互、合成事件或屏幕捕获。它保留原有签名、包信息、自检、22 秒真实引擎采样、数据权限、CLI 读回/只读/耗时、28 张离屏静态预览、源码审计、Core 日志门禁和发布二进制无测试代码检查。实体容量范围诊断只单列 `disk used is between 0 and total` 与 `disk available_important is plausible`：照常使用原表达式和阈值，记录每项 PASS/FAIL，失败通过日志 warning、GitHub summary 与报告暴露，不计为软件门禁通过。其余检查仍阻断 CI；容量数据缺失、非整数、负数、越界或 API 状态失败也阻断 CI。
 
-脚本按以下顺序检查：
+`MOLEMONITOR_CI_OUT` 指定临时输出根目录，默认是系统临时目录；`MOLEMONITOR_CORE_LOG` 指向 `test_core.py` 的日志，W13、W20、W21 仍须读取有效结果。`molemonitor-ci/acceptance-report.json` 在 CI 模式记录 `scope=ci-headless`、`gate.status` 与 `capacity_diagnostics`。只有实体容量诊断失败时，软件门禁可为 `gate.status=pass`，但顶层 `status=diagnostic_failure`，失败项仍列在 `failures` 中；其他失败返回非零。UI 与实机验收记录 `not_run`，不计入通过数。无界面 CI 通过不等于图形或实机验收通过。对应版本的图形和交互由 computer use 在本机 Mac 实测。
 
-1. 签名、`Info.plist` 版本号、`LSUIElement`、标识符。
-2. `--self-test`。
-3. 22 秒真实无界面采样，以及实时采样探针（状态卡打开时开启，关闭后停止）。报告含引擎的 `diagnosticSnapshot`（打开、关闭、结束三个时刻）。脚本核对内存压力、热状态、swap、前台 App、覆盖率、芯片、提示词设置、定时器数与进程扫描周期。
-4. 数据文件权限（目录 0700，文件 0600）。
-5. CLI 读回与只读，CLI 耗时（30 次）。
-6. 28 张预览 PNG：7 个场景、浅深两种外观、满数据与空数据。宽 704 像素（352 pt），所有文件同高（436 pt 对应的像素），文件两两不同（M1、M3）。
-7. 发布二进制不含测试代码。`Panel*.swift` 的每个按钮有标识符和中文标签，`Panel*.swift` 不含 `Timer` 与 `TimelineView`。
-8. 运行测试变体的 `--ui-test`，总时间预算 420 秒（原因见 [CI.md](../docs/CI.md) “UI 测试总时长”）。核对已激活的 `ui` 门禁（W06 的快速扫过测量实际间隔，作废的扫过重做，见 CI.md）：项 A 至 L，M4 至 M6、M11 至 M14、M19、M19V、M20、M21、N1、N2，以及 v2 门禁 W01 至 W12、W14、W15、W17、W18、W19、W22。M2、M3、M22 的结果取自 W02。脚本把每个 `GATE` 行立即打印到日志。项的含义见 CI.md。
-   然后读取 Core 测试日志（环境变量 `MOLEMONITOR_CORE_LOG`），评估 W13、W20、W21。
-9. 核对包内没有 `Contents/Resources/DogArt` 与 `DogSprites`，源码树没有 `Resources/`。最后做发布二进制审计（DF）：发布版不含 `DogFrameProbe`、`UITestPanelChecks`、`UITestIconChecks`，UI 变体含 `DogFrameProbe`。
-10. 输出门禁汇总，例如 `GATE REGISTRY: <通过> passed / 0 failed / 1 inactive (未激活) / 1 skipped`。已激活的门禁没有结果算失败。未激活的门禁（W16）列为“未激活”，不算通过，也不使 CI 失败。同一个编号报告两次时，失败不会被后一次通过覆盖。
+`--headless-only` 保留严格无界面验收：实体容量诊断失败仍返回非零。
 
-脚本不安装 App，不修改登录项。运行 `--ui-test` 时，状态卡会在屏幕上显示约 30 秒，使用临时数据目录。结果是回归门禁，不是真机验收。
+不带参数的默认入口仍执行原有完整检查，含 UI 变体正控和完整 `--ui-test` 门禁，所有阈值保持原样。这个历史入口需要事先运行 `build.py --ui-test`，仅保留供研究和追溯，不再作为 CI 或本轮本机执行的强制关卡。
+
+`python3 scripts/ci_acceptance.py --self-test` 可在任何系统验证登记表、源码审计、显式 scope 和发布二进制审计的正反控制；不启动 App。所有模式均不安装 App、不改登录项、不联网。
 
 ## 测试脚本
 

@@ -1,25 +1,35 @@
 ---
 title: "MoleMonitor · CI 回归门禁"
 type: ci
-last_updated: 2026-10-18
+last_updated: 2026-10-24
 ---
 
 # CI 回归门禁
 
-GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行回归检查。结果是回归门禁，不是真机验收。工作流文件是 [build-mac.yml](../.github/workflows/build-mac.yml)。
+GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行 Core/CLI 测试与无界面验收。无界面 CI 通过不等于图形或实机验收通过。图形和交互在对应版本中用 computer use 在本机 Mac 实测；历史 GUI 自动化脚本保留，不作为 CI 关卡。工作流文件是 [build-mac.yml](../.github/workflows/build-mac.yml)。
+
+## 执行边界
+
+| 检查 | 执行位置与声明 |
+|---|---|
+| 编译、unit、CLI、fixtures | Mac mini 无界面 CI |
+| headless browser、offscreen render | 可在 Mac mini 无界面 CI；Mole 当前保留 28 张离屏静态预览，未增加浏览器步骤 |
+| 真实 App 窗口、菜单、IME、系统弹窗、完整交互路径与体验 | 对应版本由 computer use 在本机 Mac 实测，不派给无桌面会话的 CI |
+| 历史完整 UI harness | 源码与默认命令保留，不在 CI 运行；报告 `not_run`，不计 pass，不要求本机强制重跑这套脚本 |
+
+自动化通过不能写成实机验收通过。fixtures 和 golden 仍按已有源头维护，CI 不自动刷新 golden 来消除差异。
 
 ## 工作流做什么
 
-工作流 `build-mac` 只有一个作业 `build-test`，运行在 `macos-15`。步骤按顺序执行：
+工作流 `build-mac` 只有一个作业 `build-test`，运行在带 `[self-hosted, macOS, ARM64, macmini, headless, offscreen-render]` 标签的 Mac mini。步骤按顺序执行：
 
 | 步骤 | 内容 |
 |---|---|
 | 1. Toolchain | 输出系统版本、芯片、Xcode 和 `swiftc` 版本 |
-| 2. Core and CLI tests | `scripts/test_core.py`（4968 条断言，输出同时写入 `$RUNNER_TEMP/core-tests.log`）与 `scripts/test_cli.py`（124 项检查） |
+| 2. Core and CLI tests | 验收脚本 `--self-test`、`scripts/test_core.py`（输出同时写入 `$RUNNER_TEMP/core-tests.log`）与 `scripts/test_cli.py` |
 | 3. Build app | `python3 scripts/build.py`，输出 `dist/` |
-| 4. Build UI test variant | `python3 scripts/build.py --ui-test`，输出 `dist-uitest/` |
-| 5. Acceptance and UI regression gate | `python3 scripts/ci_acceptance.py`，检查项见 [scripts/README.md](../scripts/README.md) |
-| 6. Upload | 上传 artifact `molemonitor-ci`，保留 3 天，即使前面步骤失败也上传 |
+| 4. Headless CI gate and physical capacity diagnostics | `python3 scripts/ci_acceptance.py --ci-headless`，检查项见 [scripts/README.md](../scripts/README.md) |
+| 5. Upload | 上传 artifact `molemonitor-ci`，保留 3 天，即使前面步骤失败也上传 |
 
 触发条件：推送到任意分支（`branches: ["**"]`）且改动了 `Sources/`、`Tests/`、`scripts/`、`Vendor/` 或工作流文件（`Resources/` 路径已随比熊素材删除，U10），或手动触发（`workflow_dispatch`）。
 
@@ -27,14 +37,14 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 
 | 约束 | 值 | 依据 |
 |---|---|---|
-| 运行器 | `macos-15` | 公开仓库使用标准运行器免费。`macos-14` 将于 2026-11-02 退役，因此不用 |
+| 运行器 | 自有 Mac mini，`[self-hosted, macOS, ARM64, macmini, headless, offscreen-render]` | 编译、单元测试与无界面验收不依赖图形登录会话 |
 | 作业数 | 1 | 不加多系统或多版本矩阵 |
 | 超时 | `timeout-minutes: 30` | 防止卡死后占用运行器。2026-10-13 从 20 改为 30，原因见下文“UI 测试总时长” |
 | 触发 | 路径过滤，无 `schedule` | 文档改动不触发。不做定时运行 |
 | 并发 | `cancel-in-progress: true`，分组按分支 | 同一分支的新提交取消旧运行。不同分支的运行互不取消 |
 | 权限 | `contents: read` | 工作流不写仓库 |
 
-> **警告**：不要把仓库改为私有，除非先复核计费。私有仓库的 macOS 运行器按分钟计费，并且倍率高于 Linux。改为私有后，本工作流会开始产生费用。
+仓库可见性或运行器范围变更前，复核当时 GitHub 的计费、访问权限和不可信代码隔离要求；历史托管 runner 的用量规则不能直接代替自有 runner 的评估。
 
 > **警告**：不要给 `build-mac.yml` 加 `schedule`，不要加多系统矩阵，不要去掉超时。这些改动会增加用量。
 
@@ -47,7 +57,14 @@ GitHub Actions 在每次改动源码或脚本的提交后构建 App，并运行�
 3. 查看失败步骤的日志：`gh run view <run-id> --log-failed`。
 4. 下载 artifact：`gh run download <run-id> -n molemonitor-ci`。如果省略 `<run-id>`，`gh` 会让你选择。
 
-日志中每个检查输出一行 `PASS`、`FAIL` 或 `SKIP`。最后一行是 `ACCEPTANCE PASSED` 或 `ACCEPTANCE FAILED`。`SKIP` 不是通过，也不是失败，日志末尾会集中列出。
+CI 显式运行 `--ci-headless`，输出 `scope=ci-headless` 与 `CI HEADLESS GATE PASSED/FAILED`。原有签名、22 秒真实采样、CLI、权限、离屏静态预览、源码审计、Core 日志与发布版无测试代码检查继续执行。只有下列两个实体容量范围检查单列为诊断，仍使用原表达式与阈值并记录每项 PASS/FAIL：
+
+- `disk used is between 0 and total`
+- `disk available_important is plausible`
+
+这是运行范围拆分，不是把实体容量失败判为通过。后台身份的 Foundation important 容量接口已观测到零值；其数据仍会导致产品呈满盘，采样实现尚未修复，本轮不改变产品采样行为。日志 warning、GitHub summary 和 `acceptance-report.json` 都显示诊断失败。若仅这两项失败，`gate.status=pass` 表示所选软件门禁通过，顶层 `status=diagnostic_failure`，两失败仍列在 `failures`；不能写成完整验收通过或实体容量健康。容量数据缺失、非整数、负数、越界或 API 状态失败仍阻断 CI，所有其他检查与发布版审计失败也返回非零。
+
+不使用 `continue-on-error`，不把任意验收失败转成成功。`--headless-only` 保留严格无界面验收，其两项实体容量失败仍返回非零；不带参数的默认完整流程和所有阈值不变。UI 和实机验收仍记录 `not_run`，不计为通过。
 
 artifact 的内容：
 
@@ -55,8 +72,11 @@ artifact 的内容：
 |---|---|
 | `preview-<场景>-<外观>[-empty].png` | 28 张静态状态卡图：7 个场景（allGreen、collecting、stale、cpuYellow、diskRed、powerYellow、multi）各有 light 与 dark，各有完整数据与 `-empty`（无历史）两种 |
 | `status.json` | 22 秒无界面采样写出的状态文件 |
-| `ui-*.png` | `--ui-test` 的窗口截图。`ui-m-<场景>-<light|dark>.png` 是各场景的真实弹窗截图 |
-| `ui-report.json` | `--ui-test` 的报告：各项状态、数值、主线程间隔统计 |
+| `acceptance-report.json` | 本轮无界面验收范围、结果、失败项及 UI/实机 `not_run` 状态 |
+
+## 历史完整 GUI 自动化入口（不属于当前 CI）
+
+以下 UI 预算、门禁和历史 CI 记录保留作追溯。`ci_acceptance.py` 不带参数时仍执行完整流程，需预先构建 `--ui-test` 变体；本轮不在 CI 或本机运行它，也不把它设为本机图形验收的强制关卡。
 
 ## UI 测试总时长
 

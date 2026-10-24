@@ -3,13 +3,17 @@
 # Copyright (c) 2026 DwDestiny
 # Input: dist/MoleMonitor.app built by scripts/build.py on arm64 macOS.
 # Output: Headless acceptance checks (self-test, signature, real sampling, CLI read-back, static preview) and the UI regression gate
-#         (dist-uitest/MoleMonitor.app --ui-test: status item, popover, motion, hover, close, quit); exit code 0 means all passed.
+#         (dist-uitest/MoleMonitor.app --ui-test: status item, popover, motion, hover, close, quit); exit code 0 means the selected scope passed.
+#      `--headless-only` runs the existing non-window checks; UI gates and the UI-variant positive control are not run or counted as passed.
+#      `--ci-headless` selects the same non-window checks but records the two physical capacity range checks as diagnostics,
+#      never as passes. Signature, sampling/data contracts, CLI, preview, source/Core and release audits still block this CI gate.
 #      `--self-test` checks the gate registry logic and the source audits (W25 to W27, run on the repo sources) on any OS and exits.
 #      The registry GATES lists W01 to W30 and the old gates:
 #      pending gates are shown as inactive (未激活), never counted as passed (docs/CI.md, "v2 门禁登记表").
 # Pos: Runs in GitHub Actions and on a Mac. It installs nothing and changes no login item. The UI gate shows a popover on the
 #      runner for a few minutes (time budget 500 s, docs/CI.md "UI 测试总时长"), with temporary data; the gate needs `python3 scripts/build.py --ui-test` first.
 from pathlib import Path
+import argparse
 import json
 import os
 import platform
@@ -26,6 +30,7 @@ app = root / "dist/MoleMonitor.app"
 main_bin = app / "Contents/MacOS/MoleMonitor"
 cli_bin = app / "Contents/Helpers/molemonitor-cli"
 failures = []
+capacity_diagnostics = []
 
 # --- Gate registry (docs/DESIGN_V2.md 13.2.1 and 13.3; method in docs/CI.md, section "v2 门禁登记表")
 # Each gate has an id, a name, a status and a source that says where its result is read:
@@ -114,6 +119,44 @@ def core_gate_results(log_text):
     return results
 gate_by_id = {g["id"]: g for g in GATES}
 gate_results = {}  # gate id -> "pass" | "fail" | "skip"; only gates that ran have an entry
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser(description="Validate the built app; default: the complete headless and UI suite.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--self-test", action="store_true", help="test the gate evaluator and source audits on any OS")
+    mode.add_argument("--headless-only", action="store_true", help="run non-window checks only; UI is not run and cannot count as passed")
+    mode.add_argument("--ci-headless", action="store_true", help="run the headless CI gate; record physical capacity ranges separately")
+    parsed = parser.parse_args(argv)
+    if parsed.ci_headless:
+        parsed.headless_only = True
+    return parsed
+
+
+HEADLESS_GATE_SOURCES = ("core", "audit")
+
+# Only these two checks leave the CI gate. Their original expressions and thresholds stay at the call sites.
+# Default/full and --headless-only still enforce both checks. An unknown diagnostic ID is a programming error.
+CAPACITY_DIAGNOSTIC_NAMES = {
+    "disk_used_range": "disk used is between 0 and total",
+    "disk_important_range": "disk available_important is plausible",
+}
+
+
+def capacity_result(check_id, ok, detail=""):
+    return {"id": check_id, "name": CAPACITY_DIAGNOSTIC_NAMES[check_id],
+            "status": "pass" if ok else "fail", "detail": detail}
+
+
+def ci_outcome(blocking_failures, release_failures, diagnostics):
+    diagnostic_failures = [item for item in diagnostics if item["status"] == "fail"]
+    gate_failed = bool(blocking_failures or release_failures)
+    return {
+        "status": "fail" if gate_failed else "diagnostic_failure" if diagnostic_failures else "pass",
+        "gate_status": "fail" if gate_failed else "pass",
+        "exit_code": 1 if gate_failed else 0,
+        "diagnostic_failures": diagnostic_failures,
+    }
 
 
 def gate_ids(source, status=None):
@@ -254,6 +297,30 @@ PREVIEW_PROBLEMS = {"allGreen": 0, "cpuYellow": 1, "diskRed": 1, "powerYellow": 
 ALL_GREEN_MAX_HEIGHT_PT = 290   # W24, DESIGN_V3.md 3.3
 
 
+def _release_binary_checks(headless_only=False, release_path=None, ui_path=None, emit=print):
+    failures_df = []
+
+    def df_check(ok, name, detail=""):
+        emit(("PASS  " if ok else "FAIL  ") + name + (f"  [{detail}]" if detail else ""), flush=True)
+        if not ok:
+            failures_df.append(name)
+
+    emit("\n---- release binary audit (DF) ----", flush=True)
+    release = (release_path or main_bin).read_bytes()
+    for marker in (b"DogFrameProbe", b"UITestPanelChecks", b"UITestIconChecks"):
+        df_check(marker not in release, f"DF release binary does not contain {marker.decode()}")
+    if headless_only:
+        emit("NOT RUN  DF UI test variant positive control (scope=headless; not counted as passed)", flush=True)
+        return failures_df
+    ui_bin = ui_path or root / "dist-uitest/MoleMonitor.app/Contents/MacOS/MoleMonitor"
+    if not ui_bin.exists():
+        df_check(False, "DF: dist-uitest/MoleMonitor.app exists")
+        return failures_df
+    df_check(b"DogFrameProbe" in ui_bin.read_bytes(), "DF UI test variant contains the test probe (positive control)")
+    return failures_df
+
+
+
 def gate_self_test():
     """Local self-test of the registry logic (runs on any OS): python3 scripts/ci_acceptance.py --self-test"""
     problems = []
@@ -280,6 +347,55 @@ def gate_self_test():
     _, c = gate_summary({})
     if c["fail"] != sum(1 for g in GATES if g["status"] == "active"):
         problems.append("an active gate without result is not counted as failed")
+    # Scope is explicit: absent UI results cannot become passes, and full mode still fails for them.
+    if parse_arguments([]).headless_only or not parse_arguments(["--headless-only"]).headless_only:
+        problems.append("headless scope is not explicit")
+    selected = {g["id"]: "pass" for g in GATES if g["source"] in HEADLESS_GATE_SOURCES}
+    _, headless_counts = gate_summary(selected, sources=HEADLESS_GATE_SOURCES)
+    _, complete_counts = gate_summary(selected)
+    if headless_counts["fail"] or headless_counts["pass"] != len(selected):
+        problems.append("headless registry counts absent UI gates as passed or failed")
+    if complete_counts["fail"] != len(gate_ids("ui", "active")):
+        problems.append("default full registry does not fail when UI results are missing")
+    # A headless build still rejects test code in release; only the UI-variant positive control is out of scope.
+    with tempfile.TemporaryDirectory(prefix="molemonitor-ci-scope-") as folder:
+        release = Path(folder) / "release"
+        ui = Path(folder) / "ui"
+        release.write_bytes(b"production")
+        quiet = lambda *args, **kwargs: None
+        if _release_binary_checks(True, release, ui, quiet):
+            problems.append("headless release audit incorrectly requires a UI variant")
+        if not _release_binary_checks(False, release, ui, quiet):
+            problems.append("full release audit allows a missing UI positive control")
+        ui.write_bytes(b"production")
+        if not _release_binary_checks(False, release, ui, quiet):
+            problems.append("full release audit allows a UI binary without the test probe")
+        ui.write_bytes(b"DogFrameProbe")
+        if _release_binary_checks(False, release, ui, quiet):
+            problems.append("full release audit rejects the valid positive control")
+        release.write_bytes(b"production UITestPanelChecks")
+        if not _release_binary_checks(True, release, ui, quiet):
+            problems.append("headless release audit allows test code in production")
+
+    # Physical diagnostics are never changed into passes; every ordinary or release failure still blocks CI.
+    capacity_fail = capacity_result("disk_important_range", False, "0")
+    capacity_pass = capacity_result("disk_used_range", True, "123")
+    only_diagnostic = ci_outcome([], [], [capacity_fail, capacity_pass])
+    if only_diagnostic["status"] != "diagnostic_failure" or only_diagnostic["gate_status"] != "pass" or only_diagnostic["exit_code"] != 0:
+        problems.append("CI outcome hides or blocks an explicitly separate physical diagnostic")
+    if only_diagnostic["diagnostic_failures"] != [capacity_fail]:
+        problems.append("CI outcome counts a failed physical diagnostic as passed")
+    for blocking, release in [(["codesign verify"], []), (["missing capacity integer"], []), ([], ["release has test code"])]:
+        if ci_outcome(blocking, release, [capacity_fail])["exit_code"] != 1:
+            problems.append("an ordinary, malformed-data or release failure does not block CI")
+    if not parse_arguments(["--ci-headless"]).headless_only or parse_arguments(["--headless-only"]).ci_headless:
+        problems.append("CI diagnostic scope is not an explicit separate mode")
+    try:
+        capacity_result("unknown_check", False)
+        problems.append("an unknown check can be treated as a physical diagnostic")
+    except KeyError:
+        pass
+
     # The legacy lists must keep the exact set the gate has always required.
     expected_ui = list("ABCDEFGHIJKL") + ["M2", "M3", "M4", "M5", "M6", "M11", "M12", "M13", "N1", "N2", "M14", "M19", "M22"]
     expected_ui += [f"W{n:02d}" for n in (1, 2, 3, 5, 6, 7, 8, 9, 10, 16, 17, 19, 22)]
@@ -335,7 +451,8 @@ def gate_self_test():
     return not problems
 
 
-if "--self-test" in sys.argv[1:]:
+args = parse_arguments(sys.argv[1:])
+if args.self_test:
     sys.exit(0 if gate_self_test() else 1)
 
 
@@ -344,6 +461,16 @@ def check(ok, name, detail=""):
     if not ok:
         failures.append(name)
     return ok
+
+
+def check_capacity(check_id, ok, detail=""):
+    item = capacity_result(check_id, ok, detail)
+    capacity_diagnostics.append(item)
+    if args.ci_headless:
+        print("DIAGNOSTIC " + ("PASS  " if ok else "FAIL  ") + item["name"]
+              + (f"  [{detail}]" if detail else "") + " (physical capacity; outside CI gate)", flush=True)
+        return ok
+    return check(ok, item["name"], detail)
 
 
 def run(cmd, env=None, timeout=120):
@@ -386,6 +513,10 @@ def run_streaming(cmd, env=None, timeout=120, echo=("GATE ", "registered check "
         t.join(timeout=5)
     return "".join(out), "".join(err), code
 
+
+if args.headless_only:
+    print("ACCEPTANCE SCOPE: " + ("ci-headless; physical capacity diagnostics separate" if args.ci_headless else "headless")
+          + "; UI NOT RUN; real-device acceptance NOT RUN", flush=True)
 
 if platform.system() != "Darwin" or platform.machine() != "arm64":
     sys.exit("ci_acceptance.py: needs arm64 macOS.")
@@ -444,8 +575,15 @@ if report:
     used = (disk.get("used") or {}).get("value")
     avail = (disk.get("available_important") or {}).get("value")
     check(isinstance(total, int) and total > 10 * 10**9, "disk total is a real number", str(total))
-    check(isinstance(used, int) and 0 < used < total, "disk used is between 0 and total", str(used))
-    check(isinstance(avail, int) and 0 < avail <= total, "disk available_important is plausible", str(avail))
+    if args.ci_headless:
+        # A missing, failed or malformed API result is not a physical range diagnostic and must still fail CI.
+        check(all(type(value) is int for value in (total, used, avail))
+              and total > 0 and 0 <= used <= total and 0 <= avail <= total
+              and all((disk.get(key) or {}).get("status") == "ok" for key in ("total", "used", "available_important")),
+              "disk capacity diagnostic has successful bounded integer readings",
+              str({key: (disk.get(key) or {}).get("status") for key in ("total", "used", "available_important")}))
+    check_capacity("disk_used_range", isinstance(used, int) and 0 < used < total, str(used))
+    check_capacity("disk_important_range", isinstance(avail, int) and 0 < avail <= total, str(avail))
     check(used is not None and avail is not None and total is not None and abs((total - avail) - used) < 2 * 1024**3,
           "used equals total minus available_important")
     check(disk.get("volume") == "/System/Volumes/Data", "disk volume", str(disk.get("volume")))
@@ -642,84 +780,88 @@ check(not _hits, "W27 audit: 17 pt type only in the headline block, the sidebar 
 gate_record("W27", "fail" if _hits else "pass")
 _hits, _uses = audit_radius(swift_sources)
 check(not _hits and _uses >= 6, "W25 audit: corner radius is PanelRadius.control (8) in the main column files", f"{_hits} ({_uses} uses)")
-ui_app = root / "dist-uitest/MoleMonitor.app"
-ui_bin = ui_app / "Contents/MacOS/MoleMonitor"
-skipped_ui = []
-if not ui_bin.exists():
-    check(False, "dist-uitest/MoleMonitor.app exists (run scripts/build.py --ui-test)")
+if args.headless_only:
+    print("NOT RUN  UI regression gates (scope=headless; not counted as passed). "
+          "Headless CI passing does not mean graphical or real-device acceptance passed.", flush=True)
 else:
-    ui_bytes = ui_bin.read_bytes()
-    check(b"UITestHarness" in ui_bytes and b"--ui-test" in ui_bytes, "UI test variant contains the harness (positive control)")
-    check(run(["/usr/bin/codesign", "--verify", "--deep", "--strict", ui_app]).returncode == 0, "UI test variant codesign verify (ad-hoc)")
+    ui_app = root / "dist-uitest/MoleMonitor.app"
+    ui_bin = ui_app / "Contents/MacOS/MoleMonitor"
+    skipped_ui = []
+    if not ui_bin.exists():
+        check(False, "dist-uitest/MoleMonitor.app exists (run scripts/build.py --ui-test)")
+    else:
+        ui_bytes = ui_bin.read_bytes()
+        check(b"UITestHarness" in ui_bytes and b"--ui-test" in ui_bytes, "UI test variant contains the harness (positive control)")
+        check(run(["/usr/bin/codesign", "--verify", "--deep", "--strict", ui_app]).returncode == 0, "UI test variant codesign verify (ad-hoc)")
 
-    # 8. UI regression gate: real AppDelegate, NSStatusItem, NSPopover and MonitorEngine on a seeded red history
-    base = Path(os.environ.get("MOLEMONITOR_CI_OUT") or tempfile.gettempdir())
-    ui_out = base / "molemonitor-ui"
-    ui_data = base / "molemonitor-ui-data"
-    for folder in (ui_out, ui_data):
-        shutil.rmtree(folder, ignore_errors=True)
-    ui_out.mkdir(parents=True)
-    ui_data.mkdir(mode=0o700)
-    os.chmod(ui_data, 0o700)
-    t0 = time.time()
-    # Time budget of the whole UI run, not a quality limit: v2 adds about 20 gates (docs/CI.md, "UI 测试总时长").
-    ui_budget = 500
-    ui_stdout, ui_stderr, ui_code = run_streaming([ui_bin, "--ui-test", "--ui-test-out", ui_out],
-                                                  env={"MOLEMONITOR_DATA_DIR": str(ui_data)}, timeout=ui_budget)
-    print(f"ui-test wall time {time.time() - t0:.1f} s, exit code {ui_code}", flush=True)
-    print("---- ui-test stdout ----\n" + ui_stdout[-6000:], flush=True)
-    print("---- ui-test stderr (tail) ----\n" + ui_stderr[-1500:], flush=True)
-    check(ui_code is not None, f"UI test finished within {ui_budget} s")
-    report_path = ui_out / "ui-report.json"
-    ui_report = json.loads(report_path.read_text()) if report_path.exists() else None
-    check(ui_report is not None, "UI test wrote ui-report.json")
-    if ui_report:
-        by_id = {item["id"]: item for item in ui_report["items"]}
-        # DESIGN_V2 13.2.1: W02 replaces the old layout gates M2, M3 and M22 (same checks, v2 selectors).
-        if "W02" in by_id:
-            for old_id in ("M2", "M3", "M22"):
-                alias = dict(by_id["W02"], id=old_id, name=f"{old_id} replaced by W02 (13.2.1)")
-                ui_report["items"] = [i for i in ui_report["items"] if i["id"] != old_id] + [alias]
-                by_id[old_id] = alias
-        for letter in gate_ids("ui", "active"):
-            check(letter in by_id, f"UI item {letter} reported")
-        for item in ui_report["items"]:
-            label = f"UI {item['id']} {item['name']}"
-            pending_gate = gate_by_id.get(item["id"], {}).get("status") == "pending"
-            if item["status"] == "skipped":
-                skipped_ui.append(item)
-                gate_record(item["id"], "skip")
-                print(f"SKIP  {label}  [{item['note']}]", flush=True)
-            elif item["status"] == "pending":
-                pass
-            elif pending_gate:
-                # A registered but inactive gate: shown, never counted as passed, never a failure.
-                print(f"INFO  {label} (未激活, not enforced) reported {item['status']}  {item['note']}", flush=True)
-            else:
-                ok = item["status"] == "pass"
-                gate_record(item["id"], "pass" if ok else "fail")
-                print(f"{'PASS' if ok else 'FAIL'}  {label}  {item['note']}", flush=True)
-                if not ok:
-                    failures.append(label)
-        # K: the process must have quit through the button with exit code 0 and written status.json at exit
-        quit_item = by_id.get("K")
-        if quit_item and quit_item["status"] == "pending":
-            quit_ok = check(ui_code == 0, "UI K quit button ends the process with exit code 0", str(ui_code))
-            status_file = ui_data / "status.json"
-            before = ui_report.get("statusMtimeBeforeQuit")
-            written = status_file.exists() and before is not None and status_file.stat().st_mtime > before
-            written_ok = check(written, "UI K status.json is written at exit", f"mtime before quit {before}")
-            gate_record("K", "pass" if quit_ok and written_ok else "fail")
-        elif quit_item is None or quit_item["status"] != "pass":
-            check(False, "UI K quit button", str((quit_item or {}).get("note")))
-        print("ui frames:", ", ".join(ui_report.get("frames", [])), flush=True)
-        print("ui info:", json.dumps(ui_report.get("info", {}), ensure_ascii=False), flush=True)
-        for key in ("mainThreadIntervalsMs", "renderMs"):
-            print(key, json.dumps(ui_report.get(key)), flush=True)
-    if skipped_ui:
-        print("\n!!!! UI REGRESSION SKIPPED ITEMS (not failures, not passes) !!!!", flush=True)
-        for item in skipped_ui:
-            print(f"  {item['id']} {item['name']}: {item['note']}", flush=True)
+        # 8. UI regression gate: real AppDelegate, NSStatusItem, NSPopover and MonitorEngine on a seeded red history
+        base = Path(os.environ.get("MOLEMONITOR_CI_OUT") or tempfile.gettempdir())
+        ui_out = base / "molemonitor-ui"
+        ui_data = base / "molemonitor-ui-data"
+        for folder in (ui_out, ui_data):
+            shutil.rmtree(folder, ignore_errors=True)
+        ui_out.mkdir(parents=True)
+        ui_data.mkdir(mode=0o700)
+        os.chmod(ui_data, 0o700)
+        t0 = time.time()
+        # Time budget of the whole UI run, not a quality limit: v2 adds about 20 gates (docs/CI.md, "UI 测试总时长").
+        ui_budget = 500
+        ui_stdout, ui_stderr, ui_code = run_streaming([ui_bin, "--ui-test", "--ui-test-out", ui_out],
+                                                      env={"MOLEMONITOR_DATA_DIR": str(ui_data)}, timeout=ui_budget)
+        print(f"ui-test wall time {time.time() - t0:.1f} s, exit code {ui_code}", flush=True)
+        print("---- ui-test stdout ----\n" + ui_stdout[-6000:], flush=True)
+        print("---- ui-test stderr (tail) ----\n" + ui_stderr[-1500:], flush=True)
+        check(ui_code is not None, f"UI test finished within {ui_budget} s")
+        report_path = ui_out / "ui-report.json"
+        ui_report = json.loads(report_path.read_text()) if report_path.exists() else None
+        check(ui_report is not None, "UI test wrote ui-report.json")
+        if ui_report:
+            by_id = {item["id"]: item for item in ui_report["items"]}
+            # DESIGN_V2 13.2.1: W02 replaces the old layout gates M2, M3 and M22 (same checks, v2 selectors).
+            if "W02" in by_id:
+                for old_id in ("M2", "M3", "M22"):
+                    alias = dict(by_id["W02"], id=old_id, name=f"{old_id} replaced by W02 (13.2.1)")
+                    ui_report["items"] = [i for i in ui_report["items"] if i["id"] != old_id] + [alias]
+                    by_id[old_id] = alias
+            for letter in gate_ids("ui", "active"):
+                check(letter in by_id, f"UI item {letter} reported")
+            for item in ui_report["items"]:
+                label = f"UI {item['id']} {item['name']}"
+                pending_gate = gate_by_id.get(item["id"], {}).get("status") == "pending"
+                if item["status"] == "skipped":
+                    skipped_ui.append(item)
+                    gate_record(item["id"], "skip")
+                    print(f"SKIP  {label}  [{item['note']}]", flush=True)
+                elif item["status"] == "pending":
+                    pass
+                elif pending_gate:
+                    # A registered but inactive gate: shown, never counted as passed, never a failure.
+                    print(f"INFO  {label} (未激活, not enforced) reported {item['status']}  {item['note']}", flush=True)
+                else:
+                    ok = item["status"] == "pass"
+                    gate_record(item["id"], "pass" if ok else "fail")
+                    print(f"{'PASS' if ok else 'FAIL'}  {label}  {item['note']}", flush=True)
+                    if not ok:
+                        failures.append(label)
+            # K: the process must have quit through the button with exit code 0 and written status.json at exit
+            quit_item = by_id.get("K")
+            if quit_item and quit_item["status"] == "pending":
+                quit_ok = check(ui_code == 0, "UI K quit button ends the process with exit code 0", str(ui_code))
+                status_file = ui_data / "status.json"
+                before = ui_report.get("statusMtimeBeforeQuit")
+                written = status_file.exists() and before is not None and status_file.stat().st_mtime > before
+                written_ok = check(written, "UI K status.json is written at exit", f"mtime before quit {before}")
+                gate_record("K", "pass" if quit_ok and written_ok else "fail")
+            elif quit_item is None or quit_item["status"] != "pass":
+                check(False, "UI K quit button", str((quit_item or {}).get("note")))
+            print("ui frames:", ", ".join(ui_report.get("frames", [])), flush=True)
+            print("ui info:", json.dumps(ui_report.get("info", {}), ensure_ascii=False), flush=True)
+            for key in ("mainThreadIntervalsMs", "renderMs"):
+                print(key, json.dumps(ui_report.get(key)), flush=True)
+        if skipped_ui:
+            print("\n!!!! UI REGRESSION SKIPPED ITEMS (not failures, not passes) !!!!", flush=True)
+            for item in skipped_ui:
+                print(f"  {item['id']} {item['name']}: {item['note']}", flush=True)
 
 # Core gates W13, W20, W21: read from the log of scripts/test_core.py (the workflow tees it to MOLEMONITOR_CORE_LOG).
 core_log = os.environ.get("MOLEMONITOR_CORE_LOG")
@@ -734,41 +876,74 @@ for gate_id, (ok, detail) in core_gate_results(core_text).items():
         print(f"      {detail}", flush=True)
 
 print()
-print("(summary of the gates read from ui-report.json and the Core test log; the release binary audit follows below)", flush=True)
-for line in gate_summary(sources=("ui", "core", "script", "audit"))[0]:
+print("(scope=headless: Core and source-audit gates; UI NOT RUN; release binary audit follows)" if args.headless_only
+      else "(summary of the gates read from ui-report.json and the Core test log; the release binary audit follows below)", flush=True)
+for line in gate_summary(sources=HEADLESS_GATE_SOURCES if args.headless_only else ("ui", "core", "script", "audit"))[0]:
     print(line, flush=True)
 if failures:
     print(f"ACCEPTANCE FAILED: {len(failures)} check(s): " + "; ".join(failures))
-    sys.exit(1)
-print("ACCEPTANCE PASSED")
+    if not args.headless_only:
+        sys.exit(1)
+if not args.headless_only:
+    print("ACCEPTANCE PASSED")
 
 # --- release binary audit (DF)
 # The release binary has none of the UI test code. The UI test variant has it (positive control).
-def _release_binary_checks():
-    failures_df = []
-
-    def df_check(ok, name, detail=""):
-        print(("PASS  " if ok else "FAIL  ") + name + (f"  [{detail}]" if detail else ""), flush=True)
-        if not ok:
-            failures_df.append(name)
-
-    print("\n---- release binary audit (DF) ----", flush=True)
-    release = main_bin.read_bytes()
-    for marker in (b"DogFrameProbe", b"UITestPanelChecks", b"UITestIconChecks"):
-        df_check(marker not in release, f"DF release binary does not contain {marker.decode()}")
-    ui_bin = root / "dist-uitest/MoleMonitor.app/Contents/MacOS/MoleMonitor"
-    if not ui_bin.exists():
-        df_check(False, "DF: dist-uitest/MoleMonitor.app exists")
-        return failures_df
-    df_check(b"DogFrameProbe" in ui_bin.read_bytes(), "DF UI test variant contains the test probe (positive control)")
-    return failures_df
 
 
-_df_failures = _release_binary_checks()
+_df_failures = _release_binary_checks(args.headless_only)
 print()
-_final_lines, _final_counts = gate_summary()
+_final_lines, _final_counts = gate_summary(sources=HEADLESS_GATE_SOURCES if args.headless_only else None)
 for line in _final_lines:
     print(line, flush=True)
+if args.headless_only:
+    # A separate machine-readable scope report never labels UI gates as passed.
+    scope_report = {
+        "schema": 1, "scope": "headless", "status": "fail" if failures or _df_failures else "pass",
+        "ui": {"status": "not_run", "reason": "outside headless CI scope", "gates": gate_ids("ui")},
+        "gate_counts": _final_counts, "failures": failures + _df_failures,
+        "real_device_acceptance": "not_run",
+    }
+    if args.ci_headless:
+        outcome = ci_outcome(failures, _df_failures, capacity_diagnostics)
+        scope_report.update({
+            "schema": 2, "scope": "ci-headless", "status": outcome["status"],
+            "gate": {"status": outcome["gate_status"], "failures": failures + _df_failures},
+            "capacity_diagnostics": {
+                "status": "fail" if outcome["diagnostic_failures"] else "pass", "blocking": False,
+                "checks": capacity_diagnostics, "physical_acceptance": "not_passed_by_ci",
+            },
+            "failures": failures + _df_failures + [item["name"] for item in outcome["diagnostic_failures"]],
+        })
+    scope_report_path = data_dir / "acceptance-report.json"
+    scope_report_path.write_text(json.dumps(scope_report, ensure_ascii=False, indent=2) + "\n")
+    os.chmod(scope_report_path, 0o600)
+    print("RELEASE BINARY AUDIT " + ("FAILED" if _df_failures else "PASSED"), flush=True)
+    if args.ci_headless:
+        capacity_state = "FAILED" if outcome["diagnostic_failures"] else "PASSED"
+        print("PHYSICAL CAPACITY DIAGNOSTICS " + capacity_state + "; not counted as CI gate passes", flush=True)
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path:
+            summary = ["### MoleMonitor selected CI scope", "", "| Scope | Result |", "|---|---|",
+                       "| Compile/unit/headless software gate | " + outcome["gate_status"].upper() + " |",
+                       "| Physical capacity diagnostics | **" + capacity_state + "** |",
+                       "| UI / physical-device acceptance | NOT RUN |", "",
+                       "Report status: `" + outcome["status"] + "`. A passing CI gate does not mean complete acceptance passed.",
+                       "Default full acceptance and `--headless-only` still enforce the original capacity thresholds.", ""]
+            for item in capacity_diagnostics:
+                summary.append("- Capacity diagnostic `" + item["id"] + "`: **" + item["status"].upper()
+                               + "**; measured `" + item["detail"].replace("`", "").replace("\n", " ") + "`.")
+            with Path(summary_path).open("a", encoding="utf-8") as summary_file:
+                summary_file.write("\n".join(summary) + "\n")
+        for item in outcome["diagnostic_failures"]:
+            print("::warning title=Physical capacity diagnostic failed::" + item["name"] + " [" + item["detail"] + "]; physical acceptance remains unverified", flush=True)
+        print("CI HEADLESS GATE " + ("FAILED" if outcome["exit_code"] else "PASSED")
+              + " (scope=ci-headless; physical capacity diagnostics " + capacity_state
+              + "; UI NOT RUN; real-device acceptance NOT RUN)", flush=True)
+        sys.exit(outcome["exit_code"])
+    print("HEADLESS ACCEPTANCE " + ("FAILED" if failures or _df_failures else "PASSED")
+          + " (scope=headless; UI NOT RUN; graphical and real-device acceptance NOT RUN)", flush=True)
+    sys.exit(1 if failures or _df_failures else 0)
 if _df_failures:
     print(f"RELEASE BINARY AUDIT FAILED: {len(_df_failures)} check(s): " + "; ".join(_df_failures))
     sys.exit(1)

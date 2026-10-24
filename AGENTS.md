@@ -23,8 +23,8 @@
 
 - 在 Linux 或 Mac 上测试 Core：`python3 scripts/test_core.py`。测试 CLI：`python3 scripts/test_cli.py`。两者需要 `swiftc`，细节见 [scripts/README.md](scripts/README.md)。
 - 在 Mac 上构建：`python3 scripts/build.py`。构建后运行 `dist/MoleMonitor.app/Contents/MacOS/MoleMonitor --self-test`。无界面采样：同一可执行文件加 `--diagnose --seconds 22`。静态预览另加 `--preview <绝对路径>`。
-- Mac 专用行为（`Sources/App/`、`Sources/MoleMonitor.swift`）的第一道验证走 CI 回归门禁（`.github/workflows/build-mac.yml`，说明见 [docs/CI.md](docs/CI.md)）。CI 结果不得写成真机验收。真机帧率、观感、菜单栏位置和通知授权框仍须用户在 Mac 上确认。Linux 桩类型检查只算静态检查。
-- 改 Core 或 CLI 后，必须跑对应测试脚本。改生命周期、通知或界面后，必须过 CI 回归门禁，再请用户在 Mac 上确认对应场景。
+- CI 只运行编译、Core/CLI 单元测试和显式 `--ci-headless` 无界面门禁；两项实体容量范围诊断单列结果，不计为通过（`.github/workflows/build-mac.yml`，说明见 [docs/CI.md](docs/CI.md)）。无界面 CI 通过不等于图形或实机验收通过。图形和交互在对应版本中用 computer use 在本机 Mac 实测；历史 GUI 自动化脚本保留，不作为 CI 关卡。Linux 桩类型检查只算静态检查。
+- 改 Core 或 CLI 后，必须跑对应测试脚本。改生命周期、通知或界面后，先过相应的无界面 CI；图形、交互、菜单栏位置和通知授权框仍须在本机 Mac 按实际版本范围验收。
 - 不得给 `build-mac.yml` 加 `schedule`，不得加多系统矩阵，保持单作业与超时。仓库改为私有前，先复核计费，见 [docs/CI.md](docs/CI.md)。
 - 默认无感执行。不自行启动可见 UI，不安装到 Applications，不设置登录启动。遵守用户当轮授权。静态预览、无界面运行和真实菜单栏交互分开记录。
 - 更新实际受影响的文件头、模块说明和项目入口。维护验证文档中的已验、未验及风险。推送前复核暂存文件和隐私排除项。对外推送、发布、公证、部署按具体授权执行。
